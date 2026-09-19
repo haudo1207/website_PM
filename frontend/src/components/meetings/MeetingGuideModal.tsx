@@ -131,7 +131,7 @@ export default function MeetingGuideModal({ isOpen, onClose }: MeetingGuideModal
           <button
             type="button"
             onClick={onClose}
-            className="bg-[#6366f1] hover:bg-[#4f46e5] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors shadow-sm"
+            className="bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors shadow-sm"
           >
             Đã hiểu
           </button>

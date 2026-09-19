@@ -63,8 +63,8 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
     <div className="bg-white rounded-2xl border border-[#e2e8f0] p-4 sm:p-5 shadow-2xs hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
       {/* Left Column: Meeting Info & Badges */}
       <div className="flex items-start gap-3.5 flex-1 min-w-0">
-        <div className="w-11 h-11 rounded-2xl bg-[#f5f3ff] text-[#6366f1] flex items-center justify-center shrink-0 border border-[#e0e7ff] mt-0.5">
-          {hasAISummary ? <Video size={20} className="text-[#6366f1]" /> : <Folder size={20} className="text-amber-600" />}
+        <div className="w-11 h-11 rounded-2xl bg-[#eff4ff] text-[#0058be] flex items-center justify-center shrink-0 border border-[#bcd6f5] mt-0.5">
+          {hasAISummary ? <Video size={20} className="text-[#0058be]" /> : <Folder size={20} className="text-amber-600" />}
         </div>
 
         <div className="space-y-2 min-w-0 flex-1">
@@ -72,7 +72,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
           <div>
             <h3 
               onClick={() => onOpenDetail?.(meeting)} 
-              className="font-bold text-[#0b1c30] text-sm sm:text-[15px] hover:text-[#6366f1] cursor-pointer transition-colors leading-snug"
+              className="font-bold text-[#0b1c30] text-sm sm:text-[15px] hover:text-[#0058be] cursor-pointer transition-colors leading-snug"
             >
               {meeting.title || 'Cuộc họp chưa có tên'}
             </h3>
@@ -93,7 +93,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
               )}
 
               {hasAISummary ? (
-                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#f5f3ff] text-[#6366f1]">
+                <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#eff4ff] text-[#0058be]">
                   AI Summary sẵn sàng
                 </span>
               ) : (
@@ -139,11 +139,11 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
         </div>
       </div>
 
-      {/* Middle Column: AI Summary Box (Light Purple Tint Container) */}
+      {/* Middle Column: AI Summary Box (Light Blue Tint Container) */}
       <div className="w-full md:w-[320px] lg:w-[360px] shrink-0 cursor-pointer" onClick={() => onOpenDetail?.(meeting)}>
         {hasAISummary ? (
-          <div className="bg-[#f8f6ff] border border-[#eee9fe] rounded-2xl p-3 sm:p-3.5 space-y-1">
-            <div className="flex items-center gap-1.5 text-[#6366f1] text-[11px] font-bold uppercase tracking-wider">
+          <div className="bg-[#f5f8ff] border border-[#dbe8ff] rounded-2xl p-3 sm:p-3.5 space-y-1">
+            <div className="flex items-center gap-1.5 text-[#0058be] text-[11px] font-bold uppercase tracking-wider">
               <Sparkles size={13} />
               <span>AI Summary sẵn sàng</span>
             </div>
@@ -208,7 +208,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
               {onSummarize && (
                 <button
                   onClick={() => { setShowMenu(false); onSummarize(meeting); }}
-                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-purple-700"
+                  className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0058be]"
                 >
                   Chạy AI Tóm tắt
                 </button>

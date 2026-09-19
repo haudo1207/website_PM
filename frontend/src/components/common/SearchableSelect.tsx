@@ -6,6 +6,7 @@ export interface SelectOptionItem {
   id: string | number;
   name: string;
   icon?: string;
+  avatar_url?: string | null;
   badge?: string;
   subtext?: string;
 }
@@ -246,6 +247,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
           id: opt?.id ?? '',
           name: opt?.name || `Option #${opt?.id || ''}`,
           icon: opt?.icon,
+          avatar_url: opt?.avatar_url,
           badge: opt?.badge,
           subtext: opt?.subtext
         };
@@ -283,6 +285,13 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     if (!isMulti) return 0;
     return filteredOptions.filter(opt => selectedValues.some(v => String(v) === String(opt.id))).length;
   }, [isMulti, filteredOptions, selectedValues]);
+
+  const selectedOption = useMemo(
+    () => !isMulti && selectedValues.length > 0
+      ? parsedOptions.find(opt => String(opt.id) === String(selectedValues[0]))
+      : undefined,
+    [isMulti, parsedOptions, selectedValues]
+  );
 
   const orderedOptions = useMemo(() => {
     if (!isMulti) return filteredOptions;
@@ -452,6 +461,15 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
         }`}
       >
         <span className="flex-1 min-w-0 flex items-center gap-1.5">
+          {showAvatar && selectedOption && (
+            selectedOption.avatar_url ? (
+              <img src={selectedOption.avatar_url} alt="" className="w-6 h-6 rounded-full object-cover shrink-0" />
+            ) : (
+              <span className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: avatarColorFor(selectedOption.name) }}>
+                {avatarInitialsFor(selectedOption.name)}
+              </span>
+            )
+          )}
           {icon && <span className="shrink-0">{icon}</span>}
           <span className="truncate text-left">{buttonText}</span>
         </span>
@@ -562,14 +580,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
                             className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
                           />
                         )}
-                        {showAvatar && (
-                          <span
-                            className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
-                            style={{ background: avatarColorFor(opt.name) }}
-                          >
-                            {avatarInitialsFor(opt.name)}
-                          </span>
-                        )}
+                        {showAvatar && (opt.avatar_url ? <img src={opt.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" /> : <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: avatarColorFor(opt.name) }}>{avatarInitialsFor(opt.name)}</span>)}
                         {opt.icon && <span>{opt.icon}</span>}
                         <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
                         {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}
@@ -696,14 +707,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
                             className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
                           />
                         )}
-                        {showAvatar && (
-                          <span
-                            className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
-                            style={{ background: avatarColorFor(opt.name) }}
-                          >
-                            {avatarInitialsFor(opt.name)}
-                          </span>
-                        )}
+                        {showAvatar && (opt.avatar_url ? <img src={opt.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" /> : <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: avatarColorFor(opt.name) }}>{avatarInitialsFor(opt.name)}</span>)}
                         {opt.icon && <span>{opt.icon}</span>}
                         <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
                         {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}

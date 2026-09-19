@@ -784,6 +784,8 @@ export default function OverviewTab() {
     pmStats,
     crossWsManday,
     crossWsMemberCount,
+    homeWsManday,
+    totalTeamManday,
     priorityStats,
     overdueTasksList,
     memberRanking,
@@ -1286,6 +1288,27 @@ export default function OverviewTab() {
       }
     });
 
+    // Cross-Workspace ratio: completed Team Manday in Leader's primary
+    // Workspace vs completed Team Manday across ALL Workspaces.
+    // Uses only Done tasks with end_date_actual (Option B — "completed Manday").
+    let homeWsManday = 0;
+    let totalTeamManday = 0;
+    if (homeWsCodeForSummary && finalRanking.length > 0) {
+      const teamMemberIdSet = new Set(teamMemberIds);
+      fTasks.forEach(t => {
+        const isDone = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
+        if (!isDone) return;
+        const isTeamMember = isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id);
+        if (!isTeamMember) return;
+        const manday = t.manday_actual || t.manday_est || 0;
+        totalTeamManday += manday;
+        const wsCode = (t.projectDataScope || '').toLowerCase();
+        if (wsCode === homeWsCodeForSummary) {
+          homeWsManday += manday;
+        }
+      });
+    }
+
     // 6. Active Projects (Filtered by BOTH Leader and Time Period)
     // Same reasoning as taskSourceForDrill above: the switcher only decides
     // the roster, not a drilled-into person's own cross-Workspace picture.
@@ -1512,6 +1535,20 @@ export default function OverviewTab() {
       bonM.push(rowBon);
     }
 
+    // KPI TRUNG BÌNH divisor — number of weeks the selected period represents.
+    const filterDuration = (() => {
+      if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) return 1;
+      if (typeof selectedMonth === 'number') return MONTH_WEEKS_COUNT[selectedMonth] || 4;
+      if (typeof selectedYear === 'number') return 52;
+      return 52;
+    })();
+
+    // Add kpiTrungBinh to each ranking row
+    const rankedWithKpiAvg = finalRanking.map(m => ({
+      ...m,
+      kpiTrungBinh: filterDuration > 0 ? Math.round((m.kpi / filterDuration) * 100) : 0,
+    }));
+
     return {
       leaders: visibleLeaders,
       totalAllTasks: totTasks,
@@ -1521,9 +1558,11 @@ export default function OverviewTab() {
       pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday * 10) / 10, kpi: Math.round(pmKpi), mandayPlanned: Math.round(pmMandayPlanned * 10) / 10, kpiPlanned: Math.round(pmKpiPlanned * 10) / 10 },
       crossWsManday: Math.round(crossWsManday * 10) / 10,
       crossWsMemberCount,
+      homeWsManday: Math.round(homeWsManday * 10) / 10,
+      totalTeamManday: Math.round(totalTeamManday * 10) / 10,
       priorityStats: pStats,
       overdueTasksList: overdueList.sort((a, b) => b.daysLate - a.daysLate),
-      memberRanking: finalRanking,
+      memberRanking: rankedWithKpiAvg,
       memberCards: memberCardsList,
       teamCardStats: teamStats,
       activeProjects: aProjects,
@@ -2094,17 +2133,17 @@ export default function OverviewTab() {
           <div className="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100 bg-slate-50/60">
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
-                KPI Team
+                Tổng KPI Team
                 <FormulaTooltip align="left">
-                  <p className="font-bold text-white/90 mb-1">KPI Team (HT / Giao)</p>
+                  <p className="font-bold text-white/90 mb-1">Tổng KPI Team</p>
                   <p className="text-white/80 mb-1">Công thức:</p>
-                  <p className="text-white font-mono">HT = Σ kpi_base các task Done trong kỳ</p>
-                  <p className="text-white font-mono">Giao = Σ kpi_base toàn bộ task trong kỳ (mọi trạng thái)</p>
+                  <p className="text-white font-mono">Tổng KPI = Σ kpi_base các task Done trong kỳ</p>
                   <p className="text-white/60 mt-1.5">Chỉ tính KPI phát sinh tại team (task của member trong team đang xem), không cộng dồn KPI của task ở ngoài team.</p>
+                  <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
                 </FormulaTooltip>
               </span>
-              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)} / {pmStats.kpiPlanned.toFixed(1)}</strong>
-              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Chỉ tính KPI phát sinh tại team, không double-count KPI ngoài team</small>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)}</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Tổng KPI của team trong kỳ đang chọn</small>
             </div>
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
@@ -2126,12 +2165,14 @@ export default function OverviewTab() {
                 <FormulaTooltip align="left">
                   <p className="font-bold text-white/90 mb-1">Cross-workspace Manday</p>
                   <p className="text-white/80 mb-1">Công thức:</p>
-                  <p className="text-white font-mono">Σ manday (actual/est) mà member trong team log trên project KHÔNG thuộc Workspace Chính của team</p>
-                  <p className="text-white/60 mt-1.5">Member count = số member trong team đang có ít nhất 1 manday như vậy (đang tham gia đóng góp ở Workspace khác).</p>
+                  <p className="text-white font-mono">Manday HT = Σ manday_completed của Team trong Workspace Chính</p>
+                  <p className="text-white font-mono">Tổng Manday = Σ manday_completed của Team trên TẤT CẢ Workspaces</p>
+                  <p className="text-white/60 mt-1.5">Chỉ tính manday từ task Done (có end_date_actual). Workspace Chính = workspace Leader phụ trách chính.</p>
+                  <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
                 </FormulaTooltip>
               </span>
-              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{crossWsManday.toFixed(1)} MD</strong>
-              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><span className="text-indigo-600 font-black">{crossWsMemberCount} member</span> đang tham gia workspace khác</small>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{homeWsManday.toFixed(1)} / {totalTeamManday.toFixed(1)} MD</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Manday HT Team / Tổng Manday Team (Task Done)</small>
             </div>
             <div className="px-4 py-3">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
@@ -2194,6 +2235,22 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">
+                    <span className="inline-flex items-center gap-1">
+                      KPI Trung Bình
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">KPI Trung Bình (%)</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc × 100)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>KPI Tổng:</b> Σ kpi_base các task Done (có end_date_actual) trong kỳ</li>
+                          <li><b>Thời Gian Bộ Lọc:</b> Tuần = 1, Tháng = số tuần trong tháng, Năm = 52</li>
+                        </ul>
+                        <p className="text-white/50 mt-1">Hiển thị dưới dạng phần trăm nguyên (ví dụ: 574%).</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">
                     <span className="inline-flex items-center gap-1">
                       Phân Bổ Workspace
@@ -2207,12 +2264,27 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
-                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
+                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">
+                    <span className="inline-flex items-center gap-1">
+                      Tiến Độ
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Tiến độ (Task Completion)</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">Tiến độ = round((Done / Giao) × 100)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>Done:</b> Số task status = Done (có end_date_actual) trong kỳ</li>
+                          <li><b>Giao:</b> Tổng số task giao cho member trong kỳ (mọi trạng thái)</li>
+                        </ul>
+                        <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {memberRanking.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
+                  <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
                 ) : (
                   memberRanking.map((m, i) => {
                     const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
@@ -2281,6 +2353,11 @@ export default function OverviewTab() {
                         <td className="px-4 py-3.5 text-center">
                           <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
                             <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpi.toFixed(1)}/{m.kpiPlanned.toFixed(1)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                            <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpiTrungBinh}%</span>
                           </div>
                         </td>
                         <td className="px-4 py-3.5 text-left">

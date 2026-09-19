@@ -464,6 +464,8 @@ export interface CalendarTask {
   skill_solution_id: number | null;
   skill_vendor_id: number | null;
   ticket_id: string | null; // Task's real Link field — LinkChipsEditor's chip storage
+  remark: string | null; // comma-joined performance_settings rule ids, same shape as the Tasks tab's Remark
+  send: string | null; // '' | 'gửi' | 'đã gửi'
   notes: string | null;
   project_id: number;
   project_name: string;

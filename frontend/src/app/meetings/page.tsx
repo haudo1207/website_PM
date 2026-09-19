@@ -19,6 +19,19 @@ import MemberAttendanceDrawer from '@/components/meetings/MemberAttendanceDrawer
 import { isAdmin, getRole } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+// Global Time Filter (Meeting Management chốt, 2026-09-20) reuses the exact
+// same dual-track date logic dashboard/report/page.tsx's own Bộ lọc thời
+// gian uses (see its applyQuickFilter/checkTaskInPeriod) — not a look-alike
+// reimplementation:
+//   - Tuần trước/này/tới → REAL calendar week relative to today's actual
+//     date (getPrevWeekRange/getMondayToSundayRange/getNextWeekRange).
+//   - Tháng trước/này/tới → the WHOLE calendar month relative to today
+//     (report's own checkTaskInPeriod does this by leaving selectedWeek
+//     'all' and matching taskDate's month number — no week narrowing).
+//   - Manual Năm/Tháng/Tuần dropdown pick → the fiscal "week N of month M"
+//     bucket (getWeekDateRange), same as report's manual-pick path.
+import { getWeekOfMonth, getWeekDateRange, getMondayToSundayRange, getPrevWeekRange, getNextWeekRange, MONTH_WEEKS_COUNT } from '@/app/dashboard/constants';
+import { toApiDate } from '@/components/calendar/dateUtils';
 
 // Deterministic color per project (no color field on Project yet — same
 // project.id/name always hashes to the same palette entry, so week-grid
@@ -33,7 +46,9 @@ const PROJECT_COLOR_PALETTE = [
   { barBorder: 'border-l-teal-500', bg: 'bg-teal-50', badgeBg: 'bg-teal-100', badgeText: 'text-teal-700', dot: 'bg-teal-500' },
   { barBorder: 'border-l-sky-500', bg: 'bg-sky-50', badgeBg: 'bg-sky-100', badgeText: 'text-sky-700', dot: 'bg-sky-500' },
 ];
-const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-indigo-500', bg: 'bg-indigo-50', badgeBg: 'bg-indigo-100', badgeText: 'text-indigo-700', dot: 'bg-indigo-500' };
+// Neutral fallback (chốt §12 — no id/name means "not a real project", so it
+// shouldn't inherit the palette's brand-indigo slot as if it were a default).
+const DEFAULT_PROJECT_COLOR = { barBorder: 'border-l-slate-400', bg: 'bg-slate-50', badgeBg: 'bg-slate-100', badgeText: 'text-slate-600', dot: 'bg-slate-400' };
 
 // Delete rule (chốt 2026-09-13, soft-delete design): ONGOING is the ONLY
 // status that blocks Delete — UPCOMING/DONE/CANCELLED are all soft-deletable
@@ -89,7 +104,6 @@ function MeetingsPageContent() {
   const [activeTab, setActiveTab] = useState<'list' | 'calendar' | 'personal'>('list');
   const [searchTerm, setSearchTerm] = useState('');
   const [platformFilter, setPlatformFilter] = useState('All');
-  const [monthFilter, setMonthFilter] = useState('All');
   const [projectFilter, setProjectFilter] = useState('All');
   const [personFilter, setPersonFilter] = useState('All');
   const [quickFilter, setQuickFilter] = useState('');
@@ -107,6 +121,94 @@ function MeetingsPageContent() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const [showAllPeople, setShowAllPeople] = useState(false);
+
+  // Global Time Filter — single dateRange source of truth for the whole
+  // "Danh sách cuộc họp" view (Tổng quan/Cuộc họp/Theo nhân sự/Theo dự án/
+  // Chất lượng họp are all sections of this ONE view, not separate tabs —
+  // see the scrollToSection refs below — so wiring this into the queries
+  // that feed that view covers every section at once). Deliberately
+  // independent of weekOffset (Calendar Team/Calendar cá nhân, untouched).
+  // The table's old local "Tháng/Năm" input (monthFilter) was removed
+  // (chốt §12, 2026-09-20) — audited first: it only ever did client-side
+  // time filtering (matchesMonth) and had no other dependency, so it's
+  // fully superseded by this global filter, not left coexisting redundantly.
+  const [mtYear, setMtYear] = useState(() => new Date().getFullYear());
+  const [mtMonth, setMtMonth] = useState(() => new Date().getMonth() + 1);
+  // 'all' = "cả tháng", same meaning as report's own selectedWeek === 'all'
+  // (set by a Tháng trước/này/tới click, or manually — no week narrowing).
+  const [mtWeek, setMtWeek] = useState<number | 'all'>(() => getWeekOfMonth(new Date()));
+  const [isRefreshingMeetingRange, setIsRefreshingMeetingRange] = useState(false);
+  // Which ONE of the 6 shortcut buttons is highlighted — same mutually-
+  // exclusive single-string model as dashboard/report/page.tsx's own
+  // activeQuickFilter. null after a manual dropdown edit (no shortcut
+  // matches anymore).
+  const [activeMeetingQuickFilter, setActiveMeetingQuickFilter] = useState<string | null>('Tuần này');
+
+  // Clamp week when a Year/Month change makes the previously-selected week
+  // number invalid for the new month (e.g. week 5 while switching from a
+  // 5-week month to a 4-week one) — TEST 10 (date boundary) safety net.
+  useEffect(() => {
+    if (mtWeek === 'all') return;
+    const maxWeek = MONTH_WEEKS_COUNT[mtMonth] || 5;
+    if (mtWeek > maxWeek) setMtWeek(maxWeek);
+  }, [mtMonth, mtWeek]);
+
+  // Same dual-track resolution as dashboard/report/page.tsx's own
+  // checkTaskInPeriod: an active Tuần shortcut always means the REAL
+  // calendar week around today (not the fiscal week-of-month bucket a
+  // manual pick would resolve to); an active Tháng shortcut (or a manual
+  // "Cả tháng") means the whole calendar month, no week narrowing at all;
+  // anything else (a manual Year/Month/Week pick) uses the fiscal bucket.
+  const meetingDateRange = useMemo(() => {
+    const now = new Date();
+    let range: { monday: Date; sunday: Date } | null = null;
+    if (activeMeetingQuickFilter === 'Tuần này') range = getMondayToSundayRange(now);
+    else if (activeMeetingQuickFilter === 'Tuần trước') range = getPrevWeekRange(now);
+    else if (activeMeetingQuickFilter === 'Tuần tới') range = getNextWeekRange(now);
+    else if (mtWeek !== 'all') range = getWeekDateRange(mtWeek, mtMonth, mtYear);
+
+    if (range) return { from: toApiDate(range.monday), to: toApiDate(range.sunday) };
+
+    // Whole month — Tháng trước/này/tới, or "Cả tháng" picked manually.
+    const firstDay = new Date(mtYear, mtMonth - 1, 1);
+    const lastDay = new Date(mtYear, mtMonth, 0);
+    return { from: toApiDate(firstDay), to: toApiDate(lastDay) };
+  }, [activeMeetingQuickFilter, mtWeek, mtMonth, mtYear]);
+
+  // Exact same structure as dashboard/report/page.tsx's own
+  // applyQuickFilter(type) — each shortcut jumps to a FIXED period relative
+  // to today's real date (not a stateful pager off the currently-displayed
+  // period), matching report's actual behavior 1:1. Year/Month/Week are set
+  // here purely for the dropdowns' display; the real filtering for an
+  // active Tuần shortcut bypasses them (see meetingDateRange above).
+  const applyMeetingQuickFilter = (type: 'Tuần trước' | 'Tuần này' | 'Tuần tới' | 'Tháng trước' | 'Tháng này' | 'Tháng tới') => {
+    setActiveMeetingQuickFilter(type);
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setMtYear(d.getFullYear()); setMtMonth(d.getMonth() + 1); setMtWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setMtYear(now.getFullYear()); setMtMonth(now.getMonth() + 1); setMtWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setMtYear(d.getFullYear()); setMtMonth(d.getMonth() + 1); setMtWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setMtYear(d.getFullYear()); setMtMonth(d.getMonth() + 1); setMtWeek('all');
+    } else if (type === 'Tháng này') {
+      setMtYear(now.getFullYear()); setMtMonth(now.getMonth() + 1); setMtWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setMtYear(d.getFullYear()); setMtMonth(d.getMonth() + 1); setMtWeek('all');
+    }
+  };
+
+  // Pagination resets to page 1 whenever the range actually changes (chốt
+  // §5/TEST 6) — mirrors the existing "new meeting created" reset already
+  // done elsewhere in this file (setCurrentPage(1) after create).
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [meetingDateRange.from, meetingDateRange.to]);
 
   // Scroll-anchor refs for the secondary nav row (mirrors the prototype's
   // Tổng quan/Cuộc họp/Theo nhân sự/Theo dự án/Chất lượng họp tabs, which
@@ -214,6 +316,26 @@ function MeetingsPageContent() {
   });
   const meetings: any[] = meetingsData || [];
 
+  // "Danh sách cuộc họp" view's own dataset, scoped to the Global Time
+  // Filter's dateRange (chốt 2026-09-20) — deliberately a SEPARATE query
+  // from `meetings` above rather than adding from_date/to_date onto it:
+  // `meetings` (unrestricted) still backs Calendar Team's week grid (its own
+  // weekOffset can browse ANY week, not just the one selected here) and the
+  // URL "?id=" deep-link lookup further down, and must keep seeing every
+  // meeting regardless of this filter — untouched business logic (chốt §13).
+  const { data: listMeetingsData, isLoading: isListMeetingsLoading, refetch: fetchListMeetings } = useQuery({
+    queryKey: ['meetings', workspaceCode, 'range', meetingDateRange.from, meetingDateRange.to],
+    queryFn: async () => {
+      const data = await getMeetings({ workspace: workspaceCode || undefined, from_date: meetingDateRange.from, to_date: meetingDateRange.to });
+      if (data && data.success && Array.isArray(data.data)) return data.data;
+      if (Array.isArray(data)) return data;
+      return [];
+    },
+    enabled: activeTab === 'list',
+    staleTime: 2 * 60_000,
+  });
+  const listMeetings: any[] = listMeetingsData || [];
+
   const { data: myMeetingsData, isLoading: isMyMeetingsLoading, refetch: fetchMyMeetings } = useQuery({
     queryKey: ['meetings', 'mine', workspaceCode],
     queryFn: async () => {
@@ -227,12 +349,13 @@ function MeetingsPageContent() {
   });
   const myMeetings: any[] = myMeetingsData || [];
 
-  const { data: insightsData } = useQuery({
-    queryKey: ['meeting-insights', workspaceCode],
+  const { data: insightsData, refetch: refetchMeetingInsights } = useQuery({
+    queryKey: ['meeting-insights', workspaceCode, meetingDateRange.from, meetingDateRange.to],
     queryFn: async () => {
-      const data = await getMeetingInsights({ workspace: workspaceCode || undefined });
+      const data = await getMeetingInsights({ workspace: workspaceCode || undefined, from_date: meetingDateRange.from, to_date: meetingDateRange.to });
       return data?.data || null;
     },
+    enabled: activeTab === 'list',
     staleTime: 2 * 60_000,
   });
 
@@ -242,29 +365,14 @@ function MeetingsPageContent() {
     return names;
   }, [insightsData]);
 
-  // "Nhân sự & Tham gia" card (chốt 2026-09-15): reuses the page's EXISTING
-  // Dự án + Tháng/Năm filters (no new time-range preset UI) — converts
-  // monthFilter ("YYYY-MM") to a from/to date range the backend already
-  // understands (same from_date/to_date shape as GET /meetings).
-  const attendanceDateRange = useMemo(() => {
-    if (monthFilter === 'All' || !monthFilter) return { from_date: undefined, to_date: undefined };
-    const [y, m] = monthFilter.split('-').map(Number);
-    if (!y || !m) return { from_date: undefined, to_date: undefined };
-    const lastDay = new Date(y, m, 0).getDate();
-    return {
-      from_date: `${monthFilter}-01`,
-      to_date: `${monthFilter}-${String(lastDay).padStart(2, '0')}`,
-    };
-  }, [monthFilter]);
-
-  const { data: attendanceSummaryData } = useQuery({
-    queryKey: ['meeting-attendance-summary', workspaceCode, projectFilter, attendanceDateRange.from_date, attendanceDateRange.to_date],
+  const { data: attendanceSummaryData, refetch: refetchAttendanceSummary } = useQuery({
+    queryKey: ['meeting-attendance-summary', workspaceCode, projectFilter, meetingDateRange.from, meetingDateRange.to],
     queryFn: async () => {
       const data = await getMeetingAttendanceSummary({
         workspace: workspaceCode || undefined,
         project: projectFilter !== 'All' ? projectFilter : undefined,
-        from_date: attendanceDateRange.from_date,
-        to_date: attendanceDateRange.to_date,
+        from_date: meetingDateRange.from,
+        to_date: meetingDateRange.to,
       });
       return Array.isArray(data?.data) ? data.data : [];
     },
@@ -277,6 +385,18 @@ function MeetingsPageContent() {
   }, [attendanceSummaryData]);
 
   const [attendanceDrawerMember, setAttendanceDrawerMember] = useState<any>(null);
+
+  // Global Time Filter's ↻ — refetches exactly the 3 queries this view's
+  // data depends on, current dateRange unchanged (chốt §8: never resets
+  // filter, tab, search, or the other local filters).
+  const handleRefreshMeetingRange = async () => {
+    setIsRefreshingMeetingRange(true);
+    try {
+      await Promise.all([fetchListMeetings(), refetchMeetingInsights(), refetchAttendanceSummary()]);
+    } finally {
+      setIsRefreshingMeetingRange(false);
+    }
+  };
 
   // Switching Workspace changes which projects/people/platforms even exist in
   // `meetings` — a project/person/platform filter picked under the old
@@ -341,23 +461,27 @@ function MeetingsPageContent() {
       .filter((p: any) => p.name);
   };
 
+  // Sourced from listMeetings (the range-scoped dataset), not the
+  // unrestricted `meetings` — a Project/Person/Platform with zero meetings
+  // in the selected week shouldn't appear as a filter option (chốt §5,
+  // "Theo nhân sự"/"Theo dự án" must recompute from the same dateRange).
   const projectOptions = useMemo(() => {
     const names = new Set<string>();
-    meetings.forEach(m => getMeetingProjectNames(m).forEach(p => names.add(p)));
+    listMeetings.forEach(m => getMeetingProjectNames(m).forEach(p => names.add(p)));
     return Array.from(names).sort();
-  }, [meetings]);
+  }, [listMeetings]);
 
   const personOptions = useMemo(() => {
     const names = new Set<string>();
-    meetings.forEach(m => (m.members || []).forEach((mm: any) => { if (mm.display_name) names.add(mm.display_name); }));
+    listMeetings.forEach(m => (m.members || []).forEach((mm: any) => { if (mm.display_name) names.add(mm.display_name); }));
     return Array.from(names).sort();
-  }, [meetings]);
+  }, [listMeetings]);
 
   const platformOptions = useMemo(() => {
     const names = new Set<string>();
-    meetings.forEach(m => { if (m.platform) names.add(m.platform); });
+    listMeetings.forEach(m => { if (m.platform) names.add(m.platform); });
     return Array.from(names).sort();
-  }, [meetings]);
+  }, [listMeetings]);
 
   // Real signals only — no fabricated data. "Có task trễ" is intentionally
   // omitted here (would need per-meeting Task join not returned by the API).
@@ -382,8 +506,12 @@ function MeetingsPageContent() {
     }
   };
 
+  // Local filters (search/project/person/platform/quick) run ON TOP of
+  // listMeetings, which is already restricted to the Global Time Filter's
+  // dateRange — matching chốt §9/§11's required flow (global range →
+  // dataset → local filters → result), never the other way around.
   const filteredMeetings = useMemo(() => {
-    return (meetings || []).filter(m => {
+    return (listMeetings || []).filter(m => {
       if (!m) return false;
       const title = String(m.title || '');
       const projectNames = getMeetingProjectNames(m);
@@ -391,11 +519,9 @@ function MeetingsPageContent() {
       const matchesPlatform = platformFilter === 'All' || m.platform === platformFilter;
       const matchesProject = projectFilter === 'All' || projectNames.includes(projectFilter);
       const matchesPerson = personFilter === 'All' || (m.members || []).some((mm: any) => mm.display_name === personFilter);
-      let matchesMonth = true;
-      if (monthFilter !== 'All' && monthFilter !== '') matchesMonth = Boolean(m.date && String(m.date).startsWith(monthFilter));
-      return matchesSearch && matchesPlatform && matchesProject && matchesPerson && matchesMonth && meetingMatchesQuickFilter(m, quickFilter);
+      return matchesSearch && matchesPlatform && matchesProject && matchesPerson && meetingMatchesQuickFilter(m, quickFilter);
     });
-  }, [meetings, searchTerm, platformFilter, projectFilter, personFilter, monthFilter, quickFilter, overloadedNames]);
+  }, [listMeetings, searchTerm, platformFilter, projectFilter, personFilter, quickFilter, overloadedNames]);
 
   const totalPages = Math.ceil(filteredMeetings.length / pageSize) || 1;
   const paginatedMeetings = useMemo(() => {
@@ -626,7 +752,7 @@ function MeetingsPageContent() {
                         <div className="flex items-center gap-1.5">
                           <div className="flex -space-x-1.5">
                             {participants.slice(0, 4).map(p => (
-                              <div key={p.key} className="h-5 w-5 rounded-full ring-2 ring-white bg-[#6366f1] flex items-center justify-center text-[8px] font-bold text-white" title={p.name}>
+                              <div key={p.key} className="h-5 w-5 rounded-full ring-2 ring-white bg-[#0058be] flex items-center justify-center text-[8px] font-bold text-white" title={p.name}>
                                 {getInitials(p.name)}
                               </div>
                             ))}
@@ -693,12 +819,12 @@ function MeetingsPageContent() {
         {/* Top Header Bar */}
         <div className="min-h-[56px] bg-white border-b border-[#e2e8f0] flex flex-wrap items-center justify-between gap-2 px-4 md:px-8 py-2 md:py-0 shrink-0 z-30">
           <div className="flex items-center gap-3">
-            <CalendarIcon className="text-[#6366f1]" size={20} />
+            <CalendarIcon className="text-[#0058be]" size={20} />
             <h1 className="text-base font-extrabold text-[#0b1c30]">Quản lý Meetings</h1>
             <button
               type="button"
               onClick={() => setIsGuideOpen(true)}
-              className="flex items-center gap-1 text-[11px] font-bold text-[#64748b] hover:text-[#6366f1] transition-colors"
+              className="flex items-center gap-1 text-[11px] font-bold text-[#64748b] hover:text-[#0058be] transition-colors"
             >
               <Info size={13} />
               <span>Hướng dẫn sử dụng</span>
@@ -710,7 +836,7 @@ function MeetingsPageContent() {
               onClick={() => setIsSettingsOpen(true)}
               className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#475569] text-xs font-bold px-3.5 py-2 rounded-xl transition-colors shadow-2xs whitespace-nowrap"
             >
-              <Sparkles size={15} className="text-[#6366f1]" />
+              <Sparkles size={15} className="text-[#0058be]" />
               <span>Cấu hình AI & Google Admin</span>
             </button>
             {canCreate && (
@@ -732,48 +858,119 @@ function MeetingsPageContent() {
           <div className="flex items-center gap-8 border-b border-[#e2e8f0] pb-2 text-xs font-bold">
             <button
               onClick={() => handleTabSwitch('list')}
-              className={`pb-2 border-b-2 transition-colors ${activeTab === 'list' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === 'list' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
             >
               Danh sách cuộc họp
             </button>
             <button
               onClick={() => handleTabSwitch('calendar')}
-              className={`pb-2 border-b-2 transition-colors ${activeTab === 'calendar' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === 'calendar' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
             >
               Calendar Team
             </button>
             <button
               onClick={() => handleTabSwitch('personal')}
-              className={`pb-2 border-b-2 transition-colors ${activeTab === 'personal' ? 'border-[#6366f1] text-[#6366f1]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
+              className={`pb-2 border-b-2 transition-colors ${activeTab === 'personal' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-[#64748b] hover:text-[#0b1c30]'}`}
             >
               Calendar cá nhân
             </button>
           </div>
 
-          {/* Secondary scroll-nav (mirrors prototype's page-section tabs) */}
+          {/* Secondary scroll-nav + Global Time Filter, one toolbar (chốt
+              2026-09-20 §1): nav stays a single line (shrink-0, no internal
+              wrap) and the filter is what drops to its own row on a narrow
+              viewport, never the other way around. */}
           {activeTab === 'list' && (
-            <nav className="flex items-center gap-1 flex-wrap">
-              {[
-                { label: 'Tổng quan', ref: overviewSectionRef },
-                { label: 'Cuộc họp', ref: tableSectionRef },
-                { label: 'Theo nhân sự', ref: insightSectionRef },
-                { label: 'Theo dự án', ref: insightSectionRef },
-                { label: 'Chất lượng họp', ref: qualitySectionRef },
-              ].map(t => (
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <nav className="flex items-center gap-1 shrink-0">
+                {[
+                  { label: 'Tổng quan', ref: overviewSectionRef },
+                  { label: 'Cuộc họp', ref: tableSectionRef },
+                  { label: 'Theo nhân sự', ref: insightSectionRef },
+                  { label: 'Theo dự án', ref: insightSectionRef },
+                  { label: 'Chất lượng họp', ref: qualitySectionRef },
+                ].map(t => (
+                  <button
+                    key={t.label}
+                    onClick={() => scrollToSection(t.ref)}
+                    className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-[#64748b] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors whitespace-nowrap"
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </nav>
+
+              {/* Global Time Filter — single dateRange source of truth for
+                  every section above (chốt §1-§5). No label on desktop, no
+                  separate card — just another control group in this toolbar. */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex items-center gap-1.5 h-9 bg-white border border-slate-200 rounded-lg px-2 shadow-2xs text-[11px] font-bold">
+                  <select
+                    value={mtYear}
+                    onChange={e => { setMtYear(Number(e.target.value)); setActiveMeetingQuickFilter(null); }}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    {[...Array(5)].map((_, i) => {
+                      const y = new Date().getFullYear() - 2 + i;
+                      return <option key={y} value={y}>{y}</option>;
+                    })}
+                  </select>
+                  <span className="w-px h-4 bg-slate-200" />
+                  <select
+                    value={mtMonth}
+                    onChange={e => { setMtMonth(Number(e.target.value)); setActiveMeetingQuickFilter(null); }}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>Th.{i + 1}</option>)}
+                  </select>
+                  <span className="w-px h-4 bg-slate-200" />
+                  <select
+                    value={mtWeek}
+                    onChange={e => { const v = e.target.value; setMtWeek(v === 'all' ? 'all' : Number(v)); setActiveMeetingQuickFilter(null); }}
+                    className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                  >
+                    <option value="all">Cả tháng</option>
+                    {[...Array(MONTH_WEEKS_COUNT[mtMonth] || 5)].map((_, i) => <option key={i + 1} value={i + 1}>Tuần {i + 1}</option>)}
+                  </select>
+                </div>
+
+                {/* Tuần trước/này/tới + Tháng trước/này/tới — same
+                    applyQuickFilter(type) structure dashboard/report/page.tsx
+                    uses: each jumps to a FIXED period relative to today's
+                    real date (real calendar week for Tuần*, whole calendar
+                    month for Tháng*), not a stateful pager. */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  {(['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'] as const).map(label => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={() => applyMeetingQuickFilter(label)}
+                      className={`px-2.5 py-1.5 h-9 rounded-lg text-[11px] font-bold transition-colors whitespace-nowrap border ${
+                        activeMeetingQuickFilter === label
+                          ? 'bg-[#0058be] text-white border-[#0058be] shadow-2xs'
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-[#eff4ff] hover:text-[#0058be] hover:border-[#bcd6f5]'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 <button
-                  key={t.label}
-                  onClick={() => scrollToSection(t.ref)}
-                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-[#64748b] hover:bg-[#f5f3ff] hover:text-[#6366f1] transition-colors"
+                  type="button"
+                  onClick={handleRefreshMeetingRange}
+                  className="flex items-center gap-1.5 h-9 px-3 bg-white border border-slate-200 rounded-lg shadow-2xs text-slate-600 text-[11px] font-bold hover:bg-slate-50 transition-colors whitespace-nowrap"
                 >
-                  {t.label}
+                  <span className={isRefreshingMeetingRange ? 'inline-block animate-spin text-[#0058be]' : ''}>↻</span>
+                  <span>Làm mới</span>
                 </button>
-              ))}
-            </nav>
+              </div>
+            </div>
           )}
 
           {/* KPI Grid */}
           <div ref={overviewSectionRef} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-            <KpiCard label="Tổng cuộc họp" value={totalMeetings} icon="chart" border="border-l-[#6366f1]" text="text-[#6366f1]" trend={`${totalTasksPushed} task đã push`} />
+            <KpiCard label="Tổng cuộc họp" value={totalMeetings} icon="chart" border="border-l-[#0058be]" text="text-[#0058be]" trend={`${totalTasksPushed} task đã push`} />
             <KpiCard label="Tổng giờ họp" value={`${totalHours.toFixed(1)}h`} icon="clock" border="border-l-amber-500" text="text-amber-600" trend={`${upcomingMeetings} lịch sắp tới`} />
             <KpiCard label="Bình quân / người" value={`${avgHoursPerPerson.toFixed(1)}h`} icon="user" border="border-l-[#5aa1ed]" text="text-[#2563eb]" trend={`${uniquePeopleCount} người tham gia`} />
             <KpiCard label="Task đã vào KPI dự án" value={`${kpiTaskSyncPct}%`} icon="check" border="border-l-emerald-500" text="text-emerald-600" trend={`${syncedTasksCount}/${allRecommendedTasks.length} task đã đồng bộ`} />
@@ -791,7 +988,7 @@ function MeetingsPageContent() {
                 <BarChartCard
                   title="Xu hướng thời lượng họp theo dự án vs nội bộ (7 ngày)"
                   data={insightsData?.weekly_series || []}
-                  bars={[{ key: 'project', name: 'Theo dự án', fill: '#7068f5' }, { key: 'internal', name: 'Nội bộ / vận hành', fill: '#c8c5ff' }]}
+                  bars={[{ key: 'project', name: 'Theo dự án', fill: '#0058be' }, { key: 'internal', name: 'Nội bộ / vận hành', fill: '#c7d2e0' }]}
                   xKey="day"
                 />
                 <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs p-4">
@@ -825,30 +1022,21 @@ function MeetingsPageContent() {
                       placeholder="Tìm cuộc họp, dự án, người tham gia..."
                       value={searchTerm}
                       onChange={e => setSearchTerm(e.target.value)}
-                      className="w-full pl-9 pr-4 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] transition-all text-[#0b1c30]"
+                      className="w-full pl-9 pr-4 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#0058be] transition-all text-[#0b1c30]"
                     />
                   </div>
-                  <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] min-w-[150px] text-[#0b1c30] font-medium">
+                  <select value={projectFilter} onChange={e => setProjectFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#0058be] min-w-[150px] text-[#0b1c30] font-medium">
                     <option value="All">Tất cả dự án</option>
                     {projectOptions.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
-                  <select value={personFilter} onChange={e => setPersonFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] min-w-[150px] text-[#0b1c30] font-medium">
+                  <select value={personFilter} onChange={e => setPersonFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#0058be] min-w-[150px] text-[#0b1c30] font-medium">
                     <option value="All">Tất cả nhân sự</option>
                     {personOptions.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
-                  <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] min-w-[130px] text-[#0b1c30] font-medium">
+                  <select value={platformFilter} onChange={e => setPlatformFilter(e.target.value)} className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#0058be] min-w-[130px] text-[#0b1c30] font-medium">
                     <option value="All">Tất cả nền tảng</option>
                     {platformOptions.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
-                  <input
-                    type={monthFilter === 'All' ? 'text' : 'month'}
-                    placeholder="Tháng/Năm"
-                    onFocus={e => (e.target.type = 'month')}
-                    onBlur={e => { if (!e.target.value) e.target.type = 'text'; }}
-                    value={monthFilter === 'All' ? '' : monthFilter}
-                    onChange={e => setMonthFilter(e.target.value || 'All')}
-                    className="px-3.5 py-2 bg-[#f8fafc] border border-[#cbd5e1] rounded-xl text-xs focus:outline-none focus:border-[#6366f1] min-w-[130px] placeholder:text-[#94a3b8] text-[#0b1c30] font-medium"
-                  />
                 </div>
 
                 <div className="flex items-center gap-2 flex-wrap pt-1 border-t border-[#f1f5f9]">
@@ -864,16 +1052,16 @@ function MeetingsPageContent() {
                       key={chip.key}
                       onClick={() => setQuickFilter(prev => prev === chip.key ? '' : chip.key)}
                       className={`px-2.5 py-1 rounded-full text-[11px] font-bold border transition-colors ${
-                        quickFilter === chip.key ? 'border-[#bbb6ff] bg-[#efedff] text-[#554bea]' : 'border-[#dfe5ed] bg-[#f8fafc] text-[#52627a] hover:border-[#bbb6ff]'
+                        quickFilter === chip.key ? 'border-[#bcd6f5] bg-[#eff4ff] text-[#0058be]' : 'border-[#dfe5ed] bg-[#f8fafc] text-[#52627a] hover:border-[#bcd6f5]'
                       }`}
                     >
                       {chip.label}
                     </button>
                   ))}
-                  {(quickFilter || projectFilter !== 'All' || personFilter !== 'All' || platformFilter !== 'All' || monthFilter !== 'All' || searchTerm) && (
+                  {(quickFilter || projectFilter !== 'All' || personFilter !== 'All' || platformFilter !== 'All' || searchTerm) && (
                     <button
-                      onClick={() => { setQuickFilter(''); setProjectFilter('All'); setPersonFilter('All'); setPlatformFilter('All'); setMonthFilter('All'); setSearchTerm(''); }}
-                      className="ml-auto text-[11px] font-bold text-[#6366f1] hover:underline"
+                      onClick={() => { setQuickFilter(''); setProjectFilter('All'); setPersonFilter('All'); setPlatformFilter('All'); setSearchTerm(''); }}
+                      className="ml-auto text-[11px] font-bold text-[#0058be] hover:underline"
                     >
                       Đặt lại bộ lọc
                     </button>
@@ -882,16 +1070,16 @@ function MeetingsPageContent() {
               </div>
 
               <div ref={tableSectionRef} className="bg-white rounded-2xl border border-[#e2e8f0] shadow-2xs overflow-hidden">
-                {isLoading ? (
+                {isListMeetingsLoading ? (
                   <div className="text-center py-16 text-[#64748b] text-xs">
                     <div className="flex items-center justify-center gap-2">
-                      <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
                       <span>Đang tải danh sách cuộc họp...</span>
                     </div>
                   </div>
                 ) : filteredMeetings.length === 0 ? (
                   <div className="text-center py-16 p-8 space-y-2">
-                    <div className="w-12 h-12 bg-[#f5f3ff] text-[#6366f1] rounded-2xl flex items-center justify-center mx-auto mb-3">
+                    <div className="w-12 h-12 bg-[#eff4ff] text-[#0058be] rounded-2xl flex items-center justify-center mx-auto mb-3">
                       <Search size={24} />
                     </div>
                     <p className="text-[#0b1c30] font-bold text-sm">Không tìm thấy cuộc họp nào</p>
@@ -926,7 +1114,7 @@ function MeetingsPageContent() {
                             <tr key={m.id} className="border-b border-[#edf1f6] hover:bg-[#fbfbff] transition-colors">
                               <td className="p-3">
                                 <div className="flex items-center gap-2.5 min-w-[200px]">
-                                  <div className="w-8 h-8 rounded-lg bg-[#efefff] text-[#5e57e7] flex items-center justify-center font-extrabold shrink-0">▣</div>
+                                  <div className="w-8 h-8 rounded-lg bg-[#eff4ff] text-[#0058be] flex items-center justify-center font-extrabold shrink-0">▣</div>
                                   <div className="min-w-0">
                                     <p className="font-bold text-[#0b1c30] truncate max-w-[220px]">{m.title}</p>
                                     <p className="text-[10px] text-[#8492a6]">{m.platform || 'Google Meet'}{m.duration ? ` · ${m.duration} phút` : ''}</p>
@@ -989,7 +1177,7 @@ function MeetingsPageContent() {
                                   )}
                                   <button
                                     onClick={() => handleOpenDetail(m)}
-                                    className="border border-[#d7dfeb] bg-white rounded-lg h-7 px-2.5 text-[#506078] text-[10px] font-bold hover:border-[#6366f1] hover:text-[#6366f1] transition-colors whitespace-nowrap"
+                                    className="border border-[#d7dfeb] bg-white rounded-lg h-7 px-2.5 text-[#506078] text-[10px] font-bold hover:border-[#0058be] hover:text-[#0058be] transition-colors whitespace-nowrap"
                                   >
                                     Chi tiết ›
                                   </button>
@@ -1022,7 +1210,7 @@ function MeetingsPageContent() {
                       <button
                         key={page}
                         onClick={() => setCurrentPage(page)}
-                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentPage === page ? 'bg-[#f5f3ff] text-[#6366f1] border border-[#e0e7ff]' : 'hover:bg-slate-50 text-[#64748b]'}`}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all ${currentPage === page ? 'bg-[#eff4ff] text-[#0058be] border border-[#bcd6f5]' : 'hover:bg-slate-50 text-[#64748b]'}`}
                       >
                         {page}
                       </button>
@@ -1051,7 +1239,7 @@ function MeetingsPageContent() {
                         return (
                           <div key={p.name} className="grid grid-cols-[1fr_2fr_44px] items-center gap-2.5">
                             <span className="text-[11px] text-[#52627a] truncate">{p.name}</span>
-                            <ProgressBar value={(p.hours / max) * 100} showLabel={false} color="bg-[#736cf3]" />
+                            <ProgressBar value={(p.hours / max) * 100} showLabel={false} color="bg-[#0058be]" />
                             <span className="text-[11px] font-bold text-right">{p.hours}h</span>
                           </div>
                         );
@@ -1080,7 +1268,7 @@ function MeetingsPageContent() {
                                   type="button"
                                   onClick={() => p.memberId != null && setAttendanceDrawerMember({ member_id: p.memberId, display_name: p.name, hours: p.hours, meetings: p.meetings })}
                                   disabled={p.memberId == null}
-                                  className={`text-[11px] font-bold text-left ${p.memberId != null ? 'text-[#0b1c30] hover:text-[#6366f1] hover:underline' : 'text-[#0b1c30] cursor-default'}`}
+                                  className={`text-[11px] font-bold text-left ${p.memberId != null ? 'text-[#0b1c30] hover:text-[#0058be] hover:underline' : 'text-[#0b1c30] cursor-default'}`}
                                 >
                                   {p.name}
                                 </button>
@@ -1103,7 +1291,7 @@ function MeetingsPageContent() {
                         <button
                           type="button"
                           onClick={() => setShowAllPeople(v => !v)}
-                          className="mt-2.5 text-[11px] font-bold text-[#6366f1] hover:underline"
+                          className="mt-2.5 text-[11px] font-bold text-[#0058be] hover:underline"
                         >
                           {showAllPeople ? 'Thu gọn' : `Xem tất cả (${filteredTopPeople.length})`}
                         </button>
@@ -1170,7 +1358,7 @@ function MeetingsPageContent() {
                     <button
                       type="button"
                       onClick={() => setWeekOffset(0)}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#0058be] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
                     >
                       Tuần này
                     </button>
@@ -1223,7 +1411,7 @@ function MeetingsPageContent() {
                     <button
                       type="button"
                       onClick={() => setWeekOffset(0)}
-                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
+                      className={`px-3 py-1.5 text-xs font-bold rounded-lg transition-colors ${weekOffset === 0 ? 'bg-white text-[#0058be] shadow-2xs' : 'text-[#64748b] hover:bg-white'}`}
                     >
                       Tuần này
                     </button>
@@ -1250,7 +1438,7 @@ function MeetingsPageContent() {
               {isMyMeetingsLoading ? (
                 <div className="text-center py-16 text-[#64748b] text-xs">
                   <div className="flex items-center justify-center gap-2">
-                    <div className="w-4 h-4 border-2 border-[#6366f1] border-t-transparent rounded-full animate-spin" />
+                    <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
                     <span>Đang tải lịch cá nhân...</span>
                   </div>
                 </div>

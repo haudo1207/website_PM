@@ -47,7 +47,7 @@ export default function MemberAttendanceDrawer({ isOpen, onClose, member, summar
       <div className="fixed inset-y-0 right-0 z-50 w-full max-w-lg bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
         <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-4">
-            <div className="w-12 h-12 rounded-full bg-[#6366f1] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
+            <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
               {member.display_name ? member.display_name.charAt(0).toUpperCase() : 'M'}
             </div>
             <div>
@@ -104,7 +104,7 @@ export default function MemberAttendanceDrawer({ isOpen, onClose, member, summar
                   <button
                     type="button"
                     onClick={() => setShowAllHistory(v => !v)}
-                    className="mt-3 text-[11px] font-bold text-[#6366f1] hover:underline"
+                    className="mt-3 text-[11px] font-bold text-[#0058be] hover:underline"
                   >
                     {showAllHistory ? 'Thu gọn' : `Xem tất cả (${history.length}) →`}
                   </button>
