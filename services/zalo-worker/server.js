@@ -311,11 +311,6 @@ function attachListener(session, zaloApi) {
     // pulls in from before a fresh manual reconnect gets filtered out in
     // forwardMessage() (session.freshReconnectAtMs), not here.
     setTimeout(() => requestGroupBackfill(session), 2000);
-    // Also run the per-group catch-up (pollGroupHistory, see startPolling())
-    // right away instead of waiting up to POLL_INTERVAL_MS for its next
-    // tick — mirrors SMB_Deployment's triggerSync()-on-connect pattern, and
-    // is the one catch-up path immune to requestGroupBackfill's crowding.
-    setTimeout(() => pollGroupHistory(session).catch((err) => console.error(`[poll:${session.accountId}] on-connect catch-up failed:`, err.message)), 2000);
   });
 
   zaloApi.listener.on("old_messages", withTimeout(async (messages, threadType) => {
@@ -861,15 +856,13 @@ setInterval(() => {
   }
 }, BACKFILL_INTERVAL_MS);
 
-// Re-enabled: this got disabled earlier after [zca-http] logs showed Zalo's
-// server 404-ing api/group/history for a well-formed request. Re-checked
-// against C:\Markeeai\SMB_Deployment\zalo-bridge (same zca-js 2.1.2), which
-// actively relies on this exact same api.getGroupChatHistory() call for its
-// own missed-message sync with no reported failures — worth re-verifying
-// here rather than assuming it's still dead. pollGroupHistory() already
-// logs+continues per-group on failure, so if Zalo still 404s this for this
-// account, it just no-ops with a log line, same as being disabled — no
-// regression either way. This is also the ONE mechanism that avoids the
-// "most recent batch across ALL groups" crowding-out problem the listener's
-// requestOldMessages() backfill has, since it's scoped to a single thread_id.
-startPolling();
+// Disabled — re-verified 2026-09-18 against a real connected session: Zalo's
+// server still 404s api/group/history outright (nginx 404, not a zca-js/app
+// error) — confirmed via live logs:
+//   [zca-http] GET https://tt-group-wpa.chat.zalo.me/api/group/history... -> 404
+// C:\Markeeai\SMB_Deployment\zalo-bridge calls this exact same
+// api.getGroupChatHistory() (same zca-js 2.1.2) for its own missed-message
+// sync — its failure path just logs and continues, so it would fail the
+// exact same way there too; it isn't a working alternative, just untested.
+// Re-enable only if a future zca-js version (or Zalo) restores this endpoint.
+// startPolling();
