@@ -171,7 +171,15 @@ export default function MultiTeamProjectComparison() {
   const allProjects: any[] = allProjectsData || [];
 
   // ── Section 4 → Member Detail modal state ────────────────────────
-  const [selectedMemberModal, setSelectedMemberModal] = useState<TeamComparisonMember | null>(null);
+  // Type is `any` (matching the Overview implementation at
+  // `frontend/src/app/dashboard/overview/page.tsx:539`) so the same
+  // modal can be opened for BOTH a Member card AND a Leader card —
+  // the Leader shape is a small `{member_id, name, team, department,
+  // email}` projection from `TeamComparisonTeam` (Leader's personal
+  // data only). MemberDetailModal consumes only `member.id` (for the
+  // task filter) and `member.rawMember.team/department/leader_name`
+  // (for the header subtitle), so the Leader projection is sufficient.
+  const [selectedMemberModal, setSelectedMemberModal] = useState<any | null>(null);
   const closeMemberModal = useCallback(() => setSelectedMemberModal(null), []);
 
   // ── Multi-Leader selection state (relocated from System Audit) ─────────
@@ -816,7 +824,48 @@ export default function MultiTeamProjectComparison() {
                     </div>
 
                     <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
-                      <div className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100">
+                      {/*
+                        Leader card — clickable (mirrors the Member card below).
+                        Opens the same `MemberDetailModal` used by Member cards,
+                        passing a Leader-shaped projection so the modal filters
+                        tasks by the Leader's `member_id` (PERSONAL data, NOT
+                        team aggregate). The Modal already contains the "Phân bổ
+                        theo Skill Area / Skill" section reused from Overview.
+                      */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (!t.leader_member_id) return;
+                          // Leader → modal projection: same shape as a Member
+                          // card click (`member_id`, `name`, `team`,
+                          // `department`). The Modal invocation below reads
+                          // `selectedMemberModal.member_id` for the task filter
+                          // and `team/department` for the header subtitle —
+                          // both satisfied here.
+                          setSelectedMemberModal({
+                            member_id: t.leader_member_id,
+                            name: t.leader_name,
+                            team: t.team_name || undefined,
+                            department: undefined,
+                            position: undefined,
+                          });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            if (!t.leader_member_id) return;
+                            setSelectedMemberModal({
+                              member_id: t.leader_member_id,
+                              name: t.leader_name,
+                              team: t.team_name || undefined,
+                              department: undefined,
+                              position: undefined,
+                            });
+                          }
+                        }}
+                        className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100 cursor-pointer hover:border-[#0058be]/70 hover:shadow-md hover:bg-blue-50/40 transition-all focus:outline-none focus:ring-2 focus:ring-[#0058be]/40"
+                      >
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-[#0b1c30] truncate" title={t.leader_name}>
@@ -1086,12 +1135,19 @@ export default function MultiTeamProjectComparison() {
         </div>
       )}
 
-      {/* SECTION 4 → Member Detail modal. Reuses the Overview Member
-          Detail drill-down so the same Task list, KPI Average, priority
-          pills and project cards open from a Section 4 member click. The
-          underlying TeamComparisonMember is reshaped into the modal's
-          expected `{id, name, rawMember}` payload — `rawMember.team` /
-          `rawMember.leader_name` drive the modal header subtitle. */}
+      {/* SECTION 4 → Member / Leader Detail modal. Reuses the Overview
+          Member Detail drill-down so the same Task list, KPI Average,
+          priority pills, Skill Area / Skill breakdown and project
+          cards open from a Section 4 Member OR Leader card click. The
+          underlying state object is reshaped into the modal's expected
+          `{id, name, rawMember}` payload — `rawMember.team` /
+          `rawMember.department` / `rawMember.leader_name` drive the
+          modal header subtitle. For a Leader click the projection is
+          a small `{member_id, name, team, department}` projection of
+          `TeamComparisonTeam` (Leader PERSONAL data only — no team
+          aggregate). MemberDetailModal filters tasks by `member.id`
+          (client-side), so passing the Leader's `member_id` yields the
+          Leader's personal task list. */}
       {selectedMemberModal && (
         <MemberDetailModal
           member={{
