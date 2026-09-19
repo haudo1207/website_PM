@@ -944,6 +944,12 @@ function ProjectDetailContent() {
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [drawerForm, setDrawerForm] = useState<Record<string, any>>({});
   const [drawerSaving, setDrawerSaving] = useState(false);
+  // Task Group ("Task Cha") detail drawer — same slide-in-from-right layout
+  // as the Task detail drawer above, adapted to a Group's own fields (no
+  // priority/skill/blocking/review — those don't exist on a Group).
+  const [selectedGroupDetail, setSelectedGroupDetail] = useState<any>(null);
+  const [groupDrawerForm, setGroupDrawerForm] = useState<Record<string, any>>({});
+  const [groupDrawerSaving, setGroupDrawerSaving] = useState(false);
   const [drawerLinkDraft, setDrawerLinkDraft] = useState('');
   const [importingInboxId, setImportingInboxId] = useState<number | null>(null);
   const [isBulkImporting, setIsBulkImporting] = useState(false);
@@ -4187,6 +4193,34 @@ function ProjectDetailContent() {
     }
   }, [selectedTask]);
 
+  // Sync group drawer form when selectedGroupDetail changes
+  useEffect(() => {
+    if (selectedGroupDetail) {
+      setGroupDrawerForm({
+        name: selectedGroupDetail.name || '',
+        description: selectedGroupDetail.description || '',
+        status: selectedGroupDetail.status || 'Waiting',
+        manday_est: selectedGroupDetail.manday_est != null ? String(selectedGroupDetail.manday_est) : '',
+        start_date_est: selectedGroupDetail.start_date_est || '',
+        assigned_id: (selectedGroupDetail.assigned_ids && selectedGroupDetail.assigned_ids[0]) ? String(selectedGroupDetail.assigned_ids[0]) : '',
+        support_ids: (selectedGroupDetail.support_ids || []).map((id: any) => String(id)),
+      });
+    }
+  }, [selectedGroupDetail]);
+
+  // Keep selectedGroupDetail in sync with taskGroups after reload — same
+  // pattern as selectedTask below, so the drawer reflects a save immediately
+  // instead of showing stale values until it's closed and reopened.
+  useEffect(() => {
+    if (selectedGroupDetail && taskGroups.length > 0) {
+      const fresh = taskGroups.find((g: any) => g.id === selectedGroupDetail.id);
+      if (fresh && fresh !== selectedGroupDetail) {
+        setSelectedGroupDetail(fresh);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskGroups]);
+
   useEffect(() => {
     if (highlightTaskParam && items.length > 0) {
       const taskId = parseInt(highlightTaskParam);
@@ -4319,6 +4353,36 @@ function ProjectDetailContent() {
       flash('Lỗi cập nhật task: ' + getApiErrorMessage(err), true);
     } finally {
       setDrawerSaving(false);
+    }
+  };
+
+  const handleGroupDrawerSave = async () => {
+    if (!selectedGroupDetail || groupDrawerSaving) return;
+    setGroupDrawerSaving(true);
+    try {
+      const payload: Record<string, any> = {
+        name: groupDrawerForm.name,
+        description: groupDrawerForm.description || null,
+        status: groupDrawerForm.status,
+        manday_est: groupDrawerForm.manday_est ? parseFloat(groupDrawerForm.manday_est) : null,
+        start_date_est: convertToDbDate(groupDrawerForm.start_date_est),
+        support_ids: (groupDrawerForm.support_ids || []).map((v: any) => parseInt(v, 10)),
+      };
+      // "Người thực hiện" only goes in the payload when this user is actually
+      // allowed to change it (project's own PM/Leader, or a global
+      // Leader/super_admin) — backend silently ignores it otherwise anyway,
+      // but omitting it here keeps the request honest about what this user
+      // can/can't do.
+      if (isProjectManager) {
+        payload.assigned_ids = groupDrawerForm.assigned_id ? [parseInt(groupDrawerForm.assigned_id, 10)] : [];
+      }
+      await updateTaskGroup(selectedGroupDetail.phase_id, selectedGroupDetail.id, payload);
+      flash('Đã cập nhật Task Cha thành công!');
+      await reloadAll(true);
+    } catch (err: any) {
+      flash('Lỗi cập nhật Task Cha: ' + getApiErrorMessage(err), true);
+    } finally {
+      setGroupDrawerSaving(false);
     }
   };
 
@@ -6426,7 +6490,13 @@ function ProjectDetailContent() {
                 const allDone = childTasks.length > 0 && childTasks.every(t => (t.status || '').toLowerCase() === 'done');
                 displayContent = (
                   <div className="flex items-center justify-between w-full pr-2 gap-2">
-                    <span className="text-[12.5px] font-semibold text-[#1e293b] whitespace-pre-wrap break-words block leading-relaxed pr-2 pl-3">{val}</span>
+                    <span
+                      className="text-[12.5px] font-semibold text-[#1e293b] whitespace-pre-wrap break-words block leading-relaxed pr-2 pl-3 hover:text-[#0058be] cursor-pointer"
+                      onClick={(e) => { e.stopPropagation(); setSelectedGroupDetail(group); }}
+                      title="Click to view details"
+                    >
+                      {val}
+                    </span>
                     {isMember() && (group.status.toLowerCase() !== 'done') && (
                       <button
                         type="button"
@@ -10318,6 +10388,176 @@ function ProjectDetailContent() {
                 className="w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {drawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedGroupDetail && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          <div onClick={() => setSelectedGroupDetail(null)} className="absolute inset-0" />
+          <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
+            <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#eef2ff] to-white">
+              <div className="flex items-center gap-3">
+                <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-indigo-100 text-indigo-700">
+                  <span className="material-symbols-outlined text-[18px]">folder_open</span>
+                </span>
+                <div>
+                  <h3 className="text-sm font-bold text-[#0b1c30]">Chi tiết Task Cha</h3>
+                  <span className="font-mono text-[13px] text-indigo-700 font-bold tracking-wide">{selectedGroupDetail.roman_index ? `Task ${selectedGroupDetail.roman_index}` : ''}</span>
+                </div>
+              </div>
+              <button onClick={() => setSelectedGroupDetail(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
+                <X size={18} />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+              {/* Snapshot — Tiến độ/Task/Manday, read-only, same 4-up layout
+                  spirit as the Task drawer's KPI Snapshot above. */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Snapshot</label>
+                <div className="grid grid-cols-3 gap-3 mt-2">
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Tiến độ</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedGroupDetail.progress ?? 0}%</div>
+                  </div>
+                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
+                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Task</div>
+                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedGroupDetail.done_count ?? 0}/{selectedGroupDetail.task_count ?? 0}</div>
+                  </div>
+                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
+                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Manday (TT/KH)</div>
+                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedGroupDetail.manday_actual ?? '—'}/{selectedGroupDetail.manday_est ?? '—'}</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Detail Task */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Detail Task</label>
+                <input
+                  value={groupDrawerForm.name || ''}
+                  onChange={e => setGroupDrawerForm({ ...groupDrawerForm, name: e.target.value })}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-bold"
+                />
+              </div>
+
+              {/* Description */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Mô tả</label>
+                <textarea
+                  value={groupDrawerForm.description || ''}
+                  onChange={e => setGroupDrawerForm({ ...groupDrawerForm, description: e.target.value })}
+                  rows={3}
+                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
+                />
+              </div>
+
+              {/* Status & Manday EST */}
+              <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Status</label>
+                  <select
+                    value={groupDrawerForm.status || 'Waiting'}
+                    onChange={e => setGroupDrawerForm({ ...groupDrawerForm, status: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-semibold"
+                  >
+                    {getAvailableStatuses().length === 0 ? (
+                      <>
+                        <option value="Waiting">Waiting</option>
+                        <option value="Process">Process</option>
+                        <option value="Done">Done</option>
+                        <option value="Cancel">Cancel</option>
+                      </>
+                    ) : (
+                      getAvailableStatuses().map((st: any) => (
+                        <option key={st.id} value={st.name}>{st.name}</option>
+                      ))
+                    )}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Manday EST (1–10)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    step={1}
+                    value={groupDrawerForm.manday_est || ''}
+                    onChange={e => setGroupDrawerForm({ ...groupDrawerForm, manday_est: e.target.value })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              {/* Start / End date */}
+              <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Start Date EST</label>
+                  <input
+                    type="date"
+                    value={groupDrawerForm.start_date_est ? toPickerDate(groupDrawerForm.start_date_est) : ''}
+                    onChange={e => setGroupDrawerForm({ ...groupDrawerForm, start_date_est: e.target.value ? fromPickerDate(e.target.value) : '' })}
+                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">End Date EST</label>
+                  <div className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-500 font-mono" title="Tự động tính = Start Date + Manday EST">
+                    {selectedGroupDetail.end_date_est ? formatDateToShow(selectedGroupDetail.end_date_est) : '—'}
+                  </div>
+                </div>
+              </div>
+
+              {/* Người thực hiện — locked unless PM/Leader dự án hoặc Leader/Admin toàn hệ thống */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5 mb-1.5">
+                  Người thực hiện
+                  {!isProjectManager && <Lock size={10} className="text-slate-400" />}
+                </label>
+                {isProjectManager ? (
+                  <SearchableSelect
+                    label="người thực hiện"
+                    icon=""
+                    options={projectMembers.map((m: any) => ({ id: m.id, name: m.display_name }))}
+                    value={groupDrawerForm.assigned_id || ''}
+                    onChange={(val: any) => setGroupDrawerForm({ ...groupDrawerForm, assigned_id: val ? String(val) : '' })}
+                    placeholder="Chọn người thực hiện..."
+                    className="w-full text-[13px]"
+                  />
+                ) : (
+                  <div
+                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-slate-500 font-semibold"
+                    title="Chỉ PM/Leader dự án này hoặc Leader/Admin mới sửa được người thực hiện của Task Cha"
+                  >
+                    {(selectedGroupDetail.assigned_names || []).join(', ') || '—'}
+                  </div>
+                )}
+              </div>
+
+              {/* Người hỗ trợ — luôn sửa được */}
+              <div>
+                <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Người hỗ trợ</label>
+                <SearchableSelect
+                  label="người hỗ trợ"
+                  icon=""
+                  isMulti
+                  options={projectMembers.map((m: any) => ({ id: m.id, name: m.display_name }))}
+                  value={groupDrawerForm.support_ids || []}
+                  onChange={(val: any) => setGroupDrawerForm({ ...groupDrawerForm, support_ids: val || [] })}
+                  placeholder="Chọn người hỗ trợ..."
+                  className="w-full text-[13px]"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-slate-200 bg-white">
+              <button
+                onClick={handleGroupDrawerSave}
+                disabled={groupDrawerSaving}
+                className="w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {groupDrawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
               </button>
             </div>
           </div>
