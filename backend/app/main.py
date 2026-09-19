@@ -785,6 +785,9 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS title VARCHAR(255)"
+        ))
 
         # ── Workload Settings: configurable thresholds for Section 4 ────
         conn.execute(text("""

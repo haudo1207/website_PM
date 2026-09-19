@@ -86,6 +86,7 @@ def _log_to_dict(l: ProjectFeatureLog) -> dict:
         "id": l.id,
         "feature_id": l.feature_id,
         "project_id": l.project_id,
+        "title": l.title,
         "content": l.content,
         "status": l.status,
         "author": (l.author.display_name if l.author else None) or l.author_display_name,
@@ -339,12 +340,35 @@ def download_log_attachment(pid: int, lid: int, idx: int, db: Session = Depends(
     return FileResponse(path, filename=meta["file_name"], media_type=meta.get("mime_type") or "application/octet-stream")
 
 
+@router.delete("/projects/{pid:int}/feature-logs/{lid:int}/attachments/{idx:int}")
+def remove_log_attachment(pid: int, lid: int, idx: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """"Gỡ bỏ" in the "Sửa bản nháp WIP" modal — drop one file from the log's
+    attachment list. Only removes the JSON metadata entry (matches how the
+    rest of this router treats attachments as lightweight references); the
+    underlying stored file is left in place, same lifecycle as an orphaned
+    upload elsewhere in the app."""
+    require_project(db, current_user, pid)
+    log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
+    if not log:
+        raise HTTPException(404, "Không tìm thấy log")
+    files = list(log.attached_files or [])
+    if idx < 0 or idx >= len(files):
+        raise HTTPException(404, "Không tìm thấy file đính kèm")
+    files.pop(idx)
+    log.attached_files = files or None
+    db.commit()
+    db.refresh(log)
+    return _log_to_dict(log)
+
+
 @router.post("/projects/{pid:int}/share-link")
-def create_share_link(pid: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_share_link(pid: int, request: Request, body: dict = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     import secrets
+    from urllib.parse import quote
     from ..config import settings
     from ..models.project import Project
 
+    body = body or {}
     require_project(db, current_user, pid)
     project = db.query(Project).filter(Project.id == pid).first()
     if not project:
@@ -366,14 +390,32 @@ def create_share_link(pid: int, request: Request, db: Session = Depends(get_db),
     # URL. The public route is proxied through the frontend's /api/* rewrite,
     # so the frontend's own public origin is what users need.
     base_url = (settings.APP_BASE_URL or settings.FRONTEND_URL or "").rstrip("/")
-    return {"share_token": project.share_token, "share_url": f"{base_url}/share/project/{project.share_token}"}
+    share_url = f"{base_url}/share/project/{project.share_token}"
+
+    # Optional deep link straight to one Feature's section (markee-dashboard's
+    # "Mở Link" after saving a WIP entry does this) — the public share page
+    # reads this back as ?feature=<name> to scroll/highlight that section,
+    # instead of dropping the viewer at the top of the whole project.
+    feature_id = body.get("feature_id")
+    if feature_id:
+        feature = db.query(ProjectFeature).filter(ProjectFeature.id == feature_id, ProjectFeature.project_id == pid).first()
+        if feature:
+            share_url += f"?feature={quote(feature.name)}"
+
+    return {"share_token": project.share_token, "share_url": share_url}
 
 
 @router.patch("/projects/{pid:int}/feature-logs/{lid:int}")
 def update_log(pid: int, lid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Edit an existing WIP log's content — the only field markee-dashboard's
-    original UI lets you change on a log entry after the fact (title/tags are
-    derived from `content`'s markdown, not separate columns here)."""
+    """Edit an existing WIP log — mirrors markee-dashboard's "Sửa bản nháp
+    WIP" modal (Tiêu đề / Tính năng / Dự án / Nội dung Markdown), adapted to
+    pm-new's normalized Feature table: `feature_name` (free text, like
+    markee-dashboard's own field) is resolved to a real ProjectFeature row —
+    reusing one with the same name in the destination project, or creating
+    one — rather than requiring the caller to already know a feature_id.
+    `target_project_id` moves the log (and re-homes its Feature link) to a
+    different project the caller also has access to.
+    """
     require_project(db, current_user, pid)
     log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
     if not log:
@@ -383,16 +425,47 @@ def update_log(pid: int, lid: int, body: dict, db: Session = Depends(get_db), cu
     if not content:
         raise HTTPException(400, "Thiếu nội dung log")
 
-    old_content = log.content
+    target_project_id = body.get("target_project_id") or pid
+    if target_project_id != pid:
+        require_project(db, current_user, target_project_id)
+
+    old_content, old_project_id = log.content, log.project_id
     log.content = content
+    if "title" in body:
+        log.title = (body.get("title") or "").strip() or None
+
+    feature_name = (body.get("feature_name") or "").strip()
+    if feature_name or target_project_id != pid:
+        if not feature_name:
+            # Moving project without renaming the Feature — carry the same
+            # name over into the destination project's own Feature row.
+            feature_name = log.feature.name if log.feature else "Chưa đặt tên"
+        feature = (
+            db.query(ProjectFeature)
+            .filter(ProjectFeature.project_id == target_project_id, ProjectFeature.name.ilike(feature_name))
+            .first()
+        )
+        if not feature:
+            feature = ProjectFeature(
+                project_id=target_project_id, name=feature_name,
+                created_by_id=_member_id_for(current_user, db),
+            )
+            db.add(feature)
+            db.flush()
+        log.feature_id = feature.id
+
+    log.project_id = target_project_id
     db.commit()
     db.refresh(log)
-    if old_content != log.content:
+    if old_content != log.content or old_project_id != log.project_id:
         AuditService.record(
             db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
             entity_type="ProjectFeatureLog", entity_id=log.id, action="UPDATE",
-            project_id=pid, field_name="content", old_value=old_content[:200], new_value=log.content[:200],
-            description=f"Sửa log #{log.id}"
+            project_id=log.project_id, field_name="content", old_value=old_content[:200], new_value=log.content[:200],
+            description=(
+                f"Sửa log #{log.id}" if old_project_id == log.project_id
+                else f"Sửa và chuyển log #{log.id} từ dự án #{old_project_id} sang #{log.project_id}"
+            )
         )
         db.commit()
     return _log_to_dict(log)

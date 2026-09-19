@@ -38,6 +38,11 @@ class ProjectFeatureLog(Base):
     # an admin/system account logged into the extension) — without this the
     # log would show "Ẩn danh" even though the author's real login is known.
     author_display_name = Column(String(255), nullable=True)
+    # Optional — markee-dashboard's "Sửa bản nháp WIP" modal has a Tiêu đề
+    # field; most logs are created without one (via the extension, which
+    # never set it), so this stays nullable and the UI falls back to a
+    # content preview when blank.
+    title       = Column(String(255), nullable=True)
     content     = Column(Text, nullable=False)
     status      = Column(String(20), nullable=False, default="pending", server_default="pending")
     attached_files = Column(JSON, nullable=True)

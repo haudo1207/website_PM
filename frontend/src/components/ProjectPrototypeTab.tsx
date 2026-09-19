@@ -7,11 +7,12 @@ import {
 } from 'lucide-react';
 import {
   getProjectFeatures, createProjectFeature, renameProjectFeature, deleteProjectFeature,
-  getProjectFeatureLogs, createProjectFeatureLog, updateProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
-  uploadFeatureLogAttachment,
+  getProjectFeatureLogs, createProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
+  uploadFeatureLogAttachment, createProjectShareLink,
   getProjectKnowledgeItems, createProjectKnowledgeItem, updateProjectKnowledgeItem, deleteProjectKnowledgeItem,
 } from '@/lib/api';
 import WipLogDetailModal from './WipLogDetailModal';
+import EditWipLogModal from './EditWipLogModal';
 
 // Real feature: "Tính năng" + WIP log timeline scoped to one project. Ported
 // from markee-dashboard's ProjectDetailContent.tsx concept (skill_library
@@ -54,6 +55,7 @@ export interface AiTask {
 export interface FeatureLog {
   id: number;
   feature_id: number;
+  title?: string | null;
   content: string;
   status: string;
   author: string | null;
@@ -118,9 +120,7 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
   const [renameValue, setRenameValue] = useState('');
   const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set());
   const [detailModal, setDetailModal] = useState<{ log: FeatureLog; attachmentIdx?: number; tab?: 'description' | 'tasks' } | null>(null);
-  const [editingLogId, setEditingLogId] = useState<number | null>(null);
-  const [editLogValue, setEditLogValue] = useState('');
-  const [savingLogEdit, setSavingLogEdit] = useState(false);
+  const [editModalLog, setEditModalLog] = useState<FeatureLog | null>(null);
   const [shareStatusLogId, setShareStatusLogId] = useState<number | null>(null);
 
   // "Lịch sử dự án" (WIP timeline) vs "Knowledge Hub" (curated notes) — mirrors
@@ -317,27 +317,22 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
     }
   }
 
-  function startEditLog(log: FeatureLog) {
-    setEditingLogId(log.id);
-    setEditLogValue(log.content);
-  }
-
-  async function handleSaveEditLog(log: FeatureLog) {
-    const content = editLogValue.trim();
-    if (!content || content === log.content) {
-      setEditingLogId(null);
+  function handleLogSaved(updated: FeatureLog, movedToProjectId: number) {
+    if (movedToProjectId !== projectId) {
+      // Moved to a different project — it no longer belongs in this
+      // project's timeline/feature counts at all.
+      setLogs((prev) => prev.filter((l) => l.id !== updated.id));
+      setFeatures((prev) => prev.map((f) => f.id === updated.feature_id ? { ...f, log_count: Math.max(0, f.log_count - 1) } : f));
       return;
     }
-    setSavingLogEdit(true);
-    try {
-      const updated = await updateProjectFeatureLog(projectId, log.id, content);
-      handleLogUpdated(updated);
-      setEditingLogId(null);
-    } catch (e: any) {
-      setError(e?.response?.data?.detail || 'Lỗi khi sửa log');
-    } finally {
-      setSavingLogEdit(false);
-    }
+    setLogs((prev) => {
+      const exists = prev.some((l) => l.id === updated.id);
+      return exists ? prev.map((l) => (l.id === updated.id ? updated : l)) : prev;
+    });
+    // Feature reassignment within the same project — refresh feature list
+    // counts since the log may have moved to a brand-new Feature.
+    getProjectFeatures(projectId).then(setFeatures).catch(() => {});
+    setDetailModal((prev) => (prev && prev.log.id === updated.id ? { ...prev, log: updated } : prev));
   }
 
   async function handleDeleteLog(log: FeatureLog) {
@@ -351,17 +346,19 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
     }
   }
 
-  // Deep-link copy only — no backend share-token involved, same as
-  // markee-dashboard's own "Share" icon (just navigator.clipboard.writeText
-  // on a URL that re-opens this project's Prototype tab).
+  // Real public share link (same /share/project/{token} page every other
+  // "Chia sẻ" entry point in the app uses) — deep-linked straight to this
+  // log's Feature via ?feature=<name>, matching markee-dashboard's own
+  // "Mở Link" flow after saving a WIP entry, instead of an internal URL that
+  // requires being logged in to even open.
   async function handleShareLog(log: FeatureLog) {
-    const url = `${window.location.origin}/project/detail?id=${projectId}&tab=prototype&log=${log.id}`;
     try {
-      await navigator.clipboard.writeText(url);
+      const { share_url } = await createProjectShareLink(projectId, log.feature_id);
+      await navigator.clipboard.writeText(share_url);
       setShareStatusLogId(log.id);
       setTimeout(() => setShareStatusLogId((cur) => (cur === log.id ? null : cur)), 2000);
     } catch {
-      setError('Không sao chép được link — trình duyệt chặn quyền clipboard');
+      setError('Không tạo được link chia sẻ');
     }
   }
 
@@ -710,7 +707,7 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                         />
                         <Pencil
                           className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-[#0058be] cursor-pointer"
-                          onClick={() => startEditLog(log)}
+                          onClick={() => setEditModalLog(log)}
                         />
                         <Trash2
                           className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-red-500 cursor-pointer"
@@ -718,37 +715,13 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                         />
                       </span>
                     </div>
-                    {editingLogId === log.id ? (
-                      <div className="space-y-1.5">
-                        <textarea
-                          autoFocus
-                          value={editLogValue}
-                          onChange={(e) => setEditLogValue(e.target.value)}
-                          rows={4}
-                          className="w-full text-[12.5px] border border-[#0058be] rounded-lg px-3 py-2 outline-none resize-y"
-                        />
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleSaveEditLog(log)}
-                            disabled={savingLogEdit || !editLogValue.trim()}
-                            className="text-[11.5px] font-semibold text-white bg-[#0058be] px-2.5 py-1 rounded-lg disabled:opacity-50"
-                          >
-                            {savingLogEdit ? 'Đang lưu...' : 'Lưu'}
-                          </button>
-                          <button
-                            onClick={() => setEditingLogId(null)}
-                            className="text-[11.5px] font-semibold text-slate-500 hover:bg-slate-100 px-2.5 py-1 rounded-lg"
-                          >
-                            Hủy
-                          </button>
-                        </div>
-                      </div>
-                    ) : (() => {
+                    {(() => {
                       const isLong = log.content.length > CONTENT_TRUNCATE_LENGTH;
                       const isExpanded = expandedLogIds.has(log.id);
                       const shown = isLong && !isExpanded ? log.content.slice(0, CONTENT_TRUNCATE_LENGTH).trimEnd() + '…' : log.content;
                       return (
                         <>
+                          {log.title && <p className="text-[13px] font-bold text-slate-800 mb-1">{log.title}</p>}
                           <p className="text-[12.5px] text-slate-600 leading-relaxed whitespace-pre-wrap">{shown}</p>
                           {isLong && (
                             <button
@@ -977,6 +950,17 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
           initialTab={detailModal.tab}
           onClose={() => setDetailModal(null)}
           onLogUpdated={handleLogUpdated}
+        />
+      )}
+
+      {editModalLog && (
+        <EditWipLogModal
+          projectId={projectId}
+          log={editModalLog}
+          featureName={features.find((f) => f.id === editModalLog.feature_id)?.name || ''}
+          featureNames={features.map((f) => f.name)}
+          onClose={() => setEditModalLog(null)}
+          onSaved={handleLogSaved}
         />
       )}
     </div>

@@ -4240,11 +4240,6 @@ function initLoginPopup() {
         loginStatus.textContent = "";
         if (res && res.success) {
           showLoggedIn(res.email, res.fullName);
-          wireProjectSearch(
-            document.getElementById("project-search-input"),
-            document.getElementById("project-search-results"),
-            document.getElementById("project-current-name"),
-          );
         } else {
           showLoggedOut();
         }
@@ -4252,11 +4247,8 @@ function initLoginPopup() {
     });
   }
   refreshAuthState();
-  wireProjectSearch(
-    document.getElementById("project-search-input"),
-    document.getElementById("project-search-results"),
-    document.getElementById("project-current-name"),
-  );
+  // Project picker no longer lives in this popup (see popup.html) — project
+  // selection now only happens in the richer injected widget.
 
   const openWebLoginBtn = document.getElementById("open-web-login-btn");
   if (openWebLoginBtn) {
