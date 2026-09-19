@@ -18,6 +18,7 @@ from ..models.task import Task
 from ..models.skill_master import Group, Skill
 from ..models.zalo import ZaloAccount, ZaloConversation, ZaloMessage, ZaloDemoRequest, ZaloConversationSummary
 from ..utils.auth import get_current_user, require_zalo_user
+from ..utils.access import can_access_project
 from ..utils.skill_validation import validate_skill_area_consistency
 from ..config import settings
 from ..services import zalo as zalo_service
@@ -138,6 +139,34 @@ def _require_account_for_user(db: Session, current_user: User) -> ZaloAccount:
     if not account:
         raise HTTPException(status_code=404, detail="Bạn chưa kết nối tài khoản Zalo nào.")
     return account
+
+
+def _resolve_conversation_for_viewer(db: Session, current_user: User, conversation_id: int) -> ZaloConversation:
+    """Resolves a conversation the caller may view/act on for one of two
+    reasons: they personally own the ZaloAccount behind it (the
+    /zalo-account page, and the group-picker/tracking endpoints above), OR
+    — since "Log chat" now lives inside a Project's own Chats tab, not just
+    the connector's personal page — the conversation is linked to a Project
+    the caller can otherwise access, regardless of which Leader/Admin
+    happens to own the underlying Zalo session. Without this branch, only
+    the one person who personally logged into Zalo could ever open their
+    own team's project chat log (every other project member got a plain
+    404, the "Đang tải…" stuck-forever bug).
+
+    Callers that need to actually SEND through the Zalo session afterward
+    must use `conv.account_id` (the conversation's real owner), never the
+    viewer's own account — the viewer may not have one at all."""
+    conv = db.query(ZaloConversation).filter(ZaloConversation.id == conversation_id).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    account = _account_for_user(db, current_user)
+    if account and conv.account_id == account.id:
+        return conv
+    if conv.project_id:
+        project = db.query(Project).filter(Project.id == conv.project_id).first()
+        if project and can_access_project(db, current_user, project):
+            return conv
+    raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
 
 
 def _upsert_conversation(
@@ -379,14 +408,7 @@ def link_conversation_project(
     """Links (or unlinks, when project_id is null) a conversation to a
     project. Once linked, incoming messages matching the /task syntax in
     that conversation create a Task under that project."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     if payload.project_id is not None:
         project = db.query(Project).filter(Project.id == payload.project_id).first()
@@ -463,18 +485,11 @@ def suggested_task_mentions(
     mapping — always wins), then falls back to full_name/display_name so
     someone whose real name already matches their Zalo display name doesn't
     need to be manually re-entered in /accounts just to show up here."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.is_group:
         return {"members": [], "total_member": 0}
 
-    snapshot = zalo_service.get_conversation_members(account.id, conv.zalo_thread_id)
+    snapshot = zalo_service.get_conversation_members(conv.account_id, conv.zalo_thread_id)
     all_members = db.query(Member).all()
     known: dict = {}
     for m in all_members:
@@ -516,14 +531,7 @@ def list_project_members_for_task_assignment(
     always available regardless of Zalo connectivity. Each entry still
     carries zalo_name/zalo_uid so the picker can show "tên Zalo kèm tên
     KPI" and the backend can still send a real tag when one is set."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         return []
 
@@ -556,14 +564,7 @@ def create_task_via_form(
     """The "+ Task" form — a direct alternative to the /task text command:
     title/assignee/manday/deadline picked in the UI, no @mention parsing.
     Requires the conversation to already be linked to a project."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         raise HTTPException(status_code=400, detail="Hội thoại này chưa được gán vào dự án nào.")
 
@@ -637,7 +638,7 @@ def create_task_via_form(
         if not assigned.zalo_uid:
             reply += "\n\nNhắc bạn cập nhật đúng Tên Zalo trong Hồ sơ cá nhân để nhận tag thật khi giao task qua Zalo nhé"
 
-        result = zalo_service.send_message(account.id, conv.zalo_thread_id, reply, conv.is_group, mentions)
+        result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, reply, conv.is_group, mentions)
         source_message_id = str(result.get("source_message_id") or f"local-{datetime.datetime.now().timestamp()}")
         # Still recorded into our own DB (same as any other outgoing send),
         # so it shows up in the app's chat panel immediately, in sync with
@@ -672,14 +673,7 @@ def remind_unlinked_member(
     Member yet — can't auto-fill an assignee, so instead of a task form,
     send a real Zalo message asking them to add their Zalo name to their
     profile, with a direct link to the linked project."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         raise HTTPException(status_code=400, detail="Hội thoại này chưa được gán vào dự án nào.")
 
@@ -698,7 +692,7 @@ def remind_unlinked_member(
         f"👉 Điền task tại dự án: {project_url}"
     )
     try:
-        result = zalo_service.send_message(account.id, conv.zalo_thread_id, text, conv.is_group)
+        result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, text, conv.is_group)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -736,14 +730,7 @@ def list_project_tasks(
     """Tasks in the project this conversation is linked to — feeds the
     "Task trong dự án" modal (filter by status + recency) and the
     "Yêu cầu xem demo" / "Yêu cầu lại" actions on Done tasks."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         return []
 
@@ -818,14 +805,7 @@ def set_task_demo_skip(
     """Marks (or unmarks) a task as "không cần xem demo" — some Done tasks
     genuinely don't need one; this hides the request nag without deleting
     any prior request history."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         raise HTTPException(status_code=400, detail="Hội thoại này chưa được gán vào dự án nào.")
 
@@ -853,14 +833,7 @@ def request_demo(
 ):
     """"Yêu cầu xem demo" — sends a real Zalo message tagging the assignee
     of a Done task, asking them to demo it at the chosen time."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
     if not conv.project_id:
         raise HTTPException(status_code=400, detail="Hội thoại này chưa được gán vào dự án nào.")
 
@@ -894,7 +867,7 @@ def request_demo(
         mentions = [{"uid": assigned.zalo_uid, "pos": _utf16_len(prefix_text), "len": _utf16_len(tag_text)}]
 
     try:
-        result = zalo_service.send_message(account.id, conv.zalo_thread_id, reply, conv.is_group, mentions)
+        result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, reply, conv.is_group, mentions)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
@@ -921,14 +894,7 @@ def get_conversation_messages(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     q = db.query(ZaloMessage).filter(ZaloMessage.conversation_id == conversation_id)
     limit = min(limit, 200)
@@ -1044,14 +1010,7 @@ def get_conversation_summaries(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     rows = (
         db.query(ZaloConversationSummary)
@@ -1093,14 +1052,7 @@ def summarize_conversation_now(
     ZALO_SUMMARY_INTERVAL_SECONDS ago if none yet) right now, bypassing the
     scheduler's wait. Meant for testing/QA, not gated behind the advisory
     lock since it's an explicit one-off action, not a competing scheduler tick."""
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     now = datetime.datetime.now(datetime.timezone.utc)
     last = (
@@ -1302,17 +1254,10 @@ def send_to_conversation(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_zalo_user),
 ):
-    account = _require_account_for_user(db, current_user)
-    conv = (
-        db.query(ZaloConversation)
-        .filter(ZaloConversation.id == conversation_id, ZaloConversation.account_id == account.id)
-        .first()
-    )
-    if not conv:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hội thoại.")
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     try:
-        result = zalo_service.send_message(account.id, conv.zalo_thread_id, payload.text, conv.is_group, payload.mentions)
+        result = zalo_service.send_message(conv.account_id, conv.zalo_thread_id, payload.text, conv.is_group, payload.mentions)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
 
