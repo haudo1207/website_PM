@@ -1082,6 +1082,12 @@ export const disconnectZalo = () =>
   api.post<{ connected: boolean }>('/zalo/disconnect').then(r => r.data);
 export const getZaloConversations = () =>
   api.get<ZaloConversation[]>('/zalo/conversations').then(r => r.data);
+// Single-conversation lookup, resolvable by any project member the
+// conversation is linked to — not just whoever personally connected the
+// Zalo session (getZaloConversations' list is scoped to their own account
+// only). Used by ZaloConversationPane inside a project's Chats tab.
+export const getZaloConversation = (conversationId: number) =>
+  api.get<ZaloConversation>(`/zalo/conversations/${conversationId}`).then(r => r.data);
 export interface ZaloAvailableGroup { thread_id: string; name: string; already_tracked: boolean }
 export const getZaloAvailableGroups = () =>
   api.get<ZaloAvailableGroup[]>('/zalo/groups/available').then(r => r.data);
