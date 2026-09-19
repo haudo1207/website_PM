@@ -840,7 +840,20 @@ const KEEPALIVE_INTERVAL_MS = 90000;
 setInterval(() => {
   for (const session of sessions.values()) {
     if (!session.api) continue;
-    session.api.keepAlive().catch((err) => console.warn(`[keepalive:${session.accountId}] failed:`, err.message));
+    session.api.keepAlive().catch((err) => {
+      // A failing keepAlive() is a much stronger signal than the watchdog
+      // below gets: that one only checks session.listenerConnected, which
+      // stays true throughout the exact "silently stale" failure mode this
+      // interval exists to catch (see the block comment above) — so it
+      // never fires here. Treat a keepAlive failure as proof the session is
+      // actually dead and force a full reconnect: scheduleReconnect() logs
+      // back in from the saved cookies, re-attaches the listener, and its
+      // "connected" handler re-runs the on-connect backfill — recovering
+      // any message that arrived during the stale window, same as a
+      // genuine disconnect/reconnect already does.
+      console.warn(`[keepalive:${session.accountId}] failed — forcing reconnect:`, err.message);
+      scheduleReconnect(session);
+    });
   }
 }, KEEPALIVE_INTERVAL_MS);
 
