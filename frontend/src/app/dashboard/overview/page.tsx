@@ -2413,24 +2413,24 @@ export default function OverviewTab() {
                   </span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5 mt-3.5">
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
                     <span className="block text-[7px] uppercase font-black text-slate-400">Tiến độ</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">Task</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Task (Xong/Tổng)</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đang mở / Trễ hạn: ${p.openTasks}/${p.lateTasks}`}>
                     <span className="block text-[7px] uppercase font-black text-slate-400">Mở/Trễ</span>
                     <strong className={`block text-[11px] font-black mt-1 ${p.lateTasks > 0 ? 'text-red-600' : 'text-[#0b1c30]'}`}>{p.openTasks}/{p.lateTasks}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">Manday</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Thực tế / Kế hoạch: ${p.manday.toFixed(1)} / ${p.mandayPlanned.toFixed(1)} manday`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">MD (TT/KH)</span>
                     <strong className="block text-[11px] font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">KPI</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đã đạt (HT, từ task Done) / Dự kiến giao (Giao, mọi trạng thái): ${p.kpi.toFixed(1)} / ${p.kpiPlanned.toFixed(1)}`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">KPI (HT/Giao)</span>
                     <strong className="block text-[11px] font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
                   </div>
                 </div>
@@ -2685,21 +2685,25 @@ export default function OverviewTab() {
               )}
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">theo giai đoạn dự án</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">Task</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Xong / Tổng</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Thực tế / Kế hoạch: ${p.manday.toFixed(1)} / ${p.mandayPlanned.toFixed(1)} manday`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Manday' : 'MD đóng góp'}</span>
                   <strong className="block text-base font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Thực tế / Kế hoạch</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã đạt (HT, từ task Done) / Dự kiến giao (Giao, mọi trạng thái): ${p.kpi.toFixed(1)} / ${p.kpiPlanned.toFixed(1)}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'KPI' : 'KPI đóng góp'}</span>
                   <strong className="block text-base font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Hoàn thành / Được giao</span>
                 </div>
               </div>
 
@@ -2718,9 +2722,9 @@ export default function OverviewTab() {
                       <thead>
                         <tr className="text-slate-400 uppercase text-[9px] font-black">
                           <th className="text-left px-4 py-2">Thành viên</th>
-                          <th className="text-right px-3 py-2">Task</th>
-                          <th className="text-right px-3 py-2">Manday</th>
-                          <th className="text-right px-4 py-2">KPI</th>
+                          <th className="text-right px-3 py-2" title="Xong / Tổng task">Task (Xong/Tổng)</th>
+                          <th className="text-right px-3 py-2" title="Manday thực tế đã dùng">Manday (TT)</th>
+                          <th className="text-right px-4 py-2" title="KPI đã hoàn thành (từ task Done)">KPI (HT)</th>
                         </tr>
                       </thead>
                       <tbody>
