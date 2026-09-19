@@ -938,22 +938,31 @@ export default function OverviewTab() {
     // Leader Card: show only members belonging to whichever Leader is
     // currently being viewed — the logged-in Leader themself by default, or
     // another Leader in the same Workspace once picked from the "Leader
-    // khác" row above (see viewedLeaderName / JSX below). Same canonical
-    // leader_member_id-first resolution the Admin "showsLeaderCards" branch
-    // below uses, so a Leader-with-no-subordinates-yet still gets their own
-    // row via the leaderSelf fallback. Workspace filtering is already
-    // enforced by the backend (member_query_for_user).
+    // khác" row above (see viewedLeaderName / JSX below). This bar shows
+    // ONLY that Leader's real subordinates — the Leader themself is
+    // deliberately never added as a card here (that would read as "2
+    // leaders" instead of "1 leader + their members"); their own personal
+    // contribution is still folded into activeTeamList/teamCardTasks below
+    // for the KPI/ranking totals, just not as a visible member-card.
+    // Workspace filtering is already enforced by the backend
+    // (member_query_for_user).
     const leaderDisplayName = showsMemberCards
       ? (viewedLeaderName || currentUser?.member?.display_name || currentUser?.full_name || '')
       : '';
+    const viewedLeaderMemberId: number | null = (() => {
+      if (!showsMemberCards || !leaderDisplayName) return null;
+      const selTrim = leaderDisplayName.trim().toLowerCase();
+      const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
+      return selLeader?.member_id != null ? Number(selLeader.member_id) : null;
+    })();
     const memberCardSource = (() => {
       if (!showsMemberCards || !leaderDisplayName) return [];
       const selTrim = leaderDisplayName.trim().toLowerCase();
       const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
       const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
-      let list: any[];
       if (selMid) {
-        list = rawMembers.filter((m: any) => {
+        return rawMembers.filter((m: any) => {
+          if (String(m.id) === selMid) return false; // the Leader themself is never their own "member" card
           const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
           if (lmId) return lmId === selMid;
           const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
@@ -961,24 +970,10 @@ export default function OverviewTab() {
           const selEmail = (selLeader?.email || '').trim().toLowerCase();
           if (leaderName === selTrim) return true;
           if (selEmail && lEmail === selEmail) return true;
-          if (String(m.id) === selMid) return true;
           return false;
         });
-      } else {
-        list = rawMembers.filter((m: any) =>
-          String(m.leader_name || '').trim().toLowerCase() === selTrim
-        );
       }
-      // The viewed Leader themself is never their own subordinate, but
-      // should still show up as a row in their own team-cards bar (matches
-      // the Admin drill-in's leaderSelf fallback) — otherwise a task/project
-      // assigned directly to that Leader (not one of their members) vanishes.
-      const selfId = selMid ? Number(selMid) : (selLeader?.member_id ?? null);
-      if (selfId != null && !list.some((m: any) => isSameId(m.id, selfId))) {
-        const selfRow = rawMembers.find((m: any) => isSameId(m.id, selfId));
-        if (selfRow) list = [...list, selfRow];
-      }
-      return list;
+      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim);
     })();
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
@@ -1044,8 +1039,11 @@ export default function OverviewTab() {
         // assigned directly to the Leader themself (not one of their
         // members) would otherwise vanish from their own team-wide view.
         // Mirrors the leaderSelf fallback above (Admin drilled into a
-        // Leader already gets this for free).
-        const selfId = currentUser?.member_id;
+        // Leader already gets this for free). Uses the VIEWED Leader's own
+        // id (viewedLeaderMemberId) when browsing another Leader's team, not
+        // always the logged-in user's — this only affects the KPI/ranking
+        // totals (activeTeamList), never the visible member-cards bar above.
+        const selfId = viewedLeaderMemberId ?? currentUser?.member_id;
         if (selfId != null && !activeTeamList.some((m: any) => isSameId(m.id, selfId))) {
           const selfRow = rawMembers.find((m: any) => isSameId(m.id, selfId));
           if (selfRow) activeTeamList = [...activeTeamList, selfRow];
