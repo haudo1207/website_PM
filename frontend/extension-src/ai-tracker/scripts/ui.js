@@ -4198,15 +4198,24 @@ function initLoginPopup() {
   const loggedInView = document.getElementById("logged-in-view");
   const loggedInEmail = document.getElementById("logged-in-email");
   const logoutBtn = document.getElementById("logout-btn");
+  // Popup header used to always read the static "KPI Prototype" label — once
+  // we know who's logged in, showing their own name here is more useful
+  // (this popup is per-person: every log/task it creates is attributed to
+  // this exact identity, same as the "Thành viên hoạt động" list on the
+  // Prototype tab groups by).
+  const popupTitle = document.getElementById("popup-title");
+  const DEFAULT_POPUP_TITLE = "KPI Prototype";
 
   if (!loginForm || !emailInput || !passwordInput || !loginStatus) return false;
 
   function showLoggedOut() {
     if (loggedInView) loggedInView.hidden = true;
     loginForm.hidden = false;
+    if (popupTitle) popupTitle.textContent = DEFAULT_POPUP_TITLE;
   }
 
   function showLoggedIn(email, fullName) {
+    if (popupTitle) popupTitle.textContent = fullName || email || DEFAULT_POPUP_TITLE;
     if (loggedInView) {
       loggedInView.hidden = false;
       if (loggedInEmail) loggedInEmail.textContent = fullName || email || "";
