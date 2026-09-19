@@ -234,6 +234,12 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))
+        # Separate claim guard for the "meeting is starting now" link send —
+        # independent of reminder_sent_at (which fires reminder_minutes
+        # BEFORE start, without the expectation of a second later message).
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS start_link_sent_at TIMESTAMP NULL"
+        ))
         # Tracks the Google Calendar event backing a meeting's auto-generated
         # Google Meet link, so editing the meeting's time can reschedule the
         # SAME event (events.patch) instead of leaving Calendar stale.
@@ -1815,11 +1821,14 @@ async def start_meeting_reminder_loop():
     async def _loop():
         await asyncio.sleep(10)  # stagger from the auto-sync loop above
         from .database import BackgroundSessionLocal
-        from .services.meeting_reminders import dispatch_due_reminders
+        from .services.meeting_reminders import dispatch_due_reminders, dispatch_start_link_notifications
         while True:
             db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(dispatch_due_reminders, db)
+                # Second, independent send: the join link again exactly at
+                # start_time (not a substitute for the reminder above).
+                await asyncio.to_thread(dispatch_start_link_notifications, db)
             except Exception:
                 pass
             finally:

@@ -702,15 +702,14 @@ export default function OverviewTab() {
   const currentUser: any = overviewData?.currentUser || null;
   const currentUserRole = currentUser?.role || getRole() || '';
   const isLeaderRole = String(currentUserRole).toLowerCase() === 'leader';
-  // A Leader defaults to their own team (showsMemberCards), same as always.
-  // Toggling "Xem Leader khác" flips them into the exact same Leader-cards
-  // browsing flow Admin already uses (showsLeaderCards below) — visibleLeaders
-  // is already backend-scoped to the caller's own Workspace(s) for a Leader
-  // (workspace_leader_names/member_query_for_user), so this only ever surfaces
-  // other Leaders in the SAME (fixed, non-switchable for Leader) Workspace —
-  // never blocked by the switcher, same unrestricted numbers Admin sees.
-  const [leaderBrowseOther, setLeaderBrowseOther] = useState(false);
-  const showsMemberCards = isLeaderRole && !leaderBrowseOther;
+  // Default view is unchanged from before: a Leader sees their OWN team as
+  // member-level cards (showsMemberCards), exactly like always. What's new
+  // is `viewedLeaderName` — set by picking another Leader from the small
+  // "Leader khác" row rendered above that member-cards bar (see JSX below) —
+  // which swaps WHICH Leader's team feeds that same member-cards bar,
+  // without changing the bar's own look/layout at all. null = own team.
+  const [viewedLeaderName, setViewedLeaderName] = useState<string | null>(null);
+  const showsMemberCards = isLeaderRole;
   const showsLeaderCards = !showsMemberCards;
 
   // Carries the currently-selected Tuần/Tháng/Năm period into project/detail
@@ -827,7 +826,11 @@ export default function OverviewTab() {
     // Legacy grouping kept as fallback when canonical list is unavailable.
     let lList: any[] = [];
     let visibleLeaders: any[] = [];
-    if (showsLeaderCards) {
+    // Also build the Leader roster for a real Leader (showsMemberCards) —
+    // not to replace their member-cards bar, only to feed the small "Leader
+    // khác" picker row rendered above it (see JSX below), so they can see
+    // and switch into another Leader's team in their own Workspace.
+    if (showsLeaderCards || isLeaderRole) {
       const hasCanonical = Array.isArray(rawLeaders) && rawLeaders.length > 0 && rawLeaders[0] && typeof rawLeaders[0] === 'object' && 'member_id' in rawLeaders[0];
       if (hasCanonical) {
         const memberById = new Map(rawMembers.map((m: any) => [String(m.id), m]));
@@ -932,19 +935,51 @@ export default function OverviewTab() {
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
 
-    // Leader Card: show only members whose leader_name matches the
-    // logged-in Leader's display_name (from Member Management).  Workspace
-    // filtering is already enforced by the backend (member_query_for_user).
+    // Leader Card: show only members belonging to whichever Leader is
+    // currently being viewed — the logged-in Leader themself by default, or
+    // another Leader in the same Workspace once picked from the "Leader
+    // khác" row above (see viewedLeaderName / JSX below). Same canonical
+    // leader_member_id-first resolution the Admin "showsLeaderCards" branch
+    // below uses, so a Leader-with-no-subordinates-yet still gets their own
+    // row via the leaderSelf fallback. Workspace filtering is already
+    // enforced by the backend (member_query_for_user).
     const leaderDisplayName = showsMemberCards
-      ? (currentUser?.member?.display_name || currentUser?.full_name || '')
+      ? (viewedLeaderName || currentUser?.member?.display_name || currentUser?.full_name || '')
       : '';
-    const memberCardSource = showsMemberCards
-      ? rawMembers.filter((m: any) =>
-          leaderDisplayName && m.leader_name
-            ? String(m.leader_name).trim().toLowerCase() === leaderDisplayName.trim().toLowerCase()
-            : false
-        )
-      : [];
+    const memberCardSource = (() => {
+      if (!showsMemberCards || !leaderDisplayName) return [];
+      const selTrim = leaderDisplayName.trim().toLowerCase();
+      const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
+      const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
+      let list: any[];
+      if (selMid) {
+        list = rawMembers.filter((m: any) => {
+          const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
+          if (lmId) return lmId === selMid;
+          const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
+          const lEmail = (m.leader_email || '').trim().toLowerCase();
+          const selEmail = (selLeader?.email || '').trim().toLowerCase();
+          if (leaderName === selTrim) return true;
+          if (selEmail && lEmail === selEmail) return true;
+          if (String(m.id) === selMid) return true;
+          return false;
+        });
+      } else {
+        list = rawMembers.filter((m: any) =>
+          String(m.leader_name || '').trim().toLowerCase() === selTrim
+        );
+      }
+      // The viewed Leader themself is never their own subordinate, but
+      // should still show up as a row in their own team-cards bar (matches
+      // the Admin drill-in's leaderSelf fallback) — otherwise a task/project
+      // assigned directly to that Leader (not one of their members) vanishes.
+      const selfId = selMid ? Number(selMid) : (selLeader?.member_id ?? null);
+      if (selfId != null && !list.some((m: any) => isSameId(m.id, selfId))) {
+        const selfRow = rawMembers.find((m: any) => isSameId(m.id, selfId));
+        if (selfRow) list = [...list, selfRow];
+      }
+      return list;
+    })();
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
       const done = mTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
@@ -1048,8 +1083,11 @@ export default function OverviewTab() {
         // projects where only a report (not the Leader) is actually a
         // project_members row, leading straight to a 404 once clicked
         // (backend's can_access_project is intentionally personal-only,
-        // see access.py).
-        : (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null));
+        // see access.py). When viewing ANOTHER Leader's team (viewedLeaderName
+        // set), the definite person is that Leader, not the logged-in one.
+        : (viewedLeaderName
+          ? (visibleLeaders.find((l: any) => String(l.name).trim().toLowerCase() === viewedLeaderName.trim().toLowerCase())?.member_id ?? null)
+          : (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null)));
     const taskSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawTasksAll : rawTasks;
     let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
@@ -1498,7 +1536,7 @@ export default function OverviewTab() {
       bonusMatrix: bonM,
       drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, viewedLeaderName, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1634,20 +1672,33 @@ export default function OverviewTab() {
           </div>
         </div>
 
-        {isLeaderRole && (
-          <div className="flex items-center gap-2 mb-2">
+        {/* Leader-only: pick whose team the member-cards bar below shows.
+            Purely additive — "Team của tôi" keeps the exact same default
+            view as before, this row just adds the other Leaders in the
+            same Workspace as one-click alternatives. */}
+        {isLeaderRole && leaders.length > 0 && (
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="shrink-0 text-[10px] font-black text-slate-400 uppercase mr-1">Xem team:</span>
             <button
-              onClick={() => { setLeaderBrowseOther(false); setSelectedLeader('all'); setSelectedMemberId('all'); setSelectedWorkspaceScope(null); }}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!leaderBrowseOther ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+              onClick={() => setViewedLeaderName(null)}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!viewedLeaderName ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
               👤 Team của tôi
             </button>
-            <button
-              onClick={() => { setLeaderBrowseOther(true); setSelectedLeader('all'); setSelectedMemberId('all'); setSelectedWorkspaceScope(null); }}
-              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${leaderBrowseOther ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
-            >
-              👥 Xem Leader khác (cùng Workspace)
-            </button>
+            {leaders
+              .filter((ld: any) => {
+                const ownName = (currentUser?.member?.display_name || currentUser?.full_name || '').trim().toLowerCase();
+                return ld.name && ld.name !== 'Không có Leader' && String(ld.name).trim().toLowerCase() !== ownName;
+              })
+              .map((ld: any) => (
+                <button
+                  key={ld.name}
+                  onClick={() => setViewedLeaderName(ld.name)}
+                  className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${viewedLeaderName === ld.name ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  👥 {ld.name} · {ld.count} member
+                </button>
+              ))}
           </div>
         )}
 
