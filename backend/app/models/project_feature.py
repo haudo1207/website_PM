@@ -48,3 +48,31 @@ class ProjectFeatureLog(Base):
 
     feature = relationship("ProjectFeature", back_populates="logs", lazy="select")
     author  = relationship("Member", foreign_keys=[author_id], lazy="select")
+
+
+class ProjectKnowledgeItem(Base):
+    """Curated "Knowledge Hub" entries for a project — distinct from the WIP
+    log timeline above: a WIP log is a raw session record, a Knowledge Hub
+    item is a deliberately-saved summary/reference someone wants to keep
+    findable on its own. markee-dashboard stores this as a JSON blob on the
+    project row (`projects.master_summary`) with no real table; pm-new uses
+    a normalized table instead so it gets its own CRUD/audit trail like every
+    other entity here."""
+    __tablename__ = "project_knowledge_items"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    project_id  = Column(Integer, ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Optional link back to a Feature, so a Knowledge item can be scoped/
+    # filtered the same way WIP logs are — nullable because a piece of
+    # project-wide knowledge need not belong to one specific feature.
+    feature_id  = Column(Integer, ForeignKey("project_features.id", ondelete="SET NULL"), nullable=True, index=True)
+    title       = Column(String(255), nullable=False)
+    content     = Column(Text, nullable=False)
+    author_id   = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
+    author_display_name = Column(String(255), nullable=True)
+    created_at  = Column(DateTime, server_default=func.now())
+    updated_at  = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    project = relationship("Project", lazy="select")
+    feature = relationship("ProjectFeature", lazy="select")
+    author  = relationship("Member", foreign_keys=[author_id], lazy="select")

@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models.project_feature import ProjectFeature, ProjectFeatureLog
+from ..models.project_feature import ProjectFeature, ProjectFeatureLog, ProjectKnowledgeItem
 from ..models.member import Member
 from ..utils.access import require_route_project_access, require_project
 from ..utils.auth import get_current_user
@@ -94,6 +94,19 @@ def _log_to_dict(l: ProjectFeatureLog) -> dict:
         "attached_files": l.attached_files or [],
         "ai_summary": l.ai_summary,
         "ai_tasks": l.ai_tasks or [],
+    }
+
+
+def _knowledge_to_dict(k: ProjectKnowledgeItem) -> dict:
+    return {
+        "id": k.id,
+        "project_id": k.project_id,
+        "feature_id": k.feature_id,
+        "title": k.title,
+        "content": k.content,
+        "author": (k.author.display_name if k.author else None) or k.author_display_name,
+        "created_at": k.created_at.isoformat() if k.created_at else None,
+        "updated_at": k.updated_at.isoformat() if k.updated_at else None,
     }
 
 
@@ -354,6 +367,35 @@ def create_share_link(pid: int, request: Request, db: Session = Depends(get_db),
     # so the frontend's own public origin is what users need.
     base_url = (settings.APP_BASE_URL or settings.FRONTEND_URL or "").rstrip("/")
     return {"share_token": project.share_token, "share_url": f"{base_url}/share/project/{project.share_token}"}
+
+
+@router.patch("/projects/{pid:int}/feature-logs/{lid:int}")
+def update_log(pid: int, lid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Edit an existing WIP log's content — the only field markee-dashboard's
+    original UI lets you change on a log entry after the fact (title/tags are
+    derived from `content`'s markdown, not separate columns here)."""
+    require_project(db, current_user, pid)
+    log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
+    if not log:
+        raise HTTPException(404, "Không tìm thấy log")
+
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "Thiếu nội dung log")
+
+    old_content = log.content
+    log.content = content
+    db.commit()
+    db.refresh(log)
+    if old_content != log.content:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+            entity_type="ProjectFeatureLog", entity_id=log.id, action="UPDATE",
+            project_id=pid, field_name="content", old_value=old_content[:200], new_value=log.content[:200],
+            description=f"Sửa log #{log.id}"
+        )
+        db.commit()
+    return _log_to_dict(log)
 
 
 @router.delete("/projects/{pid:int}/feature-logs/{lid:int}")
@@ -626,3 +668,101 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
         )
         db.commit()
     return {"success": True, "pushed_count": pushed_count, "log": _log_to_dict(log)}
+
+
+# ─── Knowledge Hub — curated entries, separate from the raw WIP log timeline
+# above (see ProjectKnowledgeItem docstring) ──────────────────────────────
+@router.get("/projects/{pid:int}/knowledge-items")
+def list_knowledge_items(pid: int, feature_id: int = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    query = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.project_id == pid)
+    if feature_id:
+        query = query.filter(ProjectKnowledgeItem.feature_id == feature_id)
+    items = query.order_by(ProjectKnowledgeItem.created_at.desc()).all()
+    return [_knowledge_to_dict(k) for k in items]
+
+
+@router.post("/projects/{pid:int}/knowledge-items")
+def create_knowledge_item(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    title = (body.get("title") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not title or not content:
+        raise HTTPException(400, "Thiếu tiêu đề hoặc nội dung")
+
+    feature_id = body.get("feature_id")
+    if feature_id:
+        feature = db.query(ProjectFeature).filter(ProjectFeature.id == feature_id, ProjectFeature.project_id == pid).first()
+        if not feature:
+            raise HTTPException(404, "Không tìm thấy tính năng")
+
+    author_id = _member_id_for(current_user, db)
+    item = ProjectKnowledgeItem(
+        project_id=pid,
+        feature_id=feature_id or None,
+        title=title,
+        content=content,
+        author_id=author_id,
+        author_display_name=None if author_id else _display_name_for(current_user),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item.id, action="CREATE",
+        resource_name=item.title, project_id=pid,
+        description=f"Thêm mục Knowledge Hub '{item.title}'"
+    )
+    db.commit()
+    return _knowledge_to_dict(item)
+
+
+@router.patch("/projects/{pid:int}/knowledge-items/{kid:int}")
+def update_knowledge_item(pid: int, kid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    item = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.id == kid, ProjectKnowledgeItem.project_id == pid).first()
+    if not item:
+        raise HTTPException(404, "Không tìm thấy mục Knowledge Hub")
+
+    if "title" in body:
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "Thiếu tiêu đề")
+        item.title = title
+    if "content" in body:
+        content = (body.get("content") or "").strip()
+        if not content:
+            raise HTTPException(400, "Thiếu nội dung")
+        item.content = content
+
+    db.commit()
+    db.refresh(item)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item.id, action="UPDATE",
+        resource_name=item.title, project_id=pid,
+        description=f"Sửa mục Knowledge Hub '{item.title}'"
+    )
+    db.commit()
+    return _knowledge_to_dict(item)
+
+
+@router.delete("/projects/{pid:int}/knowledge-items/{kid:int}")
+def delete_knowledge_item(pid: int, kid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    item = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.id == kid, ProjectKnowledgeItem.project_id == pid).first()
+    if not item:
+        raise HTTPException(404, "Không tìm thấy mục Knowledge Hub")
+
+    item_id, item_title = item.id, item.title
+    db.delete(item)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item_id, action="DELETE",
+        resource_name=item_title, project_id=pid,
+        description=f"Xóa mục Knowledge Hub '{item_title}'"
+    )
+    db.commit()
+    return {"success": True}

@@ -720,6 +720,8 @@ export const getProjectFeatureLogs = (projectId: number, featureId?: number) =>
   api.get(`/projects/${projectId}/feature-logs`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
 export const createProjectFeatureLog = (projectId: number, featureId: number, content: string, status?: string) =>
   api.post(`/projects/${projectId}/features/${featureId}/logs`, { content, status }).then(r => r.data);
+export const updateProjectFeatureLog = (projectId: number, logId: number, content: string) =>
+  api.patch(`/projects/${projectId}/feature-logs/${logId}`, { content }).then(r => r.data);
 export const deleteProjectFeatureLog = (projectId: number, logId: number) =>
   api.delete(`/projects/${projectId}/feature-logs/${logId}`).then(r => r.data);
 export const getProjectFeatureLogAttachmentBlob = (projectId: number, logId: number, idx: number) =>
@@ -728,6 +730,16 @@ export const generateFeatureLogAiTasks = (projectId: number, logId: number) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/ai-tasks`).then(r => r.data);
 export const pushFeatureLogTasks = (projectId: number, logId: number, tasks: any[]) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/push-tasks`, { tasks }).then(r => r.data);
+// Project Knowledge Hub — curated entries, separate from the WIP log timeline
+export const getProjectKnowledgeItems = (projectId: number, featureId?: number) =>
+  api.get(`/projects/${projectId}/knowledge-items`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
+export const createProjectKnowledgeItem = (projectId: number, title: string, content: string, featureId?: number) =>
+  api.post(`/projects/${projectId}/knowledge-items`, { title, content, feature_id: featureId }).then(r => r.data);
+export const updateProjectKnowledgeItem = (projectId: number, itemId: number, body: { title?: string; content?: string }) =>
+  api.patch(`/projects/${projectId}/knowledge-items/${itemId}`, body).then(r => r.data);
+export const deleteProjectKnowledgeItem = (projectId: number, itemId: number) =>
+  api.delete(`/projects/${projectId}/knowledge-items/${itemId}`).then(r => r.data);
+
 export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
   new Promise<any>((resolve, reject) => {
     const reader = new FileReader();
