@@ -1067,8 +1067,22 @@ export default function OverviewTab() {
     });
 
     // 5. Ranking
+    // fTasks is scoped to projects belonging to the selected Workspace (see
+    // rawTasks above) — right for the team-wide "Giao"/pmStats cards (they
+    // represent work delivered ON this Workspace's projects), but wrong for
+    // each MEMBER's own row here: a member whose home Workspace matches the
+    // switcher still loses every task of theirs that happens to sit in a
+    // DIFFERENT Workspace's project, understating their real KPI/Manday and
+    // leaving mandayByWs (below) unable to ever show more than one
+    // Workspace's worth of split. Same fix as computeWsBreakdown's Phụ pills
+    // above: read from rawTasksAll (unscoped by the switcher), filtered only
+    // by period + this member's own id, so their full contribution — home
+    // Workspace and Phụ alike — is counted. "Tham gia ngoài" mode is the one
+    // deliberate exception: it already narrows fTasks down to just the
+    // external-Workspace subset on purpose, so it keeps using that.
+    const myTasksBroadSource = rawTasksAll.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
     const initialRanking = activeTeamList.map(m => {
-      const myTasks = fTasks.filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
+      const myTasks = (selectedWorkspaceScope === 'external' ? fTasks : myTasksBroadSource).filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
       // Per-Workspace Manday allocation — powers the split-allocation bar in
       // the ranking table (e.g. "Dev 6.0 · Infra 2.0"), so a Chính/Phụ
@@ -1216,11 +1230,21 @@ export default function OverviewTab() {
       });
 
       const pTasksToUse = (isDrilledIn && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
-      const done = pTasksToUse.filter(t => t.status === 'Done' || t.status === 'done').length;
-      const open = pTasksToUse.length - done;
-      const late = pTasksToUse.filter(t => calculateDaysLate(t) > 0).length;
+      // "Dự án đang triển khai" respects the Tuần/Tháng/Năm/quick-filter period
+      // for whether a project shows up at all (hasTaskInPeriod below), but the
+      // Task/Manday/KPI numbers on each card were still summed from
+      // pTasksToUse — the project's WHOLE task list — regardless of which
+      // week was selected, so switching weeks never changed the displayed
+      // figures. Scope the actual displayed numbers to the same period.
+      const periodIsActive = !(selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all' && (activeQuickFilter === 'all' || !activeQuickFilter));
+      const pTasksForStats = periodIsActive
+        ? pTasksToUse.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter))
+        : pTasksToUse;
+      const done = pTasksForStats.filter(t => t.status === 'Done' || t.status === 'done').length;
+      const open = pTasksForStats.length - done;
+      const late = pTasksForStats.filter(t => calculateDaysLate(t) > 0).length;
       let pManday = 0, pMandayPlanned = 0, pKpi = 0, pKpiPlanned = 0;
-      pTasksToUse.forEach(t => {
+      pTasksForStats.forEach(t => {
         pManday += (t.manday_actual || t.manday_est || 0);
         pMandayPlanned += (t.manday_est || 0);
         pKpiPlanned += (t.kpi_base || 0);
@@ -1260,13 +1284,34 @@ export default function OverviewTab() {
 
       const dataScope = (p.data_scope || p.business || '').toLowerCase() || null;
 
-      // Who on the current team actually shows up on this project — powers
-      // the "Member ... liên quan" line in the Limited-access contribution
-      // modal (a Phụ/external project only ever exposes THIS, never the
-      // project's full internal member/backlog list).
-      const contributingNames = Array.from(new Set(
-        pLeaderTasks.flatMap((t: any) => [t.assigned_name, t.support_name]).filter(Boolean)
-      ));
+      // Per-member breakdown for the contribution modal — same period-scoped
+      // task set as the Task/Manday/KPI cards above (pTasksForStats), so
+      // "who did how much" always matches whatever the cards already show.
+      // Replaces the old contributingNames flat comma list, which read as
+      // "everyone did everything" instead of showing each member's own task
+      // count/manday/KPI.
+      const memberStatsMap: Record<string, { name: string; total: number; done: number; manday: number; kpi: number }> = {};
+      pTasksForStats.forEach((t: any) => {
+        const isDoneT = t.status === 'Done' || t.status === 'done';
+        const roles: Array<{ id: any; name: any }> = [{ id: t.assigned_id, name: t.assigned_name }];
+        if (t.support_id != null && String(t.support_id) !== String(t.assigned_id)) {
+          roles.push({ id: t.support_id, name: t.support_name });
+        }
+        roles.forEach(({ id, name }) => {
+          if (id == null) return;
+          const key = String(id);
+          if (!memberStatsMap[key]) memberStatsMap[key] = { name: name || 'Không rõ', total: 0, done: 0, manday: 0, kpi: 0 };
+          memberStatsMap[key].total++;
+          if (isDoneT) {
+            memberStatsMap[key].done++;
+            memberStatsMap[key].kpi += getTaskKpiForMember(t, id);
+          }
+          memberStatsMap[key].manday += (t.manday_actual || t.manday_est || 0);
+        });
+      });
+      const memberBreakdown = Object.values(memberStatsMap)
+        .map(row => ({ ...row, manday: Math.round(row.manday * 10) / 10, kpi: Math.round(row.kpi * 10) / 10 }))
+        .sort((a, b) => b.kpi - a.kpi);
 
       // Does the specific drilled-into Leader/Member (not just someone else
       // on their team) personally have a real assignment on this project?
@@ -1290,8 +1335,8 @@ export default function OverviewTab() {
         // field. Task-completion percentage is preserved as
         // `taskCompletionPct` for surfaces that intentionally show it.
         progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
-        taskCompletionPct: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
-        totalTasks: pTasksToUse.length, doneTasks: done, openTasks: open, lateTasks: late,
+        taskCompletionPct: pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0,
+        totalTasks: pTasksForStats.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
         hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
@@ -1301,7 +1346,7 @@ export default function OverviewTab() {
         // object yet.
         customerName: p.customer_name || null,
         dataScope,
-        contributingNames,
+        memberBreakdown,
         drilledPersonHasAccess,
         // ── Active-Projects tab classification (spec 2.1 / 2.3 / 2.4) ──
         // For Leaders: Tất cả = primary-WS projects; Phụ trách = PM/Project
@@ -2616,6 +2661,41 @@ export default function OverviewTab() {
                 </div>
               </div>
 
+              {/* Per-member breakdown — the 4 cards above are the project TOTAL;
+                  this is who actually did how much of it, same period scope
+                  (Task/Manday/KPI columns line up 1:1 with the cards above). */}
+              <div className="px-6 mt-4">
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                    <h4 className="text-xs font-black text-slate-700">Chi tiết đóng góp theo thành viên</h4>
+                  </div>
+                  {p.memberBreakdown.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 font-semibold text-center py-4">Không có thành viên nào có task trong kỳ đang xem.</p>
+                  ) : (
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-slate-400 uppercase text-[9px] font-black">
+                          <th className="text-left px-4 py-2">Thành viên</th>
+                          <th className="text-right px-3 py-2">Task</th>
+                          <th className="text-right px-3 py-2">Manday</th>
+                          <th className="text-right px-4 py-2">KPI</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {p.memberBreakdown.map((mb: any, idx: number) => (
+                          <tr key={idx} className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-bold text-slate-700">{mb.name}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-600 tabular-nums">{mb.done}/{mb.total}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-amber-600 tabular-nums">{mb.manday.toFixed(1)}</td>
+                            <td className="px-4 py-2 text-right font-semibold text-[#0058be] tabular-nums">{mb.kpi.toFixed(1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-6 py-5 mt-1">
                 <div className="border border-slate-200 rounded-xl p-4">
                   <h4 className="text-xs font-black text-slate-700 mb-3">{p.isOwned ? 'Thông tin dự án' : 'Thông tin team bạn được phép xem'}</h4>
@@ -2627,7 +2707,6 @@ export default function OverviewTab() {
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Trạng thái</dt><dd className="font-black text-slate-700">{p.status}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold shrink-0">Member liên quan</dt><dd className="font-black text-slate-700 text-right">{p.contributingNames.length ? p.contributingNames.join(', ') : '—'}</dd></div>
                   </dl>
                 </div>
                 {hasAccess ? (
