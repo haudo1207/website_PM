@@ -25,7 +25,7 @@ from ..models.user import User
 from ..models.project import Project, project_members
 from ..models.notification import Notification
 from ..utils.kpi_engine import recalculate_task, parse_date, parse_datetime
-from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader, has_full_project_access
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 from ..utils.skill_validation import validate_skill_area_consistency
@@ -70,7 +70,17 @@ def calc_group_progress(task_group_id: int, db: Session) -> float:
 def recalculate_task_group_dates(tg, db):
     """Auto-calculate end_date_est from start_date_est + manday_est."""
     if tg.start_date_est and tg.manday_est:
-        days = int(math.ceil(float(tg.manday_est))) - 1
+        manday_float = float(tg.manday_est)
+        # Postgres NUMERIC can hold NaN/Infinity (unlike most numeric types),
+        # and some legacy row could have one stored in manday_est from a bad
+        # import/calculation — math.ceil() raises ValueError/OverflowError on
+        # those, which would otherwise 500 every save touching this Group
+        # (sync_group_dates calls this on every child task create/update).
+        # Treat it the same as "no manday set" instead of crashing.
+        if not math.isfinite(manday_float):
+            tg.end_date_est = None
+            return tg
+        days = int(math.ceil(manday_float)) - 1
         tg.end_date_est = tg.start_date_est + timedelta(days=max(days, 0))
     elif not tg.manday_est:
         tg.end_date_est = None
@@ -81,7 +91,20 @@ def sync_group_dates(tg, db, extra_start=None, extra_end=None):
     """Sync TaskGroup start_date_est (min) and end_date_est (max) from child tasks.
     extra_start: start_date of a newly added/modified task not yet committed.
     extra_end: end_date_est of a newly added/modified task not yet committed.
+
+    A Group with its own authoritative window — start_date_est + manday_est,
+    both mandatory as of the Group-creation rules — must NOT have that window
+    silently overwritten by whichever child tasks happen to be scheduled: a
+    Group's END DATE EST is always start_date_est + CEIL(manday_est) - 1
+    (recalculate_task_group_dates), and a child finishing earlier than that
+    (e.g. Group manday=10 but its first child only spans 2 days) used to drag
+    the Group's own end date down to match the child instead of the child
+    simply being one piece scheduled somewhere inside the Group's window.
+    Only fall back to deriving dates FROM children for legacy/incomplete
+    groups that don't have their own start_date_est + manday_est set yet.
     """
+    if tg.start_date_est and tg.manday_est:
+        return recalculate_task_group_dates(tg, db)
     rows = db.query(Task.start_date, Task.end_date_est).filter(
         Task.task_group_id == tg.id
     ).all()
@@ -114,7 +137,15 @@ def get_parent_code(task_code: str):
 def decimal_or_zero(value) -> Decimal:
     if value is None:
         return Decimal("0")
-    return Decimal(str(value))
+    d = Decimal(str(value))
+    # Postgres NUMERIC can hold NaN/Infinity (unlike most numeric types), and
+    # some legacy manday_est row can have one from a bad import/calculation.
+    # Comparing a NaN Decimal (e.g. `d <= 0`) raises decimal.InvalidOperation
+    # — an unhandled 500 on every budget check involving that Group/Task —
+    # so treat it as "no value" the same way None already is.
+    if not d.is_finite():
+        return Decimal("0")
+    return d
 
 
 def format_decimal(value: Decimal) -> str:
@@ -763,10 +794,15 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
         tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
 
     project_id = tg.phase.project_id if tg.phase else None
-    # Người thực hiện (assigned_ids) is fixed to whoever created the Group —
-    # not editable afterward, so any "assigned_ids" the client sends here is
-    # silently ignored rather than erroring (older clients/forms may still
-    # submit it as part of a broader payload). SP (support_ids) stays free.
+    # Người thực hiện (assigned_ids) defaults to whoever created the Group and
+    # stays locked for everyone else — but the project's own PM/Leader, or
+    # any global Leader/super_admin, can reassign it (e.g. the creator moved
+    # off the project, or a Leader created it on someone's behalf and needs
+    # to hand it over). Anyone without that access still has it silently
+    # ignored rather than erroring (older clients/forms may still submit it
+    # as part of a broader payload). SP (support_ids) stays free for everyone.
+    if "assigned_ids" in body and has_full_project_access(db, current_user, project_id):
+        tg.assigned_ids = validate_member_ids_for_project(body["assigned_ids"], project_id, db, "Người thực hiện")
     if "support_ids" in body:
         tg.support_ids = validate_member_ids_for_project(body["support_ids"], project_id, db, "SP")
 
@@ -852,8 +888,18 @@ def delete_task_group(phid: int, gid: int, db: Session = Depends(get_db), curren
     deleted_task_count = len(tasks_in_group)
     if tasks_in_group:
         delete_task_link_documents(db, [t.id for t in tasks_in_group])
+        # See delete_task()'s same detach-before-delete — notifications.task_id
+        # has no ON DELETE cascade, so a Task with a Notification (e.g. Done +
+        # Zalo-linked project) would otherwise fail this cascade with a raw FK
+        # IntegrityError (500).
+        db.query(Notification).filter(
+            Notification.task_id.in_([t.id for t in tasks_in_group])
+        ).update({"task_id": None}, synchronize_session=False)
         db.execute(delete(Task).where(Task.task_group_id == gid))
 
+    db.query(Notification).filter(Notification.task_group_id == gid).update(
+        {"task_group_id": None}, synchronize_session=False
+    )
     db.delete(tg)
     db.flush()
 
@@ -2519,6 +2565,14 @@ def delete_task(gid: int, tid: int, db: Session = Depends(get_db), current_user=
         task_desc += f" (kèm {descendant_count} task con)"
 
     delete_task_link_documents(db, [tid] + [d.id for d in descendants])
+    # notifications.task_id has no ON DELETE cascade — a Task that already
+    # triggered a Notification (e.g. Done + Zalo-linked project) fails this
+    # delete with a raw FK IntegrityError (500) otherwise. Detach instead of
+    # deleting the Notification itself so its message/history survives.
+    deleted_task_ids = [tid] + [d.id for d in descendants]
+    db.query(Notification).filter(Notification.task_id.in_(deleted_task_ids)).update(
+        {"task_id": None}, synchronize_session=False
+    )
     db.delete(task)
     db.flush()
 

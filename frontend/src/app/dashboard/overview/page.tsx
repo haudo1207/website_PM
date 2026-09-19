@@ -473,6 +473,16 @@ export default function OverviewTab() {
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
   const [projectFilterMode, setProjectFilterMode] = useState<'all' | 'owned' | 'external'>('all');
+  // "Dự án đang triển khai" card order — Tiến độ (default, unchanged) or
+  // KPI/Manday cao nhất/thấp nhất. Purely a display-order preference (the
+  // period-scoped numbers themselves are computed once in the big memo
+  // above regardless of how the cards get sorted here).
+  const [projectSortBy, setProjectSortBy] = useState<'progress' | 'kpi' | 'manday'>('progress');
+  const [projectSortDir, setProjectSortDir] = useState<'desc' | 'asc'>('desc');
+  const sortProjectCards = (list: any[]) => {
+    const dir = projectSortDir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => dir * ((a[projectSortBy] || 0) - (b[projectSortBy] || 0)));
+  };
   // Which of the selected Leader/Member's Workspaces the dashboard is
   // currently scoped to — null means their Chính (whole-person) view. Set
   // by clicking one of their "Phụ" pills (rendered alongside their main
@@ -691,8 +701,31 @@ export default function OverviewTab() {
   const recentActivity: any[] = overviewData?.recentActivity || [];
   const currentUser: any = overviewData?.currentUser || null;
   const currentUserRole = currentUser?.role || getRole() || '';
-  const showsMemberCards = String(currentUserRole).toLowerCase() === 'leader';
+  const isLeaderRole = String(currentUserRole).toLowerCase() === 'leader';
+  // Default view is unchanged from before: a Leader sees their OWN team as
+  // member-level cards (showsMemberCards), exactly like always. What's new
+  // is `viewedLeaderName` — set by picking another Leader from the small
+  // "Leader khác" row rendered above that member-cards bar (see JSX below) —
+  // which swaps WHICH Leader's team feeds that same member-cards bar,
+  // without changing the bar's own look/layout at all. null = own team.
+  const [viewedLeaderName, setViewedLeaderName] = useState<string | null>(null);
+  const showsMemberCards = isLeaderRole;
   const showsLeaderCards = !showsMemberCards;
+
+  // Carries the currently-selected Tuần/Tháng/Năm period into project/detail
+  // (its Overview tab reads these same param names — see project/detail's
+  // overviewYear/Month/Week/QuickFilter init) so opening a project from a
+  // specific week here lands on that same week there, instead of resetting
+  // to "all" and showing different Task/Manday/KPI numbers than the card
+  // the user just clicked.
+  const projectOverviewUrl = (projectId: any) => {
+    const params = new URLSearchParams({ id: String(projectId) });
+    if (selectedYear !== 'all') params.set('year', String(selectedYear));
+    if (selectedMonth !== 'all') params.set('month', String(selectedMonth));
+    if (selectedWeek !== 'all') params.set('week', String(selectedWeek));
+    if (activeQuickFilter && activeQuickFilter !== 'all') params.set('quick', activeQuickFilter);
+    return `/project/detail/overview?${params.toString()}`;
+  };
 
   const applyQuickFilter = (type: string) => {
     setActiveQuickFilter(type);
@@ -751,6 +784,8 @@ export default function OverviewTab() {
     pmStats,
     crossWsManday,
     crossWsMemberCount,
+    homeWsManday,
+    totalTeamManday,
     priorityStats,
     overdueTasksList,
     memberRanking,
@@ -793,7 +828,11 @@ export default function OverviewTab() {
     // Legacy grouping kept as fallback when canonical list is unavailable.
     let lList: any[] = [];
     let visibleLeaders: any[] = [];
-    if (showsLeaderCards) {
+    // Also build the Leader roster for a real Leader (showsMemberCards) —
+    // not to replace their member-cards bar, only to feed the small "Leader
+    // khác" picker row rendered above it (see JSX below), so they can see
+    // and switch into another Leader's team in their own Workspace.
+    if (showsLeaderCards || isLeaderRole) {
       const hasCanonical = Array.isArray(rawLeaders) && rawLeaders.length > 0 && rawLeaders[0] && typeof rawLeaders[0] === 'object' && 'member_id' in rawLeaders[0];
       if (hasCanonical) {
         const memberById = new Map(rawMembers.map((m: any) => [String(m.id), m]));
@@ -868,8 +907,15 @@ export default function OverviewTab() {
       } else {
         visibleLeaders = lList.filter(ld => ld.name && ld.name !== 'Không có Leader');
       }
-      if (selectedWorkspaceCode || workspaceCode) {
-        const activeCode = String(selectedWorkspaceCode || workspaceCode || '').trim().toLowerCase();
+      // A Leader browsing "Leader khác" has no switcher of their own (their
+      // Workspace is fixed) — fall back to their own data_scope so the
+      // picker stays scoped to their home Workspace instead of leaking in
+      // leaders from a Phụ Workspace they merely have secondary/report-only
+      // access to (workspace_leader_names authorizes those too, since it's
+      // "every leader the caller may see", broader than "leader's own team").
+      const wsFilterCode = selectedWorkspaceCode || workspaceCode || (isLeaderRole ? (currentUser?.data_scope || '') : '');
+      if (wsFilterCode) {
+        const activeCode = String(wsFilterCode).trim().toLowerCase();
         visibleLeaders = visibleLeaders.filter(ld => {
           if (ld.count <= 0) return false;
           // A Workspace filter must only surface leaders whose own Chính is
@@ -891,19 +937,46 @@ export default function OverviewTab() {
     const totTasks = rawTasks.length;
     const totDone = rawTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
 
-    // Leader Card: show only members whose leader_name matches the
-    // logged-in Leader's display_name (from Member Management).  Workspace
-    // filtering is already enforced by the backend (member_query_for_user).
+    // Leader Card: show only members belonging to whichever Leader is
+    // currently being viewed — the logged-in Leader themself by default, or
+    // another Leader in the same Workspace once picked from the "Leader
+    // khác" row above (see viewedLeaderName / JSX below). This bar shows
+    // ONLY that Leader's real subordinates — the Leader themself is
+    // deliberately never added as a card here (that would read as "2
+    // leaders" instead of "1 leader + their members"); their own personal
+    // contribution is still folded into activeTeamList/teamCardTasks below
+    // for the KPI/ranking totals, just not as a visible member-card.
+    // Workspace filtering is already enforced by the backend
+    // (member_query_for_user).
     const leaderDisplayName = showsMemberCards
-      ? (currentUser?.member?.display_name || currentUser?.full_name || '')
+      ? (viewedLeaderName || currentUser?.member?.display_name || currentUser?.full_name || '')
       : '';
-    const memberCardSource = showsMemberCards
-      ? rawMembers.filter((m: any) =>
-          leaderDisplayName && m.leader_name
-            ? String(m.leader_name).trim().toLowerCase() === leaderDisplayName.trim().toLowerCase()
-            : false
-        )
-      : [];
+    const viewedLeaderMemberId: number | null = (() => {
+      if (!showsMemberCards || !leaderDisplayName) return null;
+      const selTrim = leaderDisplayName.trim().toLowerCase();
+      const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
+      return selLeader?.member_id != null ? Number(selLeader.member_id) : null;
+    })();
+    const memberCardSource = (() => {
+      if (!showsMemberCards || !leaderDisplayName) return [];
+      const selTrim = leaderDisplayName.trim().toLowerCase();
+      const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
+      const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
+      if (selMid) {
+        return rawMembers.filter((m: any) => {
+          if (String(m.id) === selMid) return false; // the Leader themself is never their own "member" card
+          const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
+          if (lmId) return lmId === selMid;
+          const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
+          const lEmail = (m.leader_email || '').trim().toLowerCase();
+          const selEmail = (selLeader?.email || '').trim().toLowerCase();
+          if (leaderName === selTrim) return true;
+          if (selEmail && lEmail === selEmail) return true;
+          return false;
+        });
+      }
+      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim);
+    })();
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
       const done = mTasks.filter(t => t.status === 'Done' || t.status === 'done').length;
@@ -968,8 +1041,11 @@ export default function OverviewTab() {
         // assigned directly to the Leader themself (not one of their
         // members) would otherwise vanish from their own team-wide view.
         // Mirrors the leaderSelf fallback above (Admin drilled into a
-        // Leader already gets this for free).
-        const selfId = currentUser?.member_id;
+        // Leader already gets this for free). Uses the VIEWED Leader's own
+        // id (viewedLeaderMemberId) when browsing another Leader's team, not
+        // always the logged-in user's — this only affects the KPI/ranking
+        // totals (activeTeamList), never the visible member-cards bar above.
+        const selfId = viewedLeaderMemberId ?? currentUser?.member_id;
         if (selfId != null && !activeTeamList.some((m: any) => isSameId(m.id, selfId))) {
           const selfRow = rawMembers.find((m: any) => isSameId(m.id, selfId));
           if (selfRow) activeTeamList = [...activeTeamList, selfRow];
@@ -1007,8 +1083,11 @@ export default function OverviewTab() {
         // projects where only a report (not the Leader) is actually a
         // project_members row, leading straight to a 404 once clicked
         // (backend's can_access_project is intentionally personal-only,
-        // see access.py).
-        : (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null));
+        // see access.py). When viewing ANOTHER Leader's team (viewedLeaderName
+        // set), the definite person is that Leader, not the logged-in one.
+        : (viewedLeaderName
+          ? (visibleLeaders.find((l: any) => String(l.name).trim().toLowerCase() === viewedLeaderName.trim().toLowerCase())?.member_id ?? null)
+          : (typeof currentUser?.member_id === 'number' ? currentUser.member_id : null)));
     const taskSourceForDrill = (currentUserRole === 'leader' || isDrilledIntoPerson) ? rawTasksAll : rawTasks;
     let fTasks = taskSourceForDrill.filter(t => teamMemberIds.length === 0 || isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id));
     fTasks = fTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
@@ -1067,8 +1146,22 @@ export default function OverviewTab() {
     });
 
     // 5. Ranking
+    // fTasks is scoped to projects belonging to the selected Workspace (see
+    // rawTasks above) — right for the team-wide "Giao"/pmStats cards (they
+    // represent work delivered ON this Workspace's projects), but wrong for
+    // each MEMBER's own row here: a member whose home Workspace matches the
+    // switcher still loses every task of theirs that happens to sit in a
+    // DIFFERENT Workspace's project, understating their real KPI/Manday and
+    // leaving mandayByWs (below) unable to ever show more than one
+    // Workspace's worth of split. Same fix as computeWsBreakdown's Phụ pills
+    // above: read from rawTasksAll (unscoped by the switcher), filtered only
+    // by period + this member's own id, so their full contribution — home
+    // Workspace and Phụ alike — is counted. "Tham gia ngoài" mode is the one
+    // deliberate exception: it already narrows fTasks down to just the
+    // external-Workspace subset on purpose, so it keeps using that.
+    const myTasksBroadSource = rawTasksAll.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
     const initialRanking = activeTeamList.map(m => {
-      const myTasks = fTasks.filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
+      const myTasks = (selectedWorkspaceScope === 'external' ? fTasks : myTasksBroadSource).filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
       // Per-Workspace Manday allocation — powers the split-allocation bar in
       // the ranking table (e.g. "Dev 6.0 · Infra 2.0"), so a Chính/Phụ
@@ -1195,6 +1288,27 @@ export default function OverviewTab() {
       }
     });
 
+    // Cross-Workspace ratio: completed Team Manday in Leader's primary
+    // Workspace vs completed Team Manday across ALL Workspaces.
+    // Uses only Done tasks with end_date_actual (Option B — "completed Manday").
+    let homeWsManday = 0;
+    let totalTeamManday = 0;
+    if (homeWsCodeForSummary && finalRanking.length > 0) {
+      const teamMemberIdSet = new Set(teamMemberIds);
+      fTasks.forEach(t => {
+        const isDone = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
+        if (!isDone) return;
+        const isTeamMember = isIdInList(teamMemberIds, t.assigned_id) || isIdInList(teamMemberIds, t.support_id);
+        if (!isTeamMember) return;
+        const manday = t.manday_actual || t.manday_est || 0;
+        totalTeamManday += manday;
+        const wsCode = (t.projectDataScope || '').toLowerCase();
+        if (wsCode === homeWsCodeForSummary) {
+          homeWsManday += manday;
+        }
+      });
+    }
+
     // 6. Active Projects (Filtered by BOTH Leader and Time Period)
     // Same reasoning as taskSourceForDrill above: the switcher only decides
     // the roster, not a drilled-into person's own cross-Workspace picture.
@@ -1216,11 +1330,21 @@ export default function OverviewTab() {
       });
 
       const pTasksToUse = (isDrilledIn && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
-      const done = pTasksToUse.filter(t => t.status === 'Done' || t.status === 'done').length;
-      const open = pTasksToUse.length - done;
-      const late = pTasksToUse.filter(t => calculateDaysLate(t) > 0).length;
+      // "Dự án đang triển khai" respects the Tuần/Tháng/Năm/quick-filter period
+      // for whether a project shows up at all (hasTaskInPeriod below), but the
+      // Task/Manday/KPI numbers on each card were still summed from
+      // pTasksToUse — the project's WHOLE task list — regardless of which
+      // week was selected, so switching weeks never changed the displayed
+      // figures. Scope the actual displayed numbers to the same period.
+      const periodIsActive = !(selectedYear === 'all' && selectedMonth === 'all' && selectedWeek === 'all' && (activeQuickFilter === 'all' || !activeQuickFilter));
+      const pTasksForStats = periodIsActive
+        ? pTasksToUse.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter))
+        : pTasksToUse;
+      const done = pTasksForStats.filter(t => t.status === 'Done' || t.status === 'done').length;
+      const open = pTasksForStats.length - done;
+      const late = pTasksForStats.filter(t => calculateDaysLate(t) > 0).length;
       let pManday = 0, pMandayPlanned = 0, pKpi = 0, pKpiPlanned = 0;
-      pTasksToUse.forEach(t => {
+      pTasksForStats.forEach(t => {
         pManday += (t.manday_actual || t.manday_est || 0);
         pMandayPlanned += (t.manday_est || 0);
         pKpiPlanned += (t.kpi_base || 0);
@@ -1260,13 +1384,34 @@ export default function OverviewTab() {
 
       const dataScope = (p.data_scope || p.business || '').toLowerCase() || null;
 
-      // Who on the current team actually shows up on this project — powers
-      // the "Member ... liên quan" line in the Limited-access contribution
-      // modal (a Phụ/external project only ever exposes THIS, never the
-      // project's full internal member/backlog list).
-      const contributingNames = Array.from(new Set(
-        pLeaderTasks.flatMap((t: any) => [t.assigned_name, t.support_name]).filter(Boolean)
-      ));
+      // Per-member breakdown for the contribution modal — same period-scoped
+      // task set as the Task/Manday/KPI cards above (pTasksForStats), so
+      // "who did how much" always matches whatever the cards already show.
+      // Replaces the old contributingNames flat comma list, which read as
+      // "everyone did everything" instead of showing each member's own task
+      // count/manday/KPI.
+      const memberStatsMap: Record<string, { name: string; total: number; done: number; manday: number; kpi: number }> = {};
+      pTasksForStats.forEach((t: any) => {
+        const isDoneT = t.status === 'Done' || t.status === 'done';
+        const roles: Array<{ id: any; name: any }> = [{ id: t.assigned_id, name: t.assigned_name }];
+        if (t.support_id != null && String(t.support_id) !== String(t.assigned_id)) {
+          roles.push({ id: t.support_id, name: t.support_name });
+        }
+        roles.forEach(({ id, name }) => {
+          if (id == null) return;
+          const key = String(id);
+          if (!memberStatsMap[key]) memberStatsMap[key] = { name: name || 'Không rõ', total: 0, done: 0, manday: 0, kpi: 0 };
+          memberStatsMap[key].total++;
+          if (isDoneT) {
+            memberStatsMap[key].done++;
+            memberStatsMap[key].kpi += getTaskKpiForMember(t, id);
+          }
+          memberStatsMap[key].manday += (t.manday_actual || t.manday_est || 0);
+        });
+      });
+      const memberBreakdown = Object.values(memberStatsMap)
+        .map(row => ({ ...row, manday: Math.round(row.manday * 10) / 10, kpi: Math.round(row.kpi * 10) / 10 }))
+        .sort((a, b) => b.kpi - a.kpi);
 
       // Does the specific drilled-into Leader/Member (not just someone else
       // on their team) personally have a real assignment on this project?
@@ -1290,8 +1435,8 @@ export default function OverviewTab() {
         // field. Task-completion percentage is preserved as
         // `taskCompletionPct` for surfaces that intentionally show it.
         progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
-        taskCompletionPct: pTasksToUse.length ? Math.round((done / pTasksToUse.length) * 100) : 0,
-        totalTasks: pTasksToUse.length, doneTasks: done, openTasks: open, lateTasks: late,
+        taskCompletionPct: pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0,
+        totalTasks: pTasksForStats.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
         hasPM: Boolean(pmName), hasTasks: pTasksToUse.length > 0,
@@ -1301,7 +1446,7 @@ export default function OverviewTab() {
         // object yet.
         customerName: p.customer_name || null,
         dataScope,
-        contributingNames,
+        memberBreakdown,
         drilledPersonHasAccess,
         // ── Active-Projects tab classification (spec 2.1 / 2.3 / 2.4) ──
         // For Leaders: Tất cả = primary-WS projects; Phụ trách = PM/Project
@@ -1390,6 +1535,20 @@ export default function OverviewTab() {
       bonM.push(rowBon);
     }
 
+    // KPI TRUNG BÌNH divisor — number of weeks the selected period represents.
+    const filterDuration = (() => {
+      if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) return 1;
+      if (typeof selectedMonth === 'number') return MONTH_WEEKS_COUNT[selectedMonth] || 4;
+      if (typeof selectedYear === 'number') return 52;
+      return 52;
+    })();
+
+    // Add kpiTrungBinh to each ranking row
+    const rankedWithKpiAvg = finalRanking.map(m => ({
+      ...m,
+      kpiTrungBinh: filterDuration > 0 ? Math.round((m.kpi / filterDuration) * 100) : 0,
+    }));
+
     return {
       leaders: visibleLeaders,
       totalAllTasks: totTasks,
@@ -1399,9 +1558,11 @@ export default function OverviewTab() {
       pmStats: { total: pmTotal, done: pmDone, inProgress: pmInProg, overdue: pmOverdue, manday: Math.round(pmManday * 10) / 10, kpi: Math.round(pmKpi), mandayPlanned: Math.round(pmMandayPlanned * 10) / 10, kpiPlanned: Math.round(pmKpiPlanned * 10) / 10 },
       crossWsManday: Math.round(crossWsManday * 10) / 10,
       crossWsMemberCount,
+      homeWsManday: Math.round(homeWsManday * 10) / 10,
+      totalTeamManday: Math.round(totalTeamManday * 10) / 10,
       priorityStats: pStats,
       overdueTasksList: overdueList.sort((a, b) => b.daysLate - a.daysLate),
-      memberRanking: finalRanking,
+      memberRanking: rankedWithKpiAvg,
       memberCards: memberCardsList,
       teamCardStats: teamStats,
       activeProjects: aProjects,
@@ -1412,7 +1573,7 @@ export default function OverviewTab() {
       bonusMatrix: bonM,
       drilledMemberId,
     };
-  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, workspaceCode]);
+  }, [rawMembers, rawTasks, rawProjects, rawTasksAll, rawProjectsAll, rawLeaders, allowedLeaders, selectedLeader, selectedMemberId, selectedWorkspaceScope, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, matrixYear, showsLeaderCards, showsMemberCards, viewedLeaderName, workspaceCode]);
 
   // Projects touched by the selected Leader's team (any task assigned/supported
   // by their members, regardless of the date filter — Recent Activity always
@@ -1547,6 +1708,36 @@ export default function OverviewTab() {
             </button>
           </div>
         </div>
+
+        {/* Leader-only: pick whose team the member-cards bar below shows.
+            Purely additive — "Team của tôi" keeps the exact same default
+            view as before, this row just adds the other Leaders in the
+            same Workspace as one-click alternatives. */}
+        {isLeaderRole && leaders.length > 0 && (
+          <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
+            <span className="shrink-0 text-[10px] font-black text-slate-400 uppercase mr-1">Xem team:</span>
+            <button
+              onClick={() => setViewedLeaderName(null)}
+              className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!viewedLeaderName ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              👤 Team của tôi
+            </button>
+            {leaders
+              .filter((ld: any) => {
+                const ownName = (currentUser?.member?.display_name || currentUser?.full_name || '').trim().toLowerCase();
+                return ld.name && ld.name !== 'Không có Leader' && String(ld.name).trim().toLowerCase() !== ownName;
+              })
+              .map((ld: any) => (
+                <button
+                  key={ld.name}
+                  onClick={() => setViewedLeaderName(ld.name)}
+                  className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${viewedLeaderName === ld.name ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  👥 {ld.name} · {ld.count} member
+                </button>
+              ))}
+          </div>
+        )}
 
         {/* 2. LEADER / MEMBER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
         {showsLeaderCards ? (
@@ -1942,17 +2133,17 @@ export default function OverviewTab() {
           <div className="grid grid-cols-2 md:grid-cols-4 border-b border-slate-100 bg-slate-50/60">
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
-                KPI Team
+                Tổng KPI Team
                 <FormulaTooltip align="left">
-                  <p className="font-bold text-white/90 mb-1">KPI Team (HT / Giao)</p>
+                  <p className="font-bold text-white/90 mb-1">Tổng KPI Team</p>
                   <p className="text-white/80 mb-1">Công thức:</p>
-                  <p className="text-white font-mono">HT = Σ kpi_base các task Done trong kỳ</p>
-                  <p className="text-white font-mono">Giao = Σ kpi_base toàn bộ task trong kỳ (mọi trạng thái)</p>
+                  <p className="text-white font-mono">Tổng KPI = Σ kpi_base các task Done trong kỳ</p>
                   <p className="text-white/60 mt-1.5">Chỉ tính KPI phát sinh tại team (task của member trong team đang xem), không cộng dồn KPI của task ở ngoài team.</p>
+                  <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
                 </FormulaTooltip>
               </span>
-              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)} / {pmStats.kpiPlanned.toFixed(1)}</strong>
-              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Chỉ tính KPI phát sinh tại team, không double-count KPI ngoài team</small>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{pmStats.kpi.toFixed(1)}</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Tổng KPI của team trong kỳ đang chọn</small>
             </div>
             <div className="px-4 py-3 border-r border-slate-100 last:border-r-0">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
@@ -1974,12 +2165,14 @@ export default function OverviewTab() {
                 <FormulaTooltip align="left">
                   <p className="font-bold text-white/90 mb-1">Cross-workspace Manday</p>
                   <p className="text-white/80 mb-1">Công thức:</p>
-                  <p className="text-white font-mono">Σ manday (actual/est) mà member trong team log trên project KHÔNG thuộc Workspace Chính của team</p>
-                  <p className="text-white/60 mt-1.5">Member count = số member trong team đang có ít nhất 1 manday như vậy (đang tham gia đóng góp ở Workspace khác).</p>
+                  <p className="text-white font-mono">Manday HT = Σ manday_completed của Team trong Workspace Chính</p>
+                  <p className="text-white font-mono">Tổng Manday = Σ manday_completed của Team trên TẤT CẢ Workspaces</p>
+                  <p className="text-white/60 mt-1.5">Chỉ tính manday từ task Done (có end_date_actual). Workspace Chính = workspace Leader phụ trách chính.</p>
+                  <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
                 </FormulaTooltip>
               </span>
-              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{crossWsManday.toFixed(1)} MD</strong>
-              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug"><span className="text-indigo-600 font-black">{crossWsMemberCount} member</span> đang tham gia workspace khác</small>
+              <strong className="block text-base font-black text-[#0b1c30] mt-1 tabular-nums">{homeWsManday.toFixed(1)} / {totalTeamManday.toFixed(1)} MD</strong>
+              <small className="block mt-0.5 text-[10px] text-slate-400 font-semibold leading-snug">Manday HT Team / Tổng Manday Team (Task Done)</small>
             </div>
             <div className="px-4 py-3">
               <span className="flex items-center gap-1 text-[9px] uppercase tracking-wide font-black text-slate-400">
@@ -2042,6 +2235,22 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 text-[#0058be]">
+                    <span className="inline-flex items-center gap-1">
+                      KPI Trung Bình
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">KPI Trung Bình (%)</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc × 100)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>KPI Tổng:</b> Σ kpi_base các task Done (có end_date_actual) trong kỳ</li>
+                          <li><b>Thời Gian Bộ Lọc:</b> Tuần = 1, Tháng = số tuần trong tháng, Năm = 52</li>
+                        </ul>
+                        <p className="text-white/50 mt-1">Hiển thị dưới dạng phần trăm nguyên (ví dụ: 574%).</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
                   <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">
                     <span className="inline-flex items-center gap-1">
                       Phân Bổ Workspace
@@ -2055,12 +2264,27 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
-                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">Tiến Độ</th>
+                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">
+                    <span className="inline-flex items-center gap-1">
+                      Tiến Độ
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Tiến độ (Task Completion)</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">Tiến độ = round((Done / Giao) × 100)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>Done:</b> Số task status = Done (có end_date_actual) trong kỳ</li>
+                          <li><b>Giao:</b> Tổng số task giao cho member trong kỳ (mọi trạng thái)</li>
+                        </ul>
+                        <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {memberRanking.length === 0 ? (
-                  <tr><td colSpan={8} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
+                  <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
                 ) : (
                   memberRanking.map((m, i) => {
                     const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
@@ -2129,6 +2353,11 @@ export default function OverviewTab() {
                         <td className="px-4 py-3.5 text-center">
                           <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
                             <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpi.toFixed(1)}/{m.kpiPlanned.toFixed(1)}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5 text-center">
+                          <div className="inline-flex flex-col items-center justify-center min-w-[68px] rounded-[10px] border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(18,37,63,.04)] hover:border-blue-300 hover:bg-blue-50/30 transition-colors">
+                            <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpiTrungBinh}%</span>
                           </div>
                         </td>
                         <td className="px-4 py-3.5 text-left">
@@ -2242,7 +2471,7 @@ export default function OverviewTab() {
               <p className="text-[10px] text-slate-400 mt-0.5 truncate">Phân biệt rõ dự án thuộc workspace chính và dự án ngoài workspace chỉ tham gia đóng góp</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <div className="flex items-center gap-1 p-1 bg-slate-100 border border-slate-200 rounded-xl">
               {([
                 ['all', 'Tất cả'],
@@ -2258,6 +2487,23 @@ export default function OverviewTab() {
                 </button>
               ))}
             </div>
+            <select
+              value={projectSortBy}
+              onChange={(e) => setProjectSortBy(e.target.value as any)}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 focus:outline-none focus:border-[#0058be]"
+              title="Sắp xếp theo"
+            >
+              <option value="progress">Sắp xếp: Tiến độ</option>
+              <option value="kpi">Sắp xếp: KPI</option>
+              <option value="manday">Sắp xếp: Manday</option>
+            </select>
+            <button
+              onClick={() => setProjectSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              title={projectSortDir === 'desc' ? 'Cao nhất trước' : 'Thấp nhất trước'}
+            >
+              {projectSortDir === 'desc' ? '↓ Cao nhất' : '↑ Thấp nhất'}
+            </button>
             <button
               onClick={handleAiCheck}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
@@ -2326,24 +2572,24 @@ export default function OverviewTab() {
                   </span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5 mt-3.5">
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
                     <span className="block text-[7px] uppercase font-black text-slate-400">Tiến độ</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">Task</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">Task (Xong/Tổng)</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đang mở / Trễ hạn: ${p.openTasks}/${p.lateTasks}`}>
                     <span className="block text-[7px] uppercase font-black text-slate-400">Mở/Trễ</span>
                     <strong className={`block text-[11px] font-black mt-1 ${p.lateTasks > 0 ? 'text-red-600' : 'text-[#0b1c30]'}`}>{p.openTasks}/{p.lateTasks}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">Manday</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Thực tế / Kế hoạch: ${p.manday.toFixed(1)} / ${p.mandayPlanned.toFixed(1)} manday`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">MD (TT/KH)</span>
                     <strong className="block text-[11px] font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
                   </div>
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center">
-                    <span className="block text-[7px] uppercase font-black text-slate-400">KPI</span>
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`Đã đạt (HT, từ task Done) / Dự kiến giao (Giao, mọi trạng thái): ${p.kpi.toFixed(1)} / ${p.kpiPlanned.toFixed(1)}`}>
+                    <span className="block text-[7px] uppercase font-black text-slate-400">KPI (HT/Giao)</span>
                     <strong className="block text-[11px] font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
                   </div>
                 </div>
@@ -2381,7 +2627,7 @@ export default function OverviewTab() {
                     <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn hiện không phụ trách dự án nào trong kỳ này.</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {responsibleProjects.map((p: any) => renderCard(p, p.isOwned))}
+                      {sortProjectCards(responsibleProjects).map((p: any) => renderCard(p, p.isOwned))}
                     </div>
                   )}
                 </div>
@@ -2404,7 +2650,7 @@ export default function OverviewTab() {
                     <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn không tham gia dự án ngoài workspace nào trong kỳ này.</p>
                   ) : !externalProjectsCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {externalProjects.map((p: any) => renderCard(p, false))}
+                      {sortProjectCards(externalProjects).map((p: any) => renderCard(p, false))}
                     </div>
                   )}
                 </div>
@@ -2423,7 +2669,7 @@ export default function OverviewTab() {
                     <p className="text-[10px] text-slate-400">Mọi dự án thuộc workspace chính — Leader có quyền xem mà không cần là thành viên dự án.</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {ownedProjects.map((p: any) => renderCard(p, true))}
+                    {sortProjectCards(ownedProjects).map((p: any) => renderCard(p, true))}
                   </div>
                 </div>
               )}
@@ -2441,7 +2687,7 @@ export default function OverviewTab() {
                   </div>
                   {!externalProjectsCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {externalProjects.map((p: any) => renderCard(p, false))}
+                      {sortProjectCards(externalProjects).map((p: any) => renderCard(p, false))}
                     </div>
                   )}
                 </div>
@@ -2598,21 +2844,73 @@ export default function OverviewTab() {
               )}
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">theo giai đoạn dự án</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">Task</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.doneTasks}/{p.totalTasks}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Xong / Tổng</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Thực tế / Kế hoạch: ${p.manday.toFixed(1)} / ${p.mandayPlanned.toFixed(1)} manday`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Manday' : 'MD đóng góp'}</span>
                   <strong className="block text-base font-black text-amber-600 mt-1">{p.manday.toFixed(1)}/{p.mandayPlanned.toFixed(1)}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Thực tế / Kế hoạch</span>
                 </div>
-                <div className="bg-slate-50 rounded-xl p-3 text-center">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã đạt (HT, từ task Done) / Dự kiến giao (Giao, mọi trạng thái): ${p.kpi.toFixed(1)} / ${p.kpiPlanned.toFixed(1)}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'KPI' : 'KPI đóng góp'}</span>
                   <strong className="block text-base font-black text-[#0058be] mt-1">{p.kpi.toFixed(1)}/{p.kpiPlanned.toFixed(1)}</strong>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Hoàn thành / Được giao</span>
+                </div>
+              </div>
+
+              {/* Per-member breakdown — the 4 cards above are the project TOTAL;
+                  this is who actually did how much of it, same period scope
+                  (Task/Manday/KPI columns line up 1:1 with the cards above). */}
+              <div className="px-6 mt-4">
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
+                    <h4 className="text-xs font-black text-slate-700">Chi tiết đóng góp theo thành viên</h4>
+                  </div>
+                  {p.memberBreakdown.length === 0 ? (
+                    <p className="text-[11px] text-slate-400 font-semibold text-center py-4">Không có thành viên nào có task trong kỳ đang xem.</p>
+                  ) : (
+                    <table className="w-full text-[11px]">
+                      <thead>
+                        <tr className="text-slate-400 uppercase text-[9px] font-black">
+                          <th className="text-left px-4 py-2">Thành viên</th>
+                          <th className="text-right px-3 py-2" title="Xong / Tổng task">Task (Xong/Tổng)</th>
+                          <th className="text-right px-3 py-2" title="Manday thực tế đã dùng">Manday (TT)</th>
+                          <th className="text-right px-4 py-2" title="KPI đã hoàn thành (từ task Done)">KPI (HT)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* Tổng — cùng số với 4 card phía trên (Task/Manday/KPI),
+                            đặt ngay trên các dòng từng người để đối chiếu tại
+                            chỗ: vì 1 task có Người thực hiện + Người hỗ trợ
+                            khác nhau, tổng Task/Manday cộng dồn theo người có
+                            thể lớn hơn Tổng thật của dự án (task đó được đếm ở
+                            CẢ 2 người) — dòng Tổng này giúp thấy ngay điều đó,
+                            không cần nhìn ngược lên card phía trên. */}
+                        <tr className="border-t border-b-2 border-slate-200 bg-slate-50">
+                          <td className="px-4 py-2 font-black text-slate-800">Tổng (dự án)</td>
+                          <td className="px-3 py-2 text-right font-black text-slate-800 tabular-nums">{p.doneTasks}/{p.totalTasks}</td>
+                          <td className="px-3 py-2 text-right font-black text-amber-700 tabular-nums">{p.manday.toFixed(1)}</td>
+                          <td className="px-4 py-2 text-right font-black text-[#0058be] tabular-nums">{p.kpi.toFixed(1)}</td>
+                        </tr>
+                        {p.memberBreakdown.map((mb: any, idx: number) => (
+                          <tr key={idx} className="border-t border-slate-100">
+                            <td className="px-4 py-2 font-bold text-slate-700">{mb.name}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-slate-600 tabular-nums">{mb.done}/{mb.total}</td>
+                            <td className="px-3 py-2 text-right font-semibold text-amber-600 tabular-nums">{mb.manday.toFixed(1)}</td>
+                            <td className="px-4 py-2 text-right font-semibold text-[#0058be] tabular-nums">{mb.kpi.toFixed(1)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               </div>
 
@@ -2627,7 +2925,6 @@ export default function OverviewTab() {
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Trạng thái</dt><dd className="font-black text-slate-700">{p.status}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold shrink-0">Member liên quan</dt><dd className="font-black text-slate-700 text-right">{p.contributingNames.length ? p.contributingNames.join(', ') : '—'}</dd></div>
                   </dl>
                 </div>
                 {hasAccess ? (
@@ -2664,7 +2961,7 @@ export default function OverviewTab() {
                         : 'Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.'}
                     </p>
                     <button
-                      onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                      onClick={() => { setContributionModalProject(null); router.push(projectOverviewUrl(p.id)); }}
                       className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
                     >
                       Mở dự án →
@@ -2685,10 +2982,16 @@ export default function OverviewTab() {
       {selectedMemberModal && (
         <MemberDetailModal
           member={selectedMemberModal}
-          tasks={rawTasks}
-          projects={rawProjects}
+          // Unscoped by the Workspace switcher (same fix as the ranking
+          // table's myTasks) — rawTasks/rawProjects only cover the switcher's
+          // current Workspace, so a member's tasks in a DIFFERENT Workspace's
+          // project silently disappeared here, and any that DID show up
+          // couldn't resolve their own project (activeProjects/onNavigate
+          // both look it up in `projects`, which never contained it).
+          tasks={rawTasksAll}
+          projects={rawProjectsAll}
           onClose={() => setSelectedMemberModal(null)}
-          onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
+          onNavigate={(projectId) => router.push(projectOverviewUrl(projectId))}
           selectedYear={selectedYear}
           selectedMonth={selectedMonth}
           selectedWeek={selectedWeek}

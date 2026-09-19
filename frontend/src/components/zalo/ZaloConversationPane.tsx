@@ -12,7 +12,7 @@ import { useQuery } from '@tanstack/react-query';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ZaloSummaryCard from '@/components/zalo/ZaloSummaryCard';
 import {
-  getZaloConversations,
+  getZaloConversation,
   getZaloConversationMessages,
   sendZaloMessage,
   getZaloSuggestedMentions,
@@ -23,7 +23,6 @@ import {
   setZaloDemoSkip,
   getZaloConversationSummaries,
   summarizeZaloConversationNow,
-  ZaloConversation,
   ZaloMessage,
   ZaloSuggestedMember,
   ZaloProjectMember,
@@ -49,15 +48,15 @@ const RANGE_LABELS: Record<ZaloTaskRangeFilter, string> = {
 const TASK_PRIORITIES = ['Normal', 'High', 'Critical', 'Interrupt'];
 
 export default function ZaloConversationPane({ conversationId }: { conversationId: number }) {
-  // The conversation object itself (name, project_id, is_group) — same
-  // source /zalo-account's list uses, just looked up by the one id we care
-  // about here instead of offering every conversation to switch between.
-  const { data: conversations = [] } = useQuery({
-    queryKey: ['zalo-conversations'],
-    queryFn: getZaloConversations,
+  // The conversation object itself (name, project_id, is_group) — resolved
+  // by id directly (not filtered out of the connector's own conversation
+  // list) so any project member the conversation is linked to can open this
+  // pane, not just whoever personally connected the Zalo session.
+  const { data: conversation = null } = useQuery({
+    queryKey: ['zalo-conversation', conversationId],
+    queryFn: () => getZaloConversation(conversationId),
     refetchInterval: 15_000,
   });
-  const conversation = conversations.find((c: ZaloConversation) => c.id === conversationId) || null;
 
   const [messages, setMessages] = useState<ZaloMessage[]>([]);
   const lastMessageIdRef = useRef<number | undefined>(undefined);
@@ -75,7 +74,12 @@ export default function ZaloConversationPane({ conversationId }: { conversationI
     setMessages([]);
     lastMessageIdRef.current = undefined;
     fetchNewMessages();
-    const interval = setInterval(fetchNewMessages, 4000);
+    // 1.5s (was 4s) — the worker already forwards each Zalo message to the
+    // backend the instant its own listener fires (no batching on that side),
+    // so this interval is the only remaining hop between "message landed in
+    // our DB" and "shows up on screen". Cheap poll (just an indexed id>
+    // filter, empty batches short-circuit immediately), worth tightening.
+    const interval = setInterval(fetchNewMessages, 1500);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId]);
