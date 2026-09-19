@@ -2724,6 +2724,19 @@ export default function OverviewTab() {
                         </tr>
                       </thead>
                       <tbody>
+                        {/* Tổng — cùng số với 4 card phía trên (Task/Manday/KPI),
+                            đặt ngay trên các dòng từng người để đối chiếu tại
+                            chỗ: vì 1 task có Người thực hiện + Người hỗ trợ
+                            khác nhau, tổng Task/Manday cộng dồn theo người có
+                            thể lớn hơn Tổng thật của dự án (task đó được đếm ở
+                            CẢ 2 người) — dòng Tổng này giúp thấy ngay điều đó,
+                            không cần nhìn ngược lên card phía trên. */}
+                        <tr className="border-t border-b-2 border-slate-200 bg-slate-50">
+                          <td className="px-4 py-2 font-black text-slate-800">Tổng (dự án)</td>
+                          <td className="px-3 py-2 text-right font-black text-slate-800 tabular-nums">{p.doneTasks}/{p.totalTasks}</td>
+                          <td className="px-3 py-2 text-right font-black text-amber-700 tabular-nums">{p.manday.toFixed(1)}</td>
+                          <td className="px-4 py-2 text-right font-black text-[#0058be] tabular-nums">{p.kpi.toFixed(1)}</td>
+                        </tr>
                         {p.memberBreakdown.map((mb: any, idx: number) => (
                           <tr key={idx} className="border-t border-slate-100">
                             <td className="px-4 py-2 font-bold text-slate-700">{mb.name}</td>
