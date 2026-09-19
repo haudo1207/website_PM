@@ -66,6 +66,13 @@ class SessionState {
     // reconnects never set this, so they keep catching up on anything
     // missed during the drop, same as before).
     this.freshReconnectAtMs = null;
+    // requestOldMessages() backward-pagination walk state (see
+    // requestGroupBackfill / the "old_messages" handler). Pages remaining
+    // in the CURRENT walk (0 = no walk in flight) and the newest timestamp
+    // a completed walk has confirmed is fully covered — the next walk only
+    // needs to go back far enough to reach this point, not further.
+    this.backfillWalkPagesLeft = 0;
+    this.backfillWatermarkTs = 0;
     // Which attachListener() call currently "owns" this session's events.
     // zca-js's own reconnect handling can leave an old listener's socket
     // alive for a while after we've already attached a fresh one on
@@ -257,21 +264,43 @@ async function resolveConversationName(session, zaloApi, threadId, isGroup, fall
 // going stale means reconnects (and the on-connect backfill) now happen
 // rarely — a message can still slip through a brief unnoticed gap even
 // while `listener_connected` stays true throughout.
-function requestGroupBackfill(session) {
-  try {
-    session.api?.listener.requestOldMessages(ThreadType.Group, null);
-  } catch (err) {
-    console.warn(`[listener:${session.accountId}] requestOldMessages failed:`, err.message);
-  }
-}
-
 // requestOldMessages() has no per-group filter (confirmed in zca-js's own
 // source — its 2nd arg is a pagination cursor, not a thread id) — it always
 // returns the most recent batch across EVERY group the account is in. For
 // an account in 100+ groups, a message in a quiet project-linked group can
 // get crowded out of that batch by higher-traffic unrelated groups before
-// the next poll. Polling more often narrows (does not close) that window.
+// the next poll. Polling more often narrows the window; walking backward
+// (below) closes gaps a single shallow poll can't reach at all.
 const BACKFILL_INTERVAL_MS = 5000;
+
+// requestOldMessages's lastMsgId IS a real backward-pagination cursor (its
+// payload literally carries { lastId, preIds } — see zca-js's listen.js) —
+// passing the oldest message id from one batch as the next call's lastMsgId
+// walks further back in time instead of re-fetching the same "most recent
+// across all groups" batch every tick. Ported from the escalating-retry
+// idea in a reference backfill implementation, adapted to this event-driven
+// (not promise-returning) API: no "more available" flag comes back here, so
+// "keep walking" is judged by whether the batch's oldest message is still
+// newer than the last point we know we've already fully covered
+// (session.backfillWatermarkTs) — once a walk's oldest message is at or
+// older than that, there's nothing further back worth fetching this time.
+const MAX_BACKFILL_WALK_PAGES = 5;
+
+function requestGroupBackfill(session) {
+  // A walk already in flight owns the next "old_messages" event (see the
+  // handler below) — starting a second one here would reset its cursor
+  // back to "most recent" mid-walk and race with whichever response lands
+  // first. Simply skip; the in-flight walk finishes on its own within a
+  // few seconds either way.
+  if (session.backfillWalkPagesLeft > 0) return;
+  session.backfillWalkPagesLeft = MAX_BACKFILL_WALK_PAGES;
+  try {
+    session.api?.listener.requestOldMessages(ThreadType.Group, null);
+  } catch (err) {
+    session.backfillWalkPagesLeft = 0;
+    console.warn(`[listener:${session.accountId}] requestOldMessages failed:`, err.message);
+  }
+}
 
 // Bounds one listener callback's runtime — a hung zca-js API call inside it
 // (getGroupInfo/getAllGroups etc. go over the network with no timeout of
@@ -315,10 +344,35 @@ function attachListener(session, zaloApi) {
 
   zaloApi.listener.on("old_messages", withTimeout(async (messages, threadType) => {
     if (!isActiveListener()) return;
-    console.log(`[listener:${session.accountId}] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}`);
-    for (const message of messages || []) {
+    console.log(`[listener:${session.accountId}] old_messages backfill — ${messages?.length ?? 0} message(s), type=${threadType}, pagesLeft=${session.backfillWalkPagesLeft}`);
+    const batch = messages || [];
+    for (const message of batch) {
       if (!isActiveListener()) return;
       await forwardMessage(session, message);
+    }
+
+    if (session.backfillWalkPagesLeft <= 0) return; // not part of a walk (e.g. an unrelated old_reactions-style event, or already finished)
+
+    const timestamps = batch.map((m) => Number(m.data?.ts)).filter(Number.isFinite);
+    const oldestTsInBatch = timestamps.length ? Math.min(...timestamps) : null;
+    const oldestIdInBatch = batch.length
+      ? batch.reduce((oldest, m) => (Number(m.data?.ts) < Number(oldest.data?.ts) ? m : oldest)).data?.msgId
+      : null;
+
+    const reachedKnownGround = batch.length === 0 || (oldestTsInBatch !== null && oldestTsInBatch <= session.backfillWatermarkTs);
+    session.backfillWalkPagesLeft -= 1;
+    if (reachedKnownGround || session.backfillWalkPagesLeft <= 0 || !oldestIdInBatch) {
+      session.backfillWalkPagesLeft = 0;
+      if (timestamps.length) {
+        session.backfillWatermarkTs = Math.max(session.backfillWatermarkTs, ...timestamps);
+      }
+      return;
+    }
+    try {
+      session.api?.listener.requestOldMessages(ThreadType.Group, oldestIdInBatch);
+    } catch (err) {
+      session.backfillWalkPagesLeft = 0;
+      console.warn(`[listener:${session.accountId}] requestOldMessages (walk) failed:`, err.message);
     }
   }, 45000)); // a backfill batch can have many messages — give it more room than a single "message" event
 
