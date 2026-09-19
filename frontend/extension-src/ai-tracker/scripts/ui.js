@@ -695,107 +695,186 @@ function injectWidget(toolName) {
   });
 
   widget.innerHTML = `
-    <div id="markee-widget-header" style="font-weight: 500; color: #fff; border-bottom: 1px solid #4e46dc; padding-bottom: 6px; position: relative; flex-shrink: 0; cursor: grab; user-select: none;">
-  <span>🧠 KPI Prototype Workspace</span>
-  
-  <!-- Nút Hướng dẫn sử dụng (Nằm cạnh nút Đóng) -->
-  <a href="https://www.youtube.com/playlist?list=PLUIGHawyvZNE&si=b-uLWNhKkDPMAv_2" target="_blank" title="Xem video hướng dẫn sử dụng" style="position: absolute; right: 28px; top: 0; cursor: pointer; color: #64748b; padding: 2px; text-decoration: none; display: flex; align-items: center; justify-content: center;">
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="10"></circle>
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path>
-      <line x1="12" y1="17" x2="12.01" y2="17"></line>
-    </svg>
-  </a>
+    <style>
+      /* Structural port of the "Markee AI Workspace — Full Demo Flow v14/v36"
+         mockup (markee_ai_workspace_full_demo_v36...html) into the real
+         injected widget. Every selector is scoped under #markee-widget so
+         nothing leaks onto the host page (ChatGPT/Claude/Gemini) — the
+         mockup itself is a standalone page and doesn't need this scoping. */
+      #markee-widget .mk-top{padding:0 0 8px;border-bottom:1px solid rgba(86,93,255,.38);flex-shrink:0;}
+      #markee-widget .mk-brand-row{display:flex;align-items:center;gap:6px;}
+      #markee-widget .mk-brand{min-width:0;flex:1;display:flex;align-items:center;gap:6px;font-size:13px;font-weight:900;letter-spacing:-.01em;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      #markee-widget .mk-icon-btn{width:24px;height:24px;border-radius:8px;border:0;background:transparent;color:#91a2ca;flex:0 0 auto;display:grid;place-items:center;cursor:pointer;text-decoration:none;font-size:13px;}
+      #markee-widget .mk-sync-btn{width:24px;height:24px;border-radius:8px;border:1px solid rgba(25,197,143,.28);background:rgba(25,197,143,.07);color:#7fe4c2;display:grid;place-items:center;font-size:12px;cursor:pointer;flex:0 0 auto;}
+      #markee-widget .mk-quickbar{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin-top:7px;padding:3px;border-radius:10px;background:rgba(11,15,29,.32);border:1px solid rgba(255,255,255,.04);}
+      #markee-widget .mk-select{width:100%;height:28px;border-radius:7px;appearance:none;border:1px solid rgba(88,95,255,.38);background:#12172a;color:#eef2ff;padding:0 8px;outline:none;font-size:10.6px;font-weight:800;cursor:pointer;}
+      #markee-widget .mk-select.primary{border-color:transparent;background:linear-gradient(135deg,#5b53f5,#4e46dc);color:#fff;}
+      #markee-widget .mk-commandbar{display:flex;gap:5px;margin-top:6px;flex-shrink:0;}
+      #markee-widget .mk-command{flex:1;height:30px;border-radius:8px;font-size:10.6px;font-weight:900;display:flex;align-items:center;justify-content:center;gap:5px;border:0;cursor:pointer;color:#fff;}
+      #markee-widget .mk-card{border:1px solid #2c3356;background:linear-gradient(180deg,#1a2038,#161a2f);border-radius:12px;overflow:hidden;margin-top:8px;flex-shrink:0;}
+      #markee-widget .mk-summary-line{min-height:34px;display:flex;align-items:center;gap:6px;padding:6px 9px;cursor:pointer;}
+      #markee-widget .mk-summary-line+.mk-summary-line{border-top:1px solid rgba(255,255,255,.045);}
+      #markee-widget .mk-summary-label{display:flex;align-items:center;gap:4px;color:#cbd2eb;font-size:10px;font-weight:900;white-space:nowrap;min-width:58px;}
+      #markee-widget .mk-summary-main{min-width:0;flex:1;color:#f2f5ff;font-size:11px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      #markee-widget .mk-summary-expand{width:22px;height:22px;border-radius:7px;border:0;background:transparent;color:#91a0c5;cursor:pointer;font-size:11px;flex:0 0 auto;}
+      #markee-widget .mk-summary-extra{display:none;padding:8px 9px 9px;border-top:1px solid rgba(255,255,255,.05);background:#151a2e;}
+      #markee-widget .mk-summary-extra.open{display:block;}
+      #markee-widget .mk-field label{display:block;margin-bottom:4px;color:#8f99ff;font-size:9px;font-weight:900;letter-spacing:.04em;}
+      #markee-widget .mk-input,#markee-widget .mk-select-full{width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;}
+      #markee-widget .mk-feature-row{display:grid;grid-template-columns:1fr auto;gap:5px;margin-top:6px;}
+      #markee-widget .mk-create-btn{height:30px;padding:0 8px;border-radius:7px;border:1px solid rgba(25,197,143,.32);background:rgba(25,197,143,.08);color:#8ce4c6;font-size:9.5px;font-weight:900;cursor:pointer;white-space:nowrap;}
+      #markee-widget .mk-project-search-box{margin-top:8px;padding:7px 8px;border-radius:9px;background:#0f1425;border:1px solid rgba(91,99,255,.24);}
+      #markee-widget .mk-project-title{font-size:9.5px;font-weight:900;color:#8f99ff;letter-spacing:.04em;margin-bottom:5px;}
+      #markee-widget .mk-project-list-card{margin-top:8px;flex:1;min-height:0;display:flex;flex-direction:column;}
+      #markee-widget .mk-card-head{min-height:32px;padding:7px 9px;display:flex;align-items:center;gap:6px;}
+      #markee-widget .mk-card-title{min-width:0;flex:1;font-size:11px;font-weight:900;color:#fff;}
+      #markee-widget .mk-count{font-size:9.5px;color:#8b98bd;font-weight:800;}
+      #markee-widget .mk-search-wrap{position:relative;padding:0 9px 7px;}
+      #markee-widget .mk-search-ico{position:absolute;left:17px;top:9px;font-size:11px;color:#94a0c4;}
+      #markee-widget .mk-search{width:100%;height:28px;border-radius:8px;border:1px solid rgba(89,96,255,.5);background:#0f1425;color:#fff;padding:0 8px 0 26px;outline:none;font-size:10.8px;box-sizing:border-box;}
+      #markee-widget .mk-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;flex:1;min-height:0;}
+      #markee-widget .mk-item{min-height:36px;border-radius:9px;background:#111629;border:1px solid rgba(255,255,255,.055);display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;}
+      #markee-widget .mk-item:hover{border-color:rgba(91,99,255,.42);}
+      #markee-widget .mk-item.selected{border-color:#5f66ff;background:#23294b;}
+      #markee-widget .mk-item-title{font-size:10.8px;font-weight:800;color:#f2f5ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;}
+      #markee-widget .mk-chips{display:flex;gap:5px;overflow-x:auto;padding:0 9px 7px;scrollbar-width:none;}
+      #markee-widget .mk-chips::-webkit-scrollbar{display:none;}
+      #markee-widget .mk-chip{flex:0 0 auto;height:24px;padding:0 9px;border-radius:999px;border:1px solid rgba(91,99,255,.5);background:transparent;color:#c5cde9;font-size:9.8px;font-weight:900;cursor:pointer;}
+      #markee-widget .mk-chip.active{background:#5b53f5;border-color:#5b53f5;color:#fff;}
+      #markee-widget .mk-dest-cards{display:flex;gap:6px;}
+      #markee-widget .mk-footer{margin-top:8px;flex-shrink:0;}
+      #markee-widget .mk-version{height:30px;border-radius:8px;border:1px solid rgba(91,99,255,.4);background:#0f1425;padding:0 7px 0 9px;display:flex;align-items:center;gap:5px;}
+      #markee-widget .mk-v-label{min-width:0;flex:1;color:#a7b2ce;font-size:9.8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    </style>
 
-  <!-- Nút Đóng (Gốc) -->
-  <span id="markee-close-btn" style="position: absolute; right: 0; top: 0; cursor: pointer; color: #64748b; font-size: 14px; padding: 2px;">✕</span>
-</div>
-    
-    <!-- Tab 1: UPLOAD / DOWNLOAD -->
-    <div id="markee-tab-nav" style="display: flex; gap: 4px; flex-shrink: 0;">
-      <button id="markee-tab-push" type="button" style="flex: 1; background: #5b53f5; color: #fff; border: none; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📤 UPLOAD</button>
-      <button id="markee-tab-pull" type="button" style="flex: 1; background: #12172a; color: #8f99ff; border: 1px solid #4e46dc; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📥 DOWNLOAD</button>
-    </div>
+    <div id="markee-widget-header" class="mk-top" style="position: relative; cursor: grab; user-select: none;">
+      <div class="mk-brand-row">
+        <div class="mk-brand"><span>🧠</span><span>Markee AI Workspace</span></div>
+        <button class="markee-sync-all-btn mk-sync-btn" type="button" title="Đồng bộ tất cả dữ liệu">🔄</button>
+        <a href="https://www.youtube.com/playlist?list=PLUIGHawyvZNE&si=b-uLWNhKkDPMAv_2" target="_blank" title="Xem video hướng dẫn sử dụng" class="mk-icon-btn">?</a>
+        <span id="markee-close-btn" class="mk-icon-btn" style="cursor:pointer;">✕</span>
+      </div>
 
-    <!-- Sub-tabs: Mode Toggle (📝 Tóm Tắt TRÁI / ⚡ Kỹ Năng PHẢI) -->
-    <div id="markee-mode-nav" style="display: flex; gap: 4px; flex-shrink: 0; margin-top: 4px; background: #12172a; padding: 2px; border-radius: 6px; border: 1px solid #4e46dc;">
-      <button id="markee-mode-wip" type="button" style="flex: 1; background: #5b53f5; color: #fff; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">📝 Tóm Tắt</button>
-      <button id="markee-mode-skill" type="button" style="flex: 1; background: transparent; color: #8f99ff; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">⚡ Kỹ Năng</button>
+      <!-- Quickbar: Action (Upload/Download) × Module (Tóm tắt/Kỹ năng) — drives
+           the exact same switchTab()/updateModeVisibility() the widget already
+           used with tab buttons; markee-tab-push/pull below stay as hidden
+           targets so those two functions' (unguarded) tabPush.style writes
+           keep a real element to write to. -->
+      <div class="mk-quickbar">
+        <select id="markee-action-select" class="mk-select primary">
+          <option value="push">⬆️ Upload</option>
+          <option value="pull">⬇️ Download</option>
+        </select>
+        <select id="markee-module-select" class="mk-select">
+          <option value="wip">📝 Tóm tắt</option>
+          <option value="skill">⚡ Kỹ năng</option>
+        </select>
+      </div>
+      <div style="display:none;">
+        <button id="markee-tab-push" type="button"></button>
+        <button id="markee-tab-pull" type="button"></button>
+        <button id="markee-mode-wip" type="button"></button>
+        <button id="markee-mode-skill" type="button"></button>
+      </div>
     </div>
 
     <!-- PANEL UPLOAD -->
-    <div id="markee-tab-push-panel" style="flex: 1; min-height: 0; display: flex; flex-direction: column;">
-      <div style="flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px;">
-        
-        <!-- View 1: UPLOAD KỸ NĂNG (Thiết kế mới Step-by-Step 2 Bước) -->
-        <div id="markee-push-skill-view" style="display: none; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(91, 83, 245, 0.08); border-radius: 8px; border: 1px dashed #5b53f5; position: relative;">
-          <!-- Header Tiêu đề Tab -->
-          <div style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px;">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div id="skill-push-header-title" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
-                <span title="Chọn một hoặc cả hai nơi lưu, sau đó đưa nội dung cho AI kiểm tra." style="font-size: 12px; font-weight: 500; color: #fff; cursor: pointer;">⚡ Thêm kỹ năng mới</span>
-                <span id="skill-push-toggle-arrow" style="font-size: 10px; color: #8f99ff; transition: transform 0.25s ease;">▼</span>
-              </div>
-              <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #5b53f5; color: #8f99ff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
-                <span class="sync-icon">🔄</span> Đồng bộ tất cả
-              </button>
-            </div>
+    <div id="markee-tab-push-panel" style="flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden;">
+
+      <!-- View 2: UPLOAD TÓM TẮT — mockup's 2-line collapsible summary card -->
+      <div id="markee-push-wip-view" style="display: flex; flex-direction: column; flex-shrink: 0;">
+        <div class="mk-card" id="wip-push-summary-card">
+          <div class="mk-summary-line" id="wip-push-header-title">
+            <span class="mk-summary-label">📝 Tóm tắt</span>
+            <span class="mk-summary-main" id="wip-push-project-text">-- Chọn Dự án --</span>
+            <button type="button" class="mk-summary-expand" id="wip-push-toggle-arrow">▾</button>
+          </div>
+          <div class="mk-summary-line" id="wip-push-feature-line">
+            <span class="mk-summary-label">🛠 Tính năng</span>
+            <span class="mk-summary-main" id="wip-push-feature-preview">-- Chưa nhập --</span>
+            <span class="markee-sync-all-btn" title="Đồng bộ tất cả dữ liệu" style="width:22px;height:22px;border-radius:7px;display:flex;align-items:center;justify-content:center;color:#8f99ff;cursor:pointer;flex:0 0 auto;">🔄</span>
           </div>
 
-          <!-- COLLAPSIBLE GROUP A: Gom CẢ Bước 1 VÀ Bước 2 (Mặc định THU GỌN - max-height: 0px, opacity: 0) -->
-          <div id="skill-push-collapsible-area" style="display: flex; flex-direction: column; gap: 8px; transition: all 0.25s ease-in-out; overflow: hidden; max-height: 0px; opacity: 0;">
-            <!-- BƯỚC 1: LƯU KỸ NĂNG VÀO ĐÂU? -->
-            <div style="display: flex; flex-direction: column; gap: 6px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 11px; font-weight: 500; color: #8f99ff;">1. Lưu kỹ năng vào đâu?</span>
-                <span style="font-size: 9px; color: #ef4444; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); padding: 1px 5px; border-radius: 4px; font-weight: 500;">Bắt buộc</span>
+          <div class="mk-summary-extra" id="wip-push-summary-extra">
+            <div class="mk-field">
+              <label>🛠 TÍNH NĂNG</label>
+              <div class="mk-feature-row" style="position:relative;">
+                <input type="text" id="markee-feature-input-push" class="mk-input" placeholder="Nhập hoặc chọn tính năng..." autocomplete="off">
+                <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 160px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
               </div>
-
-              <!-- 2 Cards Lớn (Flex 50-50) -->
-              <div style="display: flex; gap: 6px;">
-                <!-- Card 1: Dự án -->
-                <div id="push-dest-card-project" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 11px; font-weight: 500; color: #fff;">📁 Dự án</span>
-                    <span class="check-icon" style="font-size: 11px; color: #8f99ff; font-weight: 500;">✓</span>
-                  </div>
-                </div>
-
-                <!-- Card 2: Bộ kỹ năng phòng ban -->
-                <div id="push-dest-card-dept" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
-                  <div style="display: flex; justify-content: space-between; align-items: center;">
-                    <span style="font-size: 11px; font-weight: 500; color: #fff;">🏢 Bộ kỹ năng</span>
-                    <span class="check-icon" style="font-size: 11px; color: #8f99ff; font-weight: 500;">✓</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Text Cảnh báo lỗi nội bộ Extension (Local Warning) -->
-              <div id="push-dest-local-warning" class="local-warning" style="display: none; font-size: 11px; color: #ef4444; font-weight: 500; margin-top: 2px;">⚠️ Phải chọn ít nhất 1 nơi lưu!</div>
+              <datalist id="feature-suggestions-push"></datalist>
             </div>
 
-            <!-- BƯỚC 2: CHỌN PHẠM VI SỬ DỤNG (HIỂN THỊ ĐỘNG) -->
-            <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 2px;">
-              <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 11px; font-weight: bold; color: #8f99ff;">2. Chọn phạm vi sử dụng</span>
-                <span id="push-step2-badge" style="font-size: 9px; color: #8f99ff; background: rgba(91, 83, 245, 0.15); border: 1px solid #5b53f5; padding: 1px 6px; border-radius: 4px; font-weight: 500;">Cả 2 nơi lưu</span>
-              </div>
+            <div class="mk-project-search-box">
+              <div class="mk-project-title">📁 DỰ ÁN: <span id="wip-project-current-name" style="color:#fff;">—</span></div>
+              <input type="text" id="wip-project-search-input" class="mk-input" placeholder="Tìm kiếm dự án..." autocomplete="off">
+              <div id="wip-project-search-results" style="display: flex; flex-direction: column; gap: 2px; max-height: 120px; overflow-y: auto; margin-top: 5px;"></div>
+            </div>
+          </div>
+        </div>
 
-              <!-- Dynamic Scope Boxes Container -->
+        <!-- ACTIONS CHO TÓM TẮT -->
+        <div id="markee-push-wip-actions" class="mk-commandbar">
+          <button id="btn-wip-prompt" class="mk-command" style="background:linear-gradient(135deg,#f5a008,#df8200);">⏸️ Lệnh Tóm tắt</button>
+          <button id="btn-save-wip" class="mk-command" style="background:#13182b;border:1px solid rgba(91,99,255,.46);color:#d7def4;">💾 Lưu Tóm tắt</button>
+        </div>
+
+        <!-- Hidden Form Controls for saveWipSummary compatibility -->
+        <div style="display: none;">
+          <select id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
+          <select id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
+          <div id="wip-push-quick-list"></div>
+          <div id="wip-push-card-customer"><span id="wip-push-customer-text"></span></div>
+          <div id="wip-push-collapsible-area"></div>
+        </div>
+      </div>
+
+      <!-- View 1: UPLOAD KỸ NĂNG — mockup-styled destination cards, same
+           step-by-step logic/ids as before (renderPushSkillStepUI etc). -->
+      <div id="markee-push-skill-view" style="display: none; flex-direction: column; gap: 7px; flex-shrink: 0;">
+        <div class="mk-card" style="padding: 9px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px;">
+            <span id="skill-push-header-title" style="font-size: 11px; font-weight: 900; color: #fff;">⚡ Thêm kỹ năng mới</span>
+            <span id="skill-push-toggle-arrow" style="font-size: 10px; color: #8f99ff;">▼</span>
+          </div>
+
+          <div id="skill-push-collapsible-area" style="display: flex; flex-direction: column; gap: 8px; transition: all 0.25s ease-in-out; overflow: hidden; max-height: 0px; opacity: 0;">
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 10px; font-weight: 900; color: #8f99ff;">1. Lưu kỹ năng vào đâu?</span>
+                <span style="font-size: 9px; color: #ef4444; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); padding: 1px 5px; border-radius: 4px; font-weight: 700;">Bắt buộc</span>
+              </div>
+              <div class="mk-dest-cards">
+                <div id="push-dest-card-project" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 8px; padding: 7px 9px; cursor: pointer; user-select: none;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 10.5px; font-weight: 800; color: #fff;">📁 Dự án</span>
+                    <span class="check-icon" style="font-size: 11px; color: #8f99ff;">✓</span>
+                  </div>
+                </div>
+                <div id="push-dest-card-dept" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 8px; padding: 7px 9px; cursor: pointer; user-select: none;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 10.5px; font-weight: 800; color: #fff;">🏢 Bộ kỹ năng</span>
+                    <span class="check-icon" style="font-size: 11px; color: #8f99ff;">✓</span>
+                  </div>
+                </div>
+              </div>
+              <div id="push-dest-local-warning" class="local-warning" style="display: none; font-size: 10px; color: #ef4444; font-weight: 700;">⚠️ Phải chọn ít nhất 1 nơi lưu!</div>
+            </div>
+
+            <div style="display: flex; flex-direction: column; gap: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: center;">
+                <span style="font-size: 10px; font-weight: 900; color: #8f99ff;">2. Chọn phạm vi sử dụng</span>
+                <span id="push-step2-badge" style="font-size: 9px; color: #8f99ff; background: rgba(91, 83, 245, 0.15); border: 1px solid #5b53f5; padding: 1px 6px; border-radius: 999px; font-weight: 700;">Cả 2 nơi lưu</span>
+              </div>
               <div id="push-step2-boxes-container" style="display: flex; flex-direction: column; gap: 6px;"></div>
             </div>
           </div>
 
-          <!-- KPI Prototype: mỗi lần tải extension đã gắn cố định với 1 dự án
-               pm-new — không còn danh sách dự án công ty để chọn. Skill vẫn
-               dùng chung toàn công ty, nên đây chỉ là 1 checkbox gắn thẻ tuỳ
-               chọn với dự án đang khoá, thay cho bộ chọn dự án cũ. -->
-          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px; background: #0f1425; border: 1px solid #2c3356; border-radius: 8px; cursor: pointer; user-select: none;">
-            <input type="checkbox" id="skill-attach-project-checkbox" checked style="accent-color: #5b53f5; cursor: pointer; width: 14px; height: 14px;">
-            <span style="font-size: 11px; color: #8f99ff;">📁 Gắn với dự án đang chọn: <strong id="skill-attach-project-name" style="color: #fff;">…</strong></span>
+          <label style="display: flex; align-items: center; gap: 6px; margin-top: 8px; padding: 7px 8px; background: #0f1425; border: 1px solid #2c3356; border-radius: 8px; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="skill-attach-project-checkbox" checked style="accent-color: #5b53f5; cursor: pointer; width: 13px; height: 13px;">
+            <span style="font-size: 10.5px; color: #8f99ff;">📁 Gắn với dự án đang chọn: <strong id="skill-attach-project-name" style="color: #fff;">…</strong></span>
           </label>
 
-          <!-- Hidden Form Elements for scanAndSave compatibility -->
           <div style="display: none;">
             <select id="markee-department-select"><option value="">-- Tất cả Phòng ban --</option></select>
             <select id="markee-team-select" disabled><option value="">-- Tất cả Team --</option></select>
@@ -808,238 +887,92 @@ function injectWidget(toolName) {
               <option value="Workflow">Workflow</option>
               <option value="Checklist">Checklist</option>
             </select>
-            <!-- Legacy quick-project-selector removed — company-wide project cascade no longer exists (see config.js) -->
             <div id="skill-push-quick-list"></div>
           </div>
         </div>
 
-        <!-- View 2: UPLOAD TÓM TẮT (Flow mới) - shown by default -->
-        <div id="markee-push-wip-view" style="display: flex; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(91, 83, 245, 0.08); border-radius: 8px; border: 1px dashed #5b53f5; position: relative;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
-            <div id="wip-push-header-title" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
-              <label style="font-size: 11px; color: #8f99ff; font-weight: bold; margin: 0; cursor: pointer;">📝 Thiết lập Tóm tắt</label>
-              <span id="wip-push-toggle-arrow" style="font-size: 10px; color: #8f99ff; transition: transform 0.25s ease;">▼</span>
-            </div>
-            <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #5b53f5; color: #8f99ff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
-              <span class="sync-icon">🔄</span> Đồng bộ tất cả
-            </button>
-          </div>
-
-          <!-- HÀNG 1: Gom Khách hàng & Dự án (50% - 50%) - COLLAPSIBLE GROUP A (Mặc định THU GỌN - max-height: 0px, opacity: 0) -->
-          <div id="wip-push-collapsible-area" style="display: flex; gap: 8px; transition: all 0.25s ease-in-out; overflow: hidden; max-height: 0px; opacity: 0; margin-top: -4px; margin-bottom: -4px;">
-            <!-- Box 1: Khách hàng -->
-            <div id="wip-push-card-customer" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
-              <span style="font-size: 9px; font-weight: bold; color: #8f99ff; letter-spacing: 0.5px;">🏢 KHÁCH HÀNG</span>
-              <span id="wip-push-customer-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Khách hàng --</span>
-            </div>
-
-            <!-- Box 2: Dự án -->
-            <div id="wip-push-card-project" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
-              <span style="font-size: 9px; font-weight: bold; color: #8f99ff; letter-spacing: 0.5px;">📁 DỰ ÁN</span>
-              <span id="wip-push-project-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Dự án --</span>
-            </div>
-          </div>
-
-          <!-- HÀNG 2: Tính năng (100% width) -->
-          <div style="display: flex; flex-direction: column; gap: 4px; position: relative;">
-            <label style="font-size: 10px; color: #8f99ff; font-weight: bold; margin: 0;">🛠️ TÍNH NĂNG:</label>
-            <input type="text" id="markee-feature-input-push" placeholder="Nhập tên tính năng mới hoặc chọn từ danh sách..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
-            <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
-            <datalist id="feature-suggestions-push"></datalist>
-          </div>
-
-          <!-- KPI Prototype: chọn dự án bằng cách gõ tên (giống UI markee-dashboard's
-               "Chọn Dự án" — search input lọc theo tên, click 1 dòng để chọn). -->
-          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding: 8px; background: #0f1425; border: 1px solid #2c3356; border-radius: 8px; position: relative;">
-            <span style="font-size: 10px; color: #8f99ff; font-weight: bold;">📁 DỰ ÁN: <span id="wip-project-current-name" style="color: #fff;">—</span></span>
-            <input type="text" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
-            <div id="wip-project-search-results" style="display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto;"></div>
-          </div>
-
-          <!-- Hidden Form Controls for saveWipSummary compatibility -->
-          <div style="display: none;">
-            <select id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
-            <select id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
-            <div id="wip-push-quick-list"></div>
-          </div>
+        <div id="markee-push-skill-actions" class="mk-commandbar" style="display: none;">
+          <button id="btn-copy-prompt" class="mk-command" style="background:linear-gradient(135deg,#5b53f5,#4e46dc);">➕ Lệnh Kỹ năng</button>
+          <button id="btn-save-skill" class="mk-command" style="background:#19c58f;">💾 Lưu Kỹ năng</button>
         </div>
-
-        <hr style="border: 0; border-top: 1px solid #4e46dc; margin: 4px 0;">
-
-        <!-- ACTIONS CHO KỸ NĂNG - hidden by default -->
-        <div id="markee-push-skill-actions" style="display: none; flex-direction: column; gap: 6px;">
-          <div style="display: flex; gap: 6px;">
-            <button id="btn-copy-prompt" style="flex: 1; background: #5b53f5; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">➕ Lệnh Kỹ Năng</button>
-            <button id="btn-save-skill" style="flex: 1; background: #10b981; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">💾 Lưu Kỹ Năng</button>
-          </div>
-        </div>
-
-        <!-- ACTIONS CHO TÓM TẮT - shown by default -->
-        <div id="markee-push-wip-actions" style="display: flex; flex-direction: column; gap: 6px;">
-          <div style="display: flex; gap: 6px;">
-            <button id="btn-wip-prompt" style="flex: 1; background: #d97706; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">⏸️ Lệnh Tóm Tắt</button>
-            <button id="btn-save-wip" style="flex: 1; background: #b45309; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">💾 Lưu Tóm Tắt</button>
-          </div>
-        </div>
-
       </div>
     </div>
 
     <!-- PANEL DOWNLOAD -->
-    <div id="markee-tab-pull-panel" style="flex: 1; min-height: 0; display: none; flex-direction: column;">
-      <div style="flex: 1; overflow-y: auto; overflow-x: hidden;">
-        
-        <!-- View 1: DOWNLOAD KỸ NĂNG -->
-        <div id="markee-pull-skill-view" style="display: none; flex-direction: column; gap: 6px; margin-top: 2px; padding: 6px; background: rgba(16, 185, 129, 0.08); border-radius: 8px; border: 1px dashed #10b981; position: relative;">
-          <!-- Header Bộ Lọc (Clickable Collapsible Header) -->
-          <div id="markee-pull-skill-header" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <label style="font-size: 11px; color: #6ee7b7; font-weight: 500; margin: 0; cursor: pointer;">📥 Bộ lọc ngữ cảnh</label>
-              <span id="markee-pull-skill-arrow" style="font-size: 10px; color: #6ee7b7; font-weight: normal;">▼</span>
-            </div>
-            <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #10b981; color: #6ee7b7; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
-              <span class="sync-icon">🔄</span> Đồng bộ tất cả
-            </button>
-          </div>
+    <div id="markee-tab-pull-panel" style="flex: 1; min-height: 0; display: none; flex-direction: column; overflow-y: auto; overflow-x: hidden;">
 
-          <!-- NHÓM A: VÙNG CÓ THỂ THU GỌN (CHỈ CHỨA CÁC BOX CHỌN NÂNG CAO - MẶC ĐỊNH ẨN) -->
-          <div id="markee-pull-skill-body" style="display: none; flex-direction: column; gap: 6px; margin-top: 4px;">
-            <!-- Hàng 1: Nút Phòng ban & Nút Team phụ trách (Flex 50-50) -->
-            <div style="display: flex; gap: 6px;">
-              <div id="markee-filter-btn-dept" title="Chọn Phòng ban" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
-                <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">🏢 Phòng ban</span>
-                <span id="markee-badge-dept" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
-              </div>
-              <div id="markee-filter-btn-team" title="Chọn Team phụ trách" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
-                <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">👥 Team phụ trách</span>
-                <span id="markee-badge-team" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
-              </div>
-            </div>
-
-            <!-- Hàng 2: Nút Dự án (100% width) -->
-            <div id="markee-filter-btn-project" title="Chọn Dự án" style="width: 100%; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s; box-sizing: border-box;">
-              <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">📁 Dự án</span>
-              <span id="markee-badge-project" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
-            </div>
-          </div>
-
-          <!-- NHÓM B: VÙNG LUÔN HIỂN THỊ (TÌM KIẾM & CHIPS BỘ LỌC NHANH - LUÔN HIỆN) -->
-          <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
-            <!-- Search Input Bar -->
-            <div style="position: relative; width: 100%;">
-              <span style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #64748b; pointer-events: none;">🔍</span>
-              <input type="text" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." style="width: 100%; padding: 6px 10px 6px 26px; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box; transition: all 0.2s;">
-            </div>
-
-            <!-- Quick Filter Chips -->
-            <div id="markee-skill-chips-container" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; -ms-overflow-style: none;">
-              <button type="button" class="markee-chip-btn markee-chip-fav" data-filter="favorite" style="flex-shrink: 0; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">⭐ Ưu thích</button>
-              <button type="button" class="markee-chip-btn active" data-filter="all" style="flex-shrink: 0; background: #5b53f5; border: 1px solid #5b53f5; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Tất cả</button>
-              <button type="button" class="markee-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #12172a; border: 1px solid #4e46dc; color: #8f99ff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
-            </div>
-          </div>
-
-          <!-- Legacy hidden elements for script compatibility -->
-          <div style="display: none;">
-            <select id="markee-pull-department"><option value="">-- Tất cả --</option></select>
-            <select id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
-            <input type="text" id="markee-pull-project">
-            <div id="dropdown-options-pull"></div>
-          </div>
+      <!-- View 2: DOWNLOAD TÓM TẮT — filter by feature within the current project -->
+      <div id="markee-pull-wip-view" style="display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
+        <div class="mk-search-wrap" style="padding: 0;">
+          <span class="mk-search-ico" style="left:8px;">🔍</span>
+          <input type="text" id="markee-feature-input-pull" class="mk-search" placeholder="Lọc theo tính năng..." autocomplete="off">
         </div>
-
-        <!-- View 2: DOWNLOAD TÓM TẮT -->
-        <div id="markee-pull-wip-view" style="display: flex; flex-direction: column; gap: 6px; margin-top: 2px; padding: 6px; background: rgba(16, 185, 129, 0.08); border-radius: 6px; border: 1px dashed #10b981; position: relative;">
-          <!-- Header Bộ Lọc (Clickable Collapsible Header) -->
-          <div id="markee-pull-wip-header" style="display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none;">
-            <div style="display: flex; align-items: center; gap: 6px;">
-              <label style="font-size: 11px; color: #6ee7b7; font-weight: 500; margin: 0; cursor: pointer;">📥 Bộ lọc Tóm tắt</label>
-              <span id="markee-pull-wip-arrow" style="font-size: 10px; color: #6ee7b7; font-weight: normal;">▼</span>
-            </div>
-            <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #10b981; color: #6ee7b7; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
-              <span class="sync-icon">🔄</span> Đồng bộ tất cả
-            </button>
-          </div>
-
-          <!-- NHÓM A: VÙNG CÓ THỂ THU GỌN (CHỈ CHỨA CÁC BOX CHỌN NÂNG CAO - MẶC ĐỊNH ẨN) -->
-          <div id="markee-pull-wip-body" style="display: none; flex-direction: column; gap: 6px; margin-top: 4px;">
-            <!-- HÀNG 1: Gom Khách hàng & Dự án (50% - 50%) -->
-            <div style="display: flex; gap: 6px;">
-              <!-- Box 1: Khách hàng -->
-              <div id="wip-pull-card-customer" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
-                <span style="font-size: 9px; font-weight: 500; color: #6ee7b7; letter-spacing: 0.5px;">🏢 KHÁCH HÀNG</span>
-                <span id="wip-pull-customer-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Khách hàng --</span>
-              </div>
-
-              <!-- Box 2: Dự án -->
-              <div id="wip-pull-card-project" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
-                <span style="font-size: 9px; font-weight: 500; color: #6ee7b7; letter-spacing: 0.5px;">📁 DỰ ÁN</span>
-                <span id="wip-pull-project-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Dự án --</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- NHÓM B: VÙNG LUÔN HIỂN THỊ (TÌM KIẾM & CHIPS BỘ LỌC NHANH - LUÔN HIỆN) -->
-          <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
-            <!-- HÀNG 2: Tìm kiếm Tính năng (100% width) -->
-            <div style="position: relative;">
-              <label style="font-size: 10px; color: #6ee7b7; font-weight: 500; margin: 0 0 2px 0; display: block;">🛠️ TÍNH NĂNG:</label>
-              <input type="text" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
-              <div id="custom-feature-dropdown-pull" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
-            </div>
-
-            <!-- HÀNG 3: Quick Filter Chips cho WIP -->
-            <div id="markee-wip-chips-container" style="display: flex; gap: 6px; overflow-x: auto; padding-top: 2px; padding-bottom: 2px; scrollbar-width: none; -ms-overflow-style: none;">
-              <button type="button" class="markee-wip-chip-btn markee-chip-fav" data-filter="favorite" style="flex-shrink: 0; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">⭐ Ưu thích</button>
-              <button type="button" class="markee-wip-chip-btn active" data-filter="all" style="flex-shrink: 0; background: #10b981; border: 1px solid #10b981; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Tất cả</button>
-              <button type="button" class="markee-wip-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #12172a; border: 1px solid #4e46dc; color: #8f99ff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
-            </div>
-          </div>
-
-          <!-- Hidden Form Controls for compatibility -->
-          <div style="display: none;">
-            <select id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
-            <select id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
-            <datalist id="feature-suggestions-pull"></datalist>
-          </div>
+        <div id="markee-wip-chips-container" class="mk-chips" style="padding: 0;">
+          <button type="button" class="markee-wip-chip-btn mk-chip markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
+          <button type="button" class="markee-wip-chip-btn mk-chip active" data-filter="all">Tất cả</button>
+          <button type="button" class="markee-wip-chip-btn mk-chip" data-filter="recent">Gần đây</button>
         </div>
-
-        <!-- LIST HIỂN THỊ KẾT QUẢ -->
-        <div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed #4e46dc;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
-            <div id="markee-skill-list-header" style="font-size: 11px; color: #10b981; font-weight: bold;">⚡ Skills</div>
-            <button id="markee-wip-refresh-btn" title="Làm mới danh sách" style="background: none; border: none; color: #5b53f5; font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; display: none; align-items: center; gap: 4px;">
-              <span class="spin-icon" style="display: inline-block; transition: transform 1s ease;">🔄</span>
-              <span class="refresh-text" style="font-size: 9px; color: #64748b;"></span>
-            </button>
-          </div>
-          <input type="text" id="wip-search-input" placeholder="🔍 Tìm kiếm WIP..." style="width: 100%; margin-bottom: 6px; display: none; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 4px; padding: 5px; font-size: 11px; outline: none; box-sizing: border-box;">
-          <div id="markee-skill-list" style="display: flex; flex-direction: column; gap: 5px;"></div>
+        <div style="display: none;">
+          <select id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
+          <select id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
+          <datalist id="feature-suggestions-pull"></datalist>
+          <div id="custom-feature-dropdown-pull"></div>
+          <div id="wip-pull-card-customer"><span id="wip-pull-customer-text"></span></div>
+          <div id="wip-pull-card-project"><span id="wip-pull-project-text"></span></div>
         </div>
+      </div>
 
-        <!-- "Kho Tri Thức" (master project summary) removed — no equivalent
-             field on pm-new's Project model; GET_SUMMARIES is not implemented
-             by background.js anymore. -->
+      <!-- View 1: DOWNLOAD KỸ NĂNG — real Ưu thích/Tất cả/Gần đây via GET_SKILLS
+           filterType (already works server-side); dropped the old multi-select
+           Phòng ban/Team/Dự án filter buttons — they sent departmentIds/
+           teamIds/projectIds arrays background.js's GET_SKILLS never read
+           (it only accepts singular departmentId/teamId/projectId), so that
+           filtering silently never worked even before this pass. -->
+      <div id="markee-pull-skill-view" style="display: none; flex-direction: column; gap: 6px; flex-shrink: 0;">
+        <div class="mk-search-wrap" style="padding: 0;">
+          <span class="mk-search-ico" style="left:8px;">🔍</span>
+          <input type="text" id="markee-skill-search-input" class="mk-search" placeholder="Tìm kỹ năng..." autocomplete="off">
+        </div>
+        <div id="markee-skill-chips-container" class="mk-chips" style="padding: 0;">
+          <button type="button" class="markee-chip-btn mk-chip markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
+          <button type="button" class="markee-chip-btn mk-chip active" data-filter="all">Tất cả</button>
+          <button type="button" class="markee-chip-btn mk-chip" data-filter="recent">Gần đây</button>
+        </div>
+        <div style="display: none;">
+          <select id="markee-pull-department"><option value="">-- Tất cả --</option></select>
+          <select id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
+          <input type="text" id="markee-pull-project">
+          <div id="dropdown-options-pull"></div>
+        </div>
+      </div>
+
+      <!-- LIST HIỂN THỊ KẾT QUẢ (shared between both Download views) -->
+      <div class="mk-card mk-project-list-card">
+        <div class="mk-card-head">
+          <div class="mk-card-title" id="markee-skill-list-header">⚡ Skills</div>
+          <button id="markee-wip-refresh-btn" title="Làm mới danh sách" style="background: none; border: none; color: #5b53f5; font-size: 12px; cursor: pointer; padding: 0 2px; display: none; align-items: center; gap: 4px;">
+            <span class="spin-icon" style="display: inline-block;">🔄</span>
+            <span class="refresh-text" style="font-size: 9px; color: #8b98bd;"></span>
+          </button>
+        </div>
+        <input type="text" id="wip-search-input" placeholder="🔍 Tìm kiếm WIP..." style="display: none; margin: 0 9px 6px; width: calc(100% - 18px); background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 8px; padding: 6px 8px; font-size: 10.8px; outline: none; box-sizing: border-box;">
+        <div id="markee-skill-list" class="mk-list"></div>
       </div>
     </div>
 
-    <!-- Banner Cập nhật Phiên bản (Version Update Banner) - DƯỚI CÙNG -->
-    <div id="markee-version-banner" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 6px 8px; background: #181825; border: 1px solid #4e46dc; border-radius: 6px; flex-shrink: 0;">
-      <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px;">
-        <span id="markee-version-current-text" style="color: #cbd5e1; font-weight: bold;">Phiên bản hiện tại: v...</span>
-        <span id="markee-version-status-badge" style="font-size: 9px; color: #10b981; font-weight: bold; background: rgba(16, 185, 129, 0.15); padding: 1px 5px; border-radius: 4px;">Mới nhất</span>
+    <!-- Banner Cập nhật Phiên bản — mockup's compact footer .version box -->
+    <div id="markee-version-banner" class="mk-footer">
+      <div class="mk-version">
+        <span id="markee-version-current-text" class="mk-v-label">Phiên bản hiện tại: v...</span>
+        <span id="markee-version-status-badge" style="font-size: 9px; color: #19c58f; font-weight: 900; background: rgba(25,197,143,.15); padding: 1px 6px; border-radius: 999px; flex-shrink: 0;">Mới nhất</span>
+        <button id="markee-btn-check-version" type="button" style="flex-shrink: 0; padding: 3px 7px; background: transparent; border: 1px solid rgba(91,99,255,.46); color: #c5cee6; border-radius: 7px; font-size: 9.5px; font-weight: 900; cursor: pointer;">🔍</button>
       </div>
-      <div id="markee-version-update-msg" style="font-size: 10px; color: #fbbf24; display: none; line-height: 1.3;">
+      <div id="markee-version-update-msg" style="font-size: 9.5px; color: #f5a008; display: none; line-height: 1.3; margin-top: 4px;">
         🚀 Có bản mới <strong id="markee-remote-version-tag">v1.3.2</strong> để tải và cập nhật.
       </div>
-      <div style="display: flex; gap: 6px; margin-top: 2px;">
-        <button id="markee-btn-check-version" type="button" style="flex: 1; padding: 4px 6px; background: transparent; border: 1px solid #5b53f5; color: #8f99ff; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.2s;">
-          🔍 Kiểm tra
-        </button>
-        <button id="markee-btn-update-version" type="button" style="flex: 1; padding: 4px 6px; background: #f59e0b; border: none; color: #0f172a; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: none; transition: all 0.2s;">
-          ⚡ Cập nhật
-        </button>
-      </div>
+      <button id="markee-btn-update-version" type="button" style="display: none; width: 100%; margin-top: 4px; padding: 5px 6px; background: #f5a008; border: none; color: #0f172a; border-radius: 7px; font-size: 10px; font-weight: 900; cursor: pointer;">
+        ⚡ Cập nhật
+      </button>
     </div>
   `;
   const container = getOrCreateContainer();
@@ -1048,19 +981,79 @@ function injectWidget(toolName) {
   // KPI Prototype: dự án hiện tại là 1 lựa chọn thật, đổi được bất cứ lúc
   // nào — không còn bị khoá cứng theo lần tải extension nữa.
   const skillAttachLabel = document.getElementById("skill-attach-project-name");
-  function syncSkillAttachLabel(name) {
+  const wipPushProjectSummary = document.getElementById("wip-push-project-text");
+  function syncSkillAttachLabel(id, name) {
     if (skillAttachLabel) skillAttachLabel.textContent = name || "(chưa chọn)";
+    // wireProjectSearch is the REAL project-selection mechanism (not the
+    // hidden markee-project-select-push cascade, which nothing populates
+    // anymore) — mirror its callback straight into the mockup-style 2-line
+    // summary card's project row too.
+    if (wipPushProjectSummary) wipPushProjectSummary.textContent = name || "-- Chọn Dự án --";
+    // fetchAndRenderWipSummaries() (Download → Tóm tắt) reads its project
+    // filter from markee-project-select-pull's value — keep it in sync with
+    // whichever project is actually selected so that view defaults to "this
+    // project's WIP entries" instead of querying with no project at all.
+    const pullProjectSelect = document.getElementById("markee-project-select-pull");
+    if (pullProjectSelect && id) {
+      pullProjectSelect.innerHTML = `<option value="${id}" selected>${name || ""}</option>`;
+    }
   }
   wireProjectSearch(
     document.getElementById("wip-project-search-input"),
     document.getElementById("wip-project-search-results"),
     document.getElementById("wip-project-current-name"),
-    (id, name) => syncSkillAttachLabel(name),
+    (id, name) => syncSkillAttachLabel(id, name),
     "dark",
   );
   chrome.runtime.sendMessage({ action: "GET_SELECTED_PROJECT" }, (state) => {
-    syncSkillAttachLabel(state && state.projectName);
+    syncSkillAttachLabel(state && state.projectId, state && state.projectName);
   });
+
+  // Mockup's 2-line summary card: line 1 (project) opens the same expand
+  // area line 2 (feature) does — both just toggle open/closed, matching
+  // setSummaryExpanded() in the reference mockup.
+  (function initWipSummaryCard() {
+    const extra = document.getElementById("wip-push-summary-extra");
+    const arrow = document.getElementById("wip-push-toggle-arrow");
+    const line1 = document.getElementById("wip-push-header-title");
+    const line2 = document.getElementById("wip-push-feature-line");
+    const featureInput = document.getElementById("markee-feature-input-push");
+    const featurePreview = document.getElementById("wip-push-feature-preview");
+    if (!extra || !line1 || !line2) return;
+
+    function setExpanded(open) {
+      extra.classList.toggle("open", open);
+      if (arrow) arrow.textContent = open ? "▴" : "▾";
+    }
+    line1.addEventListener("click", () => setExpanded(!extra.classList.contains("open")));
+    line2.addEventListener("click", () => setExpanded(true));
+    if (featureInput && featurePreview) {
+      const syncFeaturePreview = () => {
+        featurePreview.textContent = featureInput.value.trim() || "-- Chưa nhập --";
+      };
+      featureInput.addEventListener("input", syncFeaturePreview);
+      syncFeaturePreview();
+    }
+  })();
+
+  // Quickbar: Action (Upload/Download) × Module (Tóm tắt/Kỹ năng) selects
+  // replace the old dedicated tab buttons — same switchTab()/currentMode +
+  // updateModeVisibility() the widget already ran off of, so every other
+  // function below (loadProjects, fetchAndRenderSkills, saveWipSummary,
+  // scanAndSave, ...) keeps working unchanged.
+  (function initQuickbar() {
+    const actionSelect = document.getElementById("markee-action-select");
+    const moduleSelect = document.getElementById("markee-module-select");
+    if (actionSelect) {
+      actionSelect.addEventListener("change", () => switchTab(actionSelect.value));
+    }
+    if (moduleSelect) {
+      moduleSelect.addEventListener("change", () => {
+        currentMode = moduleSelect.value;
+        updateModeVisibility();
+      });
+    }
+  })();
 
   const departmentSelect = document.getElementById("markee-department-select");
   const teamSelect = document.getElementById("markee-team-select");
