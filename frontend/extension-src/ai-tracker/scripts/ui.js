@@ -261,12 +261,12 @@ function injectFloatingToggleButton() {
     "height: 38px",
     "border-radius: 50%",
     "border: 2px solid #ffffff",
-    "background: linear-gradient(135deg, #e3000f, #c40009)",
+    "background: linear-gradient(135deg, #5b53f5, #4e46dc)",
     "color: #fff",
     "font-size: 20px",
     "line-height: 1",
     "text-align: center",
-    "box-shadow: 0 6px 20px rgba(227, 0, 15, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
+    "box-shadow: 0 6px 20px rgba(91, 83, 245, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
     "cursor: grab",
     "z-index: 999998",
     "padding: 0",
@@ -281,11 +281,11 @@ function injectFloatingToggleButton() {
 
   button.addEventListener("mouseenter", () => {
     button.style.transform = "scale(1.1)";
-    button.style.boxShadow = "0 8px 25px rgba(236, 72, 153, 0.7), 0 4px 12px rgba(0, 0, 0, 0.4)";
+    button.style.boxShadow = "0 8px 25px rgba(91, 83, 245, 0.7), 0 4px 12px rgba(0, 0, 0, 0.4)";
   });
   button.addEventListener("mouseleave", () => {
     button.style.transform = "scale(1.0)";
-    button.style.boxShadow = "0 6px 20px rgba(236, 72, 153, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)";
+    button.style.boxShadow = "0 6px 20px rgba(91, 83, 245, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)";
   });
 
   let isDragging = false;
@@ -621,9 +621,9 @@ function injectWidget(toolName) {
       const div = document.createElement("div");
       const displayText = `${index + 1} - ${p.name}`;
       div.innerText = displayText;
-      div.style.cssText = "padding: 8px; cursor: pointer; color: #fff; background: #1a1a2e; border-bottom: 1px solid #232340; font-size: 12px;";
+      div.style.cssText = "padding: 8px; cursor: pointer; color: #fff; background: #12172a; border-bottom: 1px solid #232340; font-size: 12px;";
       div.onmouseover = () => (div.style.backgroundColor = "#450a0a");
-      div.onmouseout = () => (div.style.backgroundColor = "#1a1a2e");
+      div.onmouseout = () => (div.style.backgroundColor = "#12172a");
       div.onclick = (e) => {
         e.stopPropagation();
         prjInputPull.value = displayText;
@@ -650,9 +650,9 @@ function injectWidget(toolName) {
       const div = document.createElement("div");
       const displayText = `${index + 1} - ${p.name}`;
       div.innerText = displayText;
-      div.style.cssText = "padding: 8px; cursor: pointer; color: #fff; background: #1a1a2e; border-bottom: 1px solid #232340; font-size: 12px;";
+      div.style.cssText = "padding: 8px; cursor: pointer; color: #fff; background: #12172a; border-bottom: 1px solid #232340; font-size: 12px;";
       div.onmouseover = () => (div.style.backgroundColor = "#450a0a");
-      div.onmouseout = () => (div.style.backgroundColor = "#1a1a2e");
+      div.onmouseout = () => (div.style.backgroundColor = "#12172a");
       div.onclick = (e) => {
         e.stopPropagation();
         prjInputPush.value = displayText;
@@ -673,15 +673,17 @@ function injectWidget(toolName) {
     top: "-570px",
     margin: "0px",
     pointerEvents: "auto",
-    backgroundColor: "#1e1e2f",
-    color: "#e5e5e5",
+    // Dark/violet theme aligned with the Markee AI Workspace mockup palette
+    // (--app/--text/--line-strong) — was a red-branded #1e1e2f/#e3000f shell.
+    background: "linear-gradient(180deg,#1f2441 0%,#181d33 34%,#141829 100%)",
+    color: "#f5f7ff",
     padding: "12px",
-    borderRadius: "12px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.8)",
+    borderRadius: "18px",
+    boxShadow: "0 20px 48px rgba(0,0,0,.35)",
     zIndex: "999999",
-    fontFamily: "sans-serif",
+    fontFamily: "Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif",
     fontSize: "13px",
-    border: "1px solid #e3000f",
+    border: "1px solid rgba(94,102,255,.68)",
     display: "none",
     flexDirection: "column",
     gap: "8px",
@@ -693,7 +695,7 @@ function injectWidget(toolName) {
   });
 
   widget.innerHTML = `
-    <div id="markee-widget-header" style="font-weight: 500; color: #fff; border-bottom: 1px solid #c40009; padding-bottom: 6px; position: relative; flex-shrink: 0; cursor: grab; user-select: none;">
+    <div id="markee-widget-header" style="font-weight: 500; color: #fff; border-bottom: 1px solid #4e46dc; padding-bottom: 6px; position: relative; flex-shrink: 0; cursor: grab; user-select: none;">
   <span>🧠 KPI Prototype Workspace</span>
   
   <!-- Nút Hướng dẫn sử dụng (Nằm cạnh nút Đóng) -->
@@ -711,14 +713,14 @@ function injectWidget(toolName) {
     
     <!-- Tab 1: UPLOAD / DOWNLOAD -->
     <div id="markee-tab-nav" style="display: flex; gap: 4px; flex-shrink: 0;">
-      <button id="markee-tab-push" type="button" style="flex: 1; background: #e3000f; color: #fff; border: none; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📤 UPLOAD</button>
-      <button id="markee-tab-pull" type="button" style="flex: 1; background: #1a1a2e; color: #ff3344; border: 1px solid #c40009; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📥 DOWNLOAD</button>
+      <button id="markee-tab-push" type="button" style="flex: 1; background: #5b53f5; color: #fff; border: none; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📤 UPLOAD</button>
+      <button id="markee-tab-pull" type="button" style="flex: 1; background: #12172a; color: #8f99ff; border: 1px solid #4e46dc; padding: 6px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: 500;">📥 DOWNLOAD</button>
     </div>
 
     <!-- Sub-tabs: Mode Toggle (📝 Tóm Tắt TRÁI / ⚡ Kỹ Năng PHẢI) -->
-    <div id="markee-mode-nav" style="display: flex; gap: 4px; flex-shrink: 0; margin-top: 4px; background: #1a1a2e; padding: 2px; border-radius: 6px; border: 1px solid #c40009;">
-      <button id="markee-mode-wip" type="button" style="flex: 1; background: #e3000f; color: #fff; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">📝 Tóm Tắt</button>
-      <button id="markee-mode-skill" type="button" style="flex: 1; background: transparent; color: #ff3344; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">⚡ Kỹ Năng</button>
+    <div id="markee-mode-nav" style="display: flex; gap: 4px; flex-shrink: 0; margin-top: 4px; background: #12172a; padding: 2px; border-radius: 6px; border: 1px solid #4e46dc;">
+      <button id="markee-mode-wip" type="button" style="flex: 1; background: #5b53f5; color: #fff; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">📝 Tóm Tắt</button>
+      <button id="markee-mode-skill" type="button" style="flex: 1; background: transparent; color: #8f99ff; border: none; padding: 4px; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: 500;">⚡ Kỹ Năng</button>
     </div>
 
     <!-- PANEL UPLOAD -->
@@ -726,15 +728,15 @@ function injectWidget(toolName) {
       <div style="flex: 1; overflow-y: auto; overflow-x: hidden; display: flex; flex-direction: column; gap: 8px;">
         
         <!-- View 1: UPLOAD KỸ NĂNG (Thiết kế mới Step-by-Step 2 Bước) -->
-        <div id="markee-push-skill-view" style="display: none; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(227, 0, 15, 0.08); border-radius: 8px; border: 1px dashed #e3000f; position: relative;">
+        <div id="markee-push-skill-view" style="display: none; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(91, 83, 245, 0.08); border-radius: 8px; border: 1px dashed #5b53f5; position: relative;">
           <!-- Header Tiêu đề Tab -->
           <div style="display: flex; flex-direction: column; gap: 2px; margin-bottom: 2px;">
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <div id="skill-push-header-title" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
                 <span title="Chọn một hoặc cả hai nơi lưu, sau đó đưa nội dung cho AI kiểm tra." style="font-size: 12px; font-weight: 500; color: #fff; cursor: pointer;">⚡ Thêm kỹ năng mới</span>
-                <span id="skill-push-toggle-arrow" style="font-size: 10px; color: #ff3344; transition: transform 0.25s ease;">▼</span>
+                <span id="skill-push-toggle-arrow" style="font-size: 10px; color: #8f99ff; transition: transform 0.25s ease;">▼</span>
               </div>
-              <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #e3000f; color: #ff3344; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
+              <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #5b53f5; color: #8f99ff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: 500; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
                 <span class="sync-icon">🔄</span> Đồng bộ tất cả
               </button>
             </div>
@@ -745,25 +747,25 @@ function injectWidget(toolName) {
             <!-- BƯỚC 1: LƯU KỸ NĂNG VÀO ĐÂU? -->
             <div style="display: flex; flex-direction: column; gap: 6px;">
               <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 11px; font-weight: 500; color: #ff3344;">1. Lưu kỹ năng vào đâu?</span>
+                <span style="font-size: 11px; font-weight: 500; color: #8f99ff;">1. Lưu kỹ năng vào đâu?</span>
                 <span style="font-size: 9px; color: #ef4444; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); padding: 1px 5px; border-radius: 4px; font-weight: 500;">Bắt buộc</span>
               </div>
 
               <!-- 2 Cards Lớn (Flex 50-50) -->
               <div style="display: flex; gap: 6px;">
                 <!-- Card 1: Dự án -->
-                <div id="push-dest-card-project" style="flex: 1; background: rgba(227, 0, 15, 0.2); border: 1px solid #e3000f; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
+                <div id="push-dest-card-project" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 11px; font-weight: 500; color: #fff;">📁 Dự án</span>
-                    <span class="check-icon" style="font-size: 11px; color: #ff3344; font-weight: 500;">✓</span>
+                    <span class="check-icon" style="font-size: 11px; color: #8f99ff; font-weight: 500;">✓</span>
                   </div>
                 </div>
 
                 <!-- Card 2: Bộ kỹ năng phòng ban -->
-                <div id="push-dest-card-dept" style="flex: 1; background: rgba(227, 0, 15, 0.2); border: 1px solid #e3000f; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
+                <div id="push-dest-card-dept" style="flex: 1; background: rgba(91, 83, 245, 0.2); border: 1px solid #5b53f5; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
                     <span style="font-size: 11px; font-weight: 500; color: #fff;">🏢 Bộ kỹ năng</span>
-                    <span class="check-icon" style="font-size: 11px; color: #ff3344; font-weight: 500;">✓</span>
+                    <span class="check-icon" style="font-size: 11px; color: #8f99ff; font-weight: 500;">✓</span>
                   </div>
                 </div>
               </div>
@@ -775,8 +777,8 @@ function injectWidget(toolName) {
             <!-- BƯỚC 2: CHỌN PHẠM VI SỬ DỤNG (HIỂN THỊ ĐỘNG) -->
             <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 2px;">
               <div style="display: flex; justify-content: space-between; align-items: center;">
-                <span style="font-size: 11px; font-weight: bold; color: #ff3344;">2. Chọn phạm vi sử dụng</span>
-                <span id="push-step2-badge" style="font-size: 9px; color: #ff3344; background: rgba(227, 0, 15, 0.15); border: 1px solid #e3000f; padding: 1px 6px; border-radius: 4px; font-weight: 500;">Cả 2 nơi lưu</span>
+                <span style="font-size: 11px; font-weight: bold; color: #8f99ff;">2. Chọn phạm vi sử dụng</span>
+                <span id="push-step2-badge" style="font-size: 9px; color: #8f99ff; background: rgba(91, 83, 245, 0.15); border: 1px solid #5b53f5; padding: 1px 6px; border-radius: 4px; font-weight: 500;">Cả 2 nơi lưu</span>
               </div>
 
               <!-- Dynamic Scope Boxes Container -->
@@ -788,9 +790,9 @@ function injectWidget(toolName) {
                pm-new — không còn danh sách dự án công ty để chọn. Skill vẫn
                dùng chung toàn công ty, nên đây chỉ là 1 checkbox gắn thẻ tuỳ
                chọn với dự án đang khoá, thay cho bộ chọn dự án cũ. -->
-          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px; background: #12121f; border: 1px solid #27273a; border-radius: 8px; cursor: pointer; user-select: none;">
-            <input type="checkbox" id="skill-attach-project-checkbox" checked style="accent-color: #e3000f; cursor: pointer; width: 14px; height: 14px;">
-            <span style="font-size: 11px; color: #ff3344;">📁 Gắn với dự án đang chọn: <strong id="skill-attach-project-name" style="color: #fff;">…</strong></span>
+          <label style="display: flex; align-items: center; gap: 6px; margin-top: 4px; padding: 8px; background: #0f1425; border: 1px solid #2c3356; border-radius: 8px; cursor: pointer; user-select: none;">
+            <input type="checkbox" id="skill-attach-project-checkbox" checked style="accent-color: #5b53f5; cursor: pointer; width: 14px; height: 14px;">
+            <span style="font-size: 11px; color: #8f99ff;">📁 Gắn với dự án đang chọn: <strong id="skill-attach-project-name" style="color: #fff;">…</strong></span>
           </label>
 
           <!-- Hidden Form Elements for scanAndSave compatibility -->
@@ -812,13 +814,13 @@ function injectWidget(toolName) {
         </div>
 
         <!-- View 2: UPLOAD TÓM TẮT (Flow mới) - shown by default -->
-        <div id="markee-push-wip-view" style="display: flex; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(227, 0, 15, 0.08); border-radius: 8px; border: 1px dashed #e3000f; position: relative;">
+        <div id="markee-push-wip-view" style="display: flex; flex-direction: column; gap: 8px; margin-top: 2px; padding: 8px; background: rgba(91, 83, 245, 0.08); border-radius: 8px; border: 1px dashed #5b53f5; position: relative;">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
             <div id="wip-push-header-title" style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
-              <label style="font-size: 11px; color: #ff3344; font-weight: bold; margin: 0; cursor: pointer;">📝 Thiết lập Tóm tắt</label>
-              <span id="wip-push-toggle-arrow" style="font-size: 10px; color: #ff3344; transition: transform 0.25s ease;">▼</span>
+              <label style="font-size: 11px; color: #8f99ff; font-weight: bold; margin: 0; cursor: pointer;">📝 Thiết lập Tóm tắt</label>
+              <span id="wip-push-toggle-arrow" style="font-size: 10px; color: #8f99ff; transition: transform 0.25s ease;">▼</span>
             </div>
-            <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #e3000f; color: #ff3344; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
+            <button class="markee-sync-all-btn" type="button" title="Đồng bộ tất cả dữ liệu" style="background: transparent; border: 1px solid #5b53f5; color: #8f99ff; padding: 2px 6px; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: all 0.2s;">
               <span class="sync-icon">🔄</span> Đồng bộ tất cả
             </button>
           </div>
@@ -826,31 +828,31 @@ function injectWidget(toolName) {
           <!-- HÀNG 1: Gom Khách hàng & Dự án (50% - 50%) - COLLAPSIBLE GROUP A (Mặc định THU GỌN - max-height: 0px, opacity: 0) -->
           <div id="wip-push-collapsible-area" style="display: flex; gap: 8px; transition: all 0.25s ease-in-out; overflow: hidden; max-height: 0px; opacity: 0; margin-top: -4px; margin-bottom: -4px;">
             <!-- Box 1: Khách hàng -->
-            <div id="wip-push-card-customer" onmouseover="this.style.borderColor='#e3000f'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="flex: 1; background: #161625; border: 1px solid #27273a; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
-              <span style="font-size: 9px; font-weight: bold; color: #ff3344; letter-spacing: 0.5px;">🏢 KHÁCH HÀNG</span>
+            <div id="wip-push-card-customer" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
+              <span style="font-size: 9px; font-weight: bold; color: #8f99ff; letter-spacing: 0.5px;">🏢 KHÁCH HÀNG</span>
               <span id="wip-push-customer-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Khách hàng --</span>
             </div>
 
             <!-- Box 2: Dự án -->
-            <div id="wip-push-card-project" onmouseover="this.style.borderColor='#e3000f'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="flex: 1; background: #161625; border: 1px solid #27273a; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
-              <span style="font-size: 9px; font-weight: bold; color: #ff3344; letter-spacing: 0.5px;">📁 DỰ ÁN</span>
+            <div id="wip-push-card-project" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 10px 12px; min-height: 56px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 4px; min-width: 0; transition: all 0.2s;">
+              <span style="font-size: 9px; font-weight: bold; color: #8f99ff; letter-spacing: 0.5px;">📁 DỰ ÁN</span>
               <span id="wip-push-project-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Dự án --</span>
             </div>
           </div>
 
           <!-- HÀNG 2: Tính năng (100% width) -->
           <div style="display: flex; flex-direction: column; gap: 4px; position: relative;">
-            <label style="font-size: 10px; color: #ff3344; font-weight: bold; margin: 0;">🛠️ TÍNH NĂNG:</label>
-            <input type="text" id="markee-feature-input-push" placeholder="Nhập tên tính năng mới hoặc chọn từ danh sách..." autocomplete="off" style="width: 100%; background: #161625; color: #fff; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
-            <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #161625; border: 1px solid #c40009; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
+            <label style="font-size: 10px; color: #8f99ff; font-weight: bold; margin: 0;">🛠️ TÍNH NĂNG:</label>
+            <input type="text" id="markee-feature-input-push" placeholder="Nhập tên tính năng mới hoặc chọn từ danh sách..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
+            <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
             <datalist id="feature-suggestions-push"></datalist>
           </div>
 
           <!-- KPI Prototype: chọn dự án bằng cách gõ tên (giống UI markee-dashboard's
                "Chọn Dự án" — search input lọc theo tên, click 1 dòng để chọn). -->
-          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding: 8px; background: #12121f; border: 1px solid #27273a; border-radius: 8px; position: relative;">
-            <span style="font-size: 10px; color: #ff3344; font-weight: bold;">📁 DỰ ÁN: <span id="wip-project-current-name" style="color: #fff;">—</span></span>
-            <input type="text" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off" style="width: 100%; background: #161625; color: #fff; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
+          <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px; padding: 8px; background: #0f1425; border: 1px solid #2c3356; border-radius: 8px; position: relative;">
+            <span style="font-size: 10px; color: #8f99ff; font-weight: bold;">📁 DỰ ÁN: <span id="wip-project-current-name" style="color: #fff;">—</span></span>
+            <input type="text" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
             <div id="wip-project-search-results" style="display: flex; flex-direction: column; gap: 2px; max-height: 140px; overflow-y: auto;"></div>
           </div>
 
@@ -862,12 +864,12 @@ function injectWidget(toolName) {
           </div>
         </div>
 
-        <hr style="border: 0; border-top: 1px solid #c40009; margin: 4px 0;">
+        <hr style="border: 0; border-top: 1px solid #4e46dc; margin: 4px 0;">
 
         <!-- ACTIONS CHO KỸ NĂNG - hidden by default -->
         <div id="markee-push-skill-actions" style="display: none; flex-direction: column; gap: 6px;">
           <div style="display: flex; gap: 6px;">
-            <button id="btn-copy-prompt" style="flex: 1; background: #e3000f; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">➕ Lệnh Kỹ Năng</button>
+            <button id="btn-copy-prompt" style="flex: 1; background: #5b53f5; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">➕ Lệnh Kỹ Năng</button>
             <button id="btn-save-skill" style="flex: 1; background: #10b981; color: white; border: none; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 11px; font-weight: bold;">💾 Lưu Kỹ Năng</button>
           </div>
         </div>
@@ -904,20 +906,20 @@ function injectWidget(toolName) {
           <div id="markee-pull-skill-body" style="display: none; flex-direction: column; gap: 6px; margin-top: 4px;">
             <!-- Hàng 1: Nút Phòng ban & Nút Team phụ trách (Flex 50-50) -->
             <div style="display: flex; gap: 6px;">
-              <div id="markee-filter-btn-dept" title="Chọn Phòng ban" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #1a1a2e; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
+              <div id="markee-filter-btn-dept" title="Chọn Phòng ban" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
                 <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">🏢 Phòng ban</span>
-                <span id="markee-badge-dept" style="background: #c40009; color: #ff3344; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
+                <span id="markee-badge-dept" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
               </div>
-              <div id="markee-filter-btn-team" title="Chọn Team phụ trách" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #1a1a2e; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
+              <div id="markee-filter-btn-team" title="Chọn Team phụ trách" style="flex: 1; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s;">
                 <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">👥 Team phụ trách</span>
-                <span id="markee-badge-team" style="background: #c40009; color: #ff3344; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
+                <span id="markee-badge-team" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
               </div>
             </div>
 
             <!-- Hàng 2: Nút Dự án (100% width) -->
-            <div id="markee-filter-btn-project" title="Chọn Dự án" style="width: 100%; display: flex; align-items: center; justify-content: space-between; background: #1a1a2e; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s; box-sizing: border-box;">
+            <div id="markee-filter-btn-project" title="Chọn Dự án" style="width: 100%; display: flex; align-items: center; justify-content: space-between; background: #12172a; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; cursor: pointer; user-select: none; transition: all 0.2s; box-sizing: border-box;">
               <span style="font-size: 11px; color: #94a3b8; font-weight: 500;">📁 Dự án</span>
-              <span id="markee-badge-project" style="background: #c40009; color: #ff3344; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
+              <span id="markee-badge-project" style="background: #4e46dc; color: #8f99ff; border-radius: 50%; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 500;">0</span>
             </div>
           </div>
 
@@ -926,14 +928,14 @@ function injectWidget(toolName) {
             <!-- Search Input Bar -->
             <div style="position: relative; width: 100%;">
               <span style="position: absolute; left: 8px; top: 50%; transform: translateY(-50%); font-size: 11px; color: #64748b; pointer-events: none;">🔍</span>
-              <input type="text" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." style="width: 100%; padding: 6px 10px 6px 26px; background: #1a1a2e; color: #fff; border: 1px solid #c40009; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box; transition: all 0.2s;">
+              <input type="text" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." style="width: 100%; padding: 6px 10px 6px 26px; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box; transition: all 0.2s;">
             </div>
 
             <!-- Quick Filter Chips -->
             <div id="markee-skill-chips-container" style="display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; -ms-overflow-style: none;">
               <button type="button" class="markee-chip-btn markee-chip-fav" data-filter="favorite" style="flex-shrink: 0; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">⭐ Ưu thích</button>
-              <button type="button" class="markee-chip-btn active" data-filter="all" style="flex-shrink: 0; background: #e3000f; border: 1px solid #e3000f; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Tất cả</button>
-              <button type="button" class="markee-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #1a1a2e; border: 1px solid #c40009; color: #ff3344; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
+              <button type="button" class="markee-chip-btn active" data-filter="all" style="flex-shrink: 0; background: #5b53f5; border: 1px solid #5b53f5; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Tất cả</button>
+              <button type="button" class="markee-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #12172a; border: 1px solid #4e46dc; color: #8f99ff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
             </div>
           </div>
 
@@ -964,13 +966,13 @@ function injectWidget(toolName) {
             <!-- HÀNG 1: Gom Khách hàng & Dự án (50% - 50%) -->
             <div style="display: flex; gap: 6px;">
               <!-- Box 1: Khách hàng -->
-              <div id="wip-pull-card-customer" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="flex: 1; background: #161625; border: 1px solid #27273a; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
+              <div id="wip-pull-card-customer" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
                 <span style="font-size: 9px; font-weight: 500; color: #6ee7b7; letter-spacing: 0.5px;">🏢 KHÁCH HÀNG</span>
                 <span id="wip-pull-customer-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Khách hàng --</span>
               </div>
 
               <!-- Box 2: Dự án -->
-              <div id="wip-pull-card-project" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="flex: 1; background: #161625; border: 1px solid #27273a; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
+              <div id="wip-pull-card-project" onmouseover="this.style.borderColor='#10b981'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="flex: 1; background: #111629; border: 1px solid #2c3356; border-radius: 8px; padding: 8px 10px; min-height: 50px; box-sizing: border-box; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 2px; min-width: 0; transition: all 0.2s;">
                 <span style="font-size: 9px; font-weight: 500; color: #6ee7b7; letter-spacing: 0.5px;">📁 DỰ ÁN</span>
                 <span id="wip-pull-project-text" style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">-- Chọn Dự án --</span>
               </div>
@@ -982,15 +984,15 @@ function injectWidget(toolName) {
             <!-- HÀNG 2: Tìm kiếm Tính năng (100% width) -->
             <div style="position: relative;">
               <label style="font-size: 10px; color: #6ee7b7; font-weight: 500; margin: 0 0 2px 0; display: block;">🛠️ TÍNH NĂNG:</label>
-              <input type="text" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off" style="width: 100%; background: #161625; color: #fff; border: 1px solid #c40009; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
-              <div id="custom-feature-dropdown-pull" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #161625; border: 1px solid #c40009; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
+              <input type="text" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off" style="width: 100%; background: #111629; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; padding: 6px 8px; font-size: 11px; outline: none; box-sizing: border-box;">
+              <div id="custom-feature-dropdown-pull" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 200px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
             </div>
 
             <!-- HÀNG 3: Quick Filter Chips cho WIP -->
             <div id="markee-wip-chips-container" style="display: flex; gap: 6px; overflow-x: auto; padding-top: 2px; padding-bottom: 2px; scrollbar-width: none; -ms-overflow-style: none;">
               <button type="button" class="markee-wip-chip-btn markee-chip-fav" data-filter="favorite" style="flex-shrink: 0; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">⭐ Ưu thích</button>
               <button type="button" class="markee-wip-chip-btn active" data-filter="all" style="flex-shrink: 0; background: #10b981; border: 1px solid #10b981; color: #fff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Tất cả</button>
-              <button type="button" class="markee-wip-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #1a1a2e; border: 1px solid #c40009; color: #ff3344; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
+              <button type="button" class="markee-wip-chip-btn" data-filter="recent" style="flex-shrink: 0; background: #12172a; border: 1px solid #4e46dc; color: #8f99ff; padding: 3px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s;">Gần đây</button>
             </div>
           </div>
 
@@ -1003,15 +1005,15 @@ function injectWidget(toolName) {
         </div>
 
         <!-- LIST HIỂN THỊ KẾT QUẢ -->
-        <div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed #c40009;">
+        <div style="margin-top: 8px; padding-top: 6px; border-top: 1px dashed #4e46dc;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px;">
             <div id="markee-skill-list-header" style="font-size: 11px; color: #10b981; font-weight: bold;">⚡ Skills</div>
-            <button id="markee-wip-refresh-btn" title="Làm mới danh sách" style="background: none; border: none; color: #e3000f; font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; display: none; align-items: center; gap: 4px;">
+            <button id="markee-wip-refresh-btn" title="Làm mới danh sách" style="background: none; border: none; color: #5b53f5; font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; display: none; align-items: center; gap: 4px;">
               <span class="spin-icon" style="display: inline-block; transition: transform 1s ease;">🔄</span>
               <span class="refresh-text" style="font-size: 9px; color: #64748b;"></span>
             </button>
           </div>
-          <input type="text" id="wip-search-input" placeholder="🔍 Tìm kiếm WIP..." style="width: 100%; margin-bottom: 6px; display: none; background: #1a1a2e; color: #fff; border: 1px solid #c40009; border-radius: 4px; padding: 5px; font-size: 11px; outline: none; box-sizing: border-box;">
+          <input type="text" id="wip-search-input" placeholder="🔍 Tìm kiếm WIP..." style="width: 100%; margin-bottom: 6px; display: none; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 4px; padding: 5px; font-size: 11px; outline: none; box-sizing: border-box;">
           <div id="markee-skill-list" style="display: flex; flex-direction: column; gap: 5px;"></div>
         </div>
 
@@ -1022,7 +1024,7 @@ function injectWidget(toolName) {
     </div>
 
     <!-- Banner Cập nhật Phiên bản (Version Update Banner) - DƯỚI CÙNG -->
-    <div id="markee-version-banner" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 6px 8px; background: #181825; border: 1px solid #c40009; border-radius: 6px; flex-shrink: 0;">
+    <div id="markee-version-banner" style="display: flex; flex-direction: column; gap: 4px; margin-top: 8px; padding: 6px 8px; background: #181825; border: 1px solid #4e46dc; border-radius: 6px; flex-shrink: 0;">
       <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px;">
         <span id="markee-version-current-text" style="color: #cbd5e1; font-weight: bold;">Phiên bản hiện tại: v...</span>
         <span id="markee-version-status-badge" style="font-size: 9px; color: #10b981; font-weight: bold; background: rgba(16, 185, 129, 0.15); padding: 1px 5px; border-radius: 4px;">Mới nhất</span>
@@ -1031,7 +1033,7 @@ function injectWidget(toolName) {
         🚀 Có bản mới <strong id="markee-remote-version-tag">v1.3.2</strong> để tải và cập nhật.
       </div>
       <div style="display: flex; gap: 6px; margin-top: 2px;">
-        <button id="markee-btn-check-version" type="button" style="flex: 1; padding: 4px 6px; background: transparent; border: 1px solid #e3000f; color: #ff3344; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.2s;">
+        <button id="markee-btn-check-version" type="button" style="flex: 1; padding: 4px 6px; background: transparent; border: 1px solid #5b53f5; color: #8f99ff; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: all 0.2s;">
           🔍 Kiểm tra
         </button>
         <button id="markee-btn-update-version" type="button" style="flex: 1; padding: 4px 6px; background: #f59e0b; border: none; color: #0f172a; border-radius: 4px; font-size: 10px; font-weight: bold; cursor: pointer; display: none; transition: all 0.2s;">
@@ -1119,12 +1121,12 @@ function injectWidget(toolName) {
     const isPush = tab === "push";
     panelPush.style.display = isPush ? "flex" : "none";
     panelPull.style.display = isPush ? "none" : "flex";
-    tabPush.style.background = isPush ? "#e3000f" : "#1a1a2e";
-    tabPush.style.color = isPush ? "#fff" : "#ff3344";
-    tabPush.style.border = isPush ? "none" : "1px solid #c40009";
-    tabPull.style.background = isPush ? "#1a1a2e" : "#10b981";
-    tabPull.style.color = isPush ? "#ff3344" : "#fff";
-    tabPull.style.border = isPush ? "1px solid #c40009" : "none";
+    tabPush.style.background = isPush ? "#5b53f5" : "#12172a";
+    tabPush.style.color = isPush ? "#fff" : "#8f99ff";
+    tabPush.style.border = isPush ? "none" : "1px solid #4e46dc";
+    tabPull.style.background = isPush ? "#12172a" : "#10b981";
+    tabPull.style.color = isPush ? "#8f99ff" : "#fff";
+    tabPull.style.border = isPush ? "1px solid #4e46dc" : "none";
 
     // Auto-refresh khi chuyển Tab
     loadProjects();
@@ -1321,12 +1323,12 @@ function injectWidget(toolName) {
       if (summaries.length > 0) {
         summaries.forEach((s) => {
           const row = document.createElement("div");
-          row.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #1a1a2e; padding: 6px; border-radius: 4px; border: 1px solid #232340;";
+          row.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #12172a; padding: 6px; border-radius: 4px; border: 1px solid #232340;";
           row.innerHTML = `<span style="font-size: 11px; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; max-width: 200px;">🧠 ${s.title || "Không tiêu đề"}</span>`;
 
           const btn = document.createElement("button");
           btn.innerText = "Dùng";
-          btn.style.cssText = "background: #e3000f; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer;";
+          btn.style.cssText = "background: #5b53f5; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer;";
 
           // ĐÃ SỬA LOGIC ONCLICK Ở ĐÂY
           btn.onclick = () => {
@@ -1374,8 +1376,8 @@ function injectWidget(toolName) {
       badge.style.background = "#10b981";
       badge.style.color = "#0f172a";
     } else {
-      badge.style.background = "#c40009";
-      badge.style.color = "#ff3344";
+      badge.style.background = "#4e46dc";
+      badge.style.color = "#8f99ff";
     }
   }
 
@@ -1417,8 +1419,8 @@ function injectWidget(toolName) {
         badge.style.background = "#10b981";
         badge.style.color = "#0f172a";
       } else {
-        badge.style.background = "#c40009";
-        badge.style.color = "#ff3344";
+        badge.style.background = "#4e46dc";
+        badge.style.color = "#8f99ff";
       }
     }
   }
@@ -1457,9 +1459,9 @@ function injectWidget(toolName) {
 
     // 1. Tạo Khung HTML Cố Định MỘT LẦN DUY NHẤT khi mở Modal
     modalContainer.innerHTML = `
-      <div style="width: 92%; max-height: 380px; background: #161625; border: 1px solid #c40009; border-radius: 12px; display: flex; flex-direction: column; padding: 12px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+      <div style="width: 92%; max-height: 380px; background: #111629; border: 1px solid #4e46dc; border-radius: 12px; display: flex; flex-direction: column; padding: 12px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
         <!-- Header -->
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #27273a;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #2c3356;">
           <span style="font-weight: bold; font-size: 13px; color: #fff;">${title}</span>
           <span id="markee-modal-close" style="cursor: pointer; color: #94a3b8; font-size: 16px; padding: 2px; line-height: 1;">✕</span>
         </div>
@@ -1469,7 +1471,7 @@ function injectWidget(toolName) {
             ? `
         <!-- Chips Bộ Lọc Cho Modal Chọn Dự Án (Đồng bộ Tab Download) -->
         <div id="markee-modal-chips-container" style="display: flex; gap: 6px; margin-bottom: 8px;">
-          <button type="button" class="markee-chip-btn active" id="markee-modal-tab-all" style="flex: 1; background: #e3000f; border: 1px solid #e3000f; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">📁 Tất cả</button>
+          <button type="button" class="markee-chip-btn active" id="markee-modal-tab-all" style="flex: 1; background: #5b53f5; border: 1px solid #5b53f5; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">📁 Tất cả</button>
           <button type="button" class="markee-chip-btn markee-chip-fav" id="markee-modal-tab-fav" style="flex: 1; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">⭐ Ưu thích</button>
         </div>
         `
@@ -1478,13 +1480,13 @@ function injectWidget(toolName) {
 
         <!-- Search Bar -->
         <div style="position: relative; margin-bottom: 8px;">
-          <input type="text" id="markee-modal-search" placeholder="Tìm nhanh theo tên hoặc mã..." style="width: 100%; padding: 6px 10px; background: #1a1a2e; color: #fff; border: 1px solid #c40009; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box;">
+          <input type="text" id="markee-modal-search" placeholder="Tìm nhanh theo tên hoặc mã..." style="width: 100%; padding: 6px 10px; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box;">
         </div>
 
         <!-- Sub-header Row: Result Count & Select All -->
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; padding: 0 2px;">
           <span id="markee-modal-count-text" style="font-size: 10px; color: #94a3b8;">0 kết quả</span>
-          <span id="markee-modal-select-all" style="font-size: 10px; color: #ff3344; font-weight: 500; cursor: pointer; user-select: none;">Chọn tất cả</span>
+          <span id="markee-modal-select-all" style="font-size: 10px; color: #8f99ff; font-weight: 500; cursor: pointer; user-select: none;">Chọn tất cả</span>
         </div>
 
         <!-- Item List Container -->
@@ -1492,9 +1494,9 @@ function injectWidget(toolName) {
         </div>
 
         <!-- Footer Action Buttons -->
-        <div style="display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #27273a;">
+        <div style="display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #2c3356;">
           <button id="markee-modal-cancel" style="flex: 1; background: transparent; border: 1px solid #475569; color: #94a3b8; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Hủy</button>
-          <button id="markee-modal-apply" style="flex: 1.5; background: #e3000f; border: none; color: #fff; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Áp dụng lựa chọn</button>
+          <button id="markee-modal-apply" style="flex: 1.5; background: #5b53f5; border: none; color: #fff; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Áp dụng lựa chọn</button>
         </div>
       </div>
     `;
@@ -1535,8 +1537,8 @@ function injectWidget(toolName) {
               const subText = custName ? `Khách hàng: ${custName}` : (item.status || item.code || "");
               const isFav = favoriteProjectIdsSet.has(itemStrId);
               return `
-                <label style="display: flex; align-items: center; gap: 8px; background: #1a1a2e; padding: 6px 10px; border-radius: 6px; border: 1px solid ${isChecked ? "#e3000f" : "#27273a"}; cursor: pointer; user-select: none; transition: border-color 0.15s;">
-                  <input type="checkbox" class="markee-modal-checkbox" value="${item.id}" ${isChecked ? "checked" : ""} style="accent-color: #e3000f; cursor: pointer; width: 14px; height: 14px;">
+                <label style="display: flex; align-items: center; gap: 8px; background: #12172a; padding: 6px 10px; border-radius: 6px; border: 1px solid ${isChecked ? "#5b53f5" : "#2c3356"}; cursor: pointer; user-select: none; transition: border-color 0.15s;">
+                  <input type="checkbox" class="markee-modal-checkbox" value="${item.id}" ${isChecked ? "checked" : ""} style="accent-color: #5b53f5; cursor: pointer; width: 14px; height: 14px;">
                   <div style="display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 2px;">
                     <span style="font-size: 11px; color: ${isChecked ? "#fff" : "#e2e8f0"}; font-weight: 400 !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.name}</span>
                     ${subText ? `<span style="font-size: 10px; color: #94a3b8; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subText}</span>` : ""}
@@ -1558,10 +1560,10 @@ function injectWidget(toolName) {
               const label = cb.closest("label");
               if (e.target.checked) {
                 tempSelected.add(idStr);
-                if (label) label.style.borderColor = "#e3000f";
+                if (label) label.style.borderColor = "#5b53f5";
               } else {
                 tempSelected.delete(idStr);
-                if (label) label.style.borderColor = "#27273a";
+                if (label) label.style.borderColor = "#2c3356";
               }
               updateApplyBtnText();
             };
@@ -1624,8 +1626,8 @@ function injectWidget(toolName) {
         tabAll.onclick = () => {
           activeModalTab = "all";
           tabAll.className = "markee-chip-btn active";
-          tabAll.style.background = "#e3000f";
-          tabAll.style.borderColor = "#e3000f";
+          tabAll.style.background = "#5b53f5";
+          tabAll.style.borderColor = "#5b53f5";
           tabAll.style.color = "#fff";
 
           tabFav.className = "markee-chip-btn markee-chip-fav";
@@ -1643,9 +1645,9 @@ function injectWidget(toolName) {
           tabFav.style.color = "#fff";
 
           tabAll.className = "markee-chip-btn";
-          tabAll.style.background = "#1a1a2e";
-          tabAll.style.borderColor = "#c40009";
-          tabAll.style.color = "#ff3344";
+          tabAll.style.background = "#12172a";
+          tabAll.style.borderColor = "#4e46dc";
+          tabAll.style.color = "#8f99ff";
           chrome.runtime.sendMessage({ action: "GET_FAVORITE_PROJECTS" }, (resFav) => {
             favoriteProjectsList = resFav && Array.isArray(resFav.projects) ? resFav.projects : [];
             updateListOnly(searchInput ? searchInput.value : "");
@@ -1725,9 +1727,9 @@ function injectWidget(toolName) {
 
     // 1. Tạo Khung HTML Cố Định MỘT LẦN DUY NHẤT khi mở Modal
     modalContainer.innerHTML = `
-      <div style="width: 92%; max-height: 380px; background: #161625; border: 1px solid #c40009; border-radius: 12px; display: flex; flex-direction: column; padding: 12px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
+      <div style="width: 92%; max-height: 380px; background: #111629; border: 1px solid #4e46dc; border-radius: 12px; display: flex; flex-direction: column; padding: 12px; box-sizing: border-box; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
         <!-- Header -->
-        <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #27273a;">
+        <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 8px; margin-bottom: 8px; border-bottom: 1px solid #2c3356;">
           <span style="font-weight: bold; font-size: 13px; color: #fff;">${title}</span>
           <span id="markee-modal-close" style="cursor: pointer; color: #94a3b8; font-size: 16px; padding: 2px; line-height: 1;">✕</span>
         </div>
@@ -1737,7 +1739,7 @@ function injectWidget(toolName) {
             ? `
         <!-- Chips Bộ Lọc Cho Modal Chọn Dự Án (Đồng bộ Tab Download) -->
         <div id="markee-modal-chips-container" style="display: flex; gap: 6px; margin-bottom: 8px;">
-          <button type="button" class="markee-chip-btn active" id="markee-modal-tab-all" style="flex: 1; background: #e3000f; border: 1px solid #e3000f; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">📁 Tất cả</button>
+          <button type="button" class="markee-chip-btn active" id="markee-modal-tab-all" style="flex: 1; background: #5b53f5; border: 1px solid #5b53f5; color: #fff; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">📁 Tất cả</button>
           <button type="button" class="markee-chip-btn markee-chip-fav" id="markee-modal-tab-fav" style="flex: 1; background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.3); color: #f59e0b; padding: 4px 10px; border-radius: 12px; font-size: 10px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-align: center;">⭐ Ưu thích</button>
         </div>
         `
@@ -1746,7 +1748,7 @@ function injectWidget(toolName) {
 
         <!-- Search Bar -->
         <div style="position: relative; margin-bottom: 8px;">
-          <input type="text" id="markee-modal-search" placeholder="Tìm nhanh theo tên hoặc mã..." style="width: 100%; padding: 6px 10px; background: #1a1a2e; color: #fff; border: 1px solid #c40009; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box;">
+          <input type="text" id="markee-modal-search" placeholder="Tìm nhanh theo tên hoặc mã..." style="width: 100%; padding: 6px 10px; background: #12172a; color: #fff; border: 1px solid #4e46dc; border-radius: 6px; font-size: 11px; outline: none; box-sizing: border-box;">
         </div>
 
         <!-- Sub-header Row: Result Count -->
@@ -1759,9 +1761,9 @@ function injectWidget(toolName) {
         </div>
 
         <!-- Footer Action Buttons -->
-        <div style="display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #27273a;">
+        <div style="display: flex; gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #2c3356;">
           <button id="markee-modal-cancel" style="flex: 1; background: transparent; border: 1px solid #475569; color: #94a3b8; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Hủy</button>
-          <button id="markee-modal-apply" style="flex: 1.5; background: #e3000f; border: none; color: #fff; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Áp dụng lựa chọn</button>
+          <button id="markee-modal-apply" style="flex: 1.5; background: #5b53f5; border: none; color: #fff; padding: 8px; border-radius: 6px; font-size: 11px; font-weight: bold; cursor: pointer; transition: all 0.2s;">Áp dụng lựa chọn</button>
         </div>
       </div>
     `;
@@ -1796,8 +1798,8 @@ function injectWidget(toolName) {
               const subText = custName ? `Khách hàng: ${custName}` : (item.status || item.code || "");
               const isFav = favoriteProjectIdsSet.has(itemStrId);
               return `
-                <label style="display: flex; align-items: center; gap: 8px; background: #1a1a2e; padding: 6px 10px; border-radius: 6px; border: 1px solid ${isChecked ? "#e3000f" : "#27273a"}; cursor: pointer; user-select: none; transition: border-color 0.15s;">
-                  <input type="radio" name="markee-single-radio" class="markee-modal-radio" value="${item.id}" ${isChecked ? "checked" : ""} style="accent-color: #e3000f; cursor: pointer; width: 14px; height: 14px;">
+                <label style="display: flex; align-items: center; gap: 8px; background: #12172a; padding: 6px 10px; border-radius: 6px; border: 1px solid ${isChecked ? "#5b53f5" : "#2c3356"}; cursor: pointer; user-select: none; transition: border-color 0.15s;">
+                  <input type="radio" name="markee-single-radio" class="markee-modal-radio" value="${item.id}" ${isChecked ? "checked" : ""} style="accent-color: #5b53f5; cursor: pointer; width: 14px; height: 14px;">
                   <div style="display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 2px;">
                     <span style="font-size: 11px; color: ${isChecked ? "#fff" : "#e2e8f0"}; font-weight: 400 !important; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${item.name}</span>
                     ${subText ? `<span style="font-size: 10px; color: #94a3b8; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${subText}</span>` : ""}
@@ -1817,9 +1819,9 @@ function injectWidget(toolName) {
             r.onchange = (e) => {
               tempSelectedId = String(e.target.value);
               const labels = listContainer.querySelectorAll("label");
-              labels.forEach((lbl) => (lbl.style.borderColor = "#27273a"));
+              labels.forEach((lbl) => (lbl.style.borderColor = "#2c3356"));
               const activeLabel = r.closest("label");
-              if (activeLabel) activeLabel.style.borderColor = "#e3000f";
+              if (activeLabel) activeLabel.style.borderColor = "#5b53f5";
             };
           });
 
@@ -1878,8 +1880,8 @@ function injectWidget(toolName) {
         tabAll.onclick = () => {
           activeModalTab = "all";
           tabAll.className = "markee-chip-btn active";
-          tabAll.style.background = "#e3000f";
-          tabAll.style.borderColor = "#e3000f";
+          tabAll.style.background = "#5b53f5";
+          tabAll.style.borderColor = "#5b53f5";
           tabAll.style.color = "#fff";
 
           tabFav.className = "markee-chip-btn markee-chip-fav";
@@ -1897,9 +1899,9 @@ function injectWidget(toolName) {
           tabFav.style.color = "#fff";
 
           tabAll.className = "markee-chip-btn";
-          tabAll.style.background = "#1a1a2e";
-          tabAll.style.borderColor = "#c40009";
-          tabAll.style.color = "#ff3344";
+          tabAll.style.background = "#12172a";
+          tabAll.style.borderColor = "#4e46dc";
+          tabAll.style.color = "#8f99ff";
           chrome.runtime.sendMessage({ action: "GET_FAVORITE_PROJECTS" }, (resFav) => {
             favoriteProjectsList = resFav && Array.isArray(resFav.projects) ? resFav.projects : [];
             updateListOnly(searchInput ? searchInput.value : "");
@@ -1972,9 +1974,9 @@ function injectWidget(toolName) {
       if (skills.length > 0) {
         skills.forEach((s) => {
           const item = document.createElement("div");
-          item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #1a1a2e; padding: 8px 10px; border-radius: 6px; border: 1px solid #27273a; margin-bottom: 6px; transition: border-color 0.2s;";
-          item.onmouseover = () => (item.style.borderColor = "#e3000f");
-          item.onmouseout = () => (item.style.borderColor = "#27273a");
+          item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #12172a; padding: 8px 10px; border-radius: 6px; border: 1px solid #2c3356; margin-bottom: 6px; transition: border-color 0.2s;";
+          item.onmouseover = () => (item.style.borderColor = "#5b53f5");
+          item.onmouseout = () => (item.style.borderColor = "#2c3356");
 
           const titleText = s.title || "Kỹ năng";
           const icon = titleText.startsWith("WIP") ? "⏳" : "⚡";
@@ -1986,7 +1988,7 @@ function injectWidget(toolName) {
               <span style="font-size: 11px; font-weight: 600; color: #f1f5f9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${titleText}</span>
             </div>
             <div style="display: flex; align-items: center; gap: 8px; flex-shrink: 0;">
-              <button class="markee-use-skill-btn" style="background: #e3000f; color: #fff; border: none; border-radius: 4px; font-size: 9px; font-weight: bold; padding: 4px 10px; cursor: pointer; transition: background 0.2s;">Dùng</button>
+              <button class="markee-use-skill-btn" style="background: #5b53f5; color: #fff; border: none; border-radius: 4px; font-size: 9px; font-weight: bold; padding: 4px 10px; cursor: pointer; transition: background 0.2s;">Dùng</button>
               <span class="markee-skill-fav-btn" title="${isFav ? "Bỏ yêu thích" : "Đánh dấu yêu thích"}" style="cursor: pointer; font-size: 14px; color: ${isFav ? "#fbbf24" : "#64748b"}; transition: transform 0.15s, color 0.15s; user-select: none;">${isFav ? "⭐" : "☆"}</span>
             </div>
           `;
@@ -2136,15 +2138,15 @@ function injectWidget(toolName) {
     const btnWip = document.getElementById("markee-mode-wip");
     if (btnSkill && btnWip) {
       if (isSkill) {
-        btnSkill.style.background = "#e3000f";
+        btnSkill.style.background = "#5b53f5";
         btnSkill.style.color = "#fff";
         btnWip.style.background = "transparent";
-        btnWip.style.color = "#ff3344";
+        btnWip.style.color = "#8f99ff";
       } else {
-        btnWip.style.background = "#e3000f";
+        btnWip.style.background = "#5b53f5";
         btnWip.style.color = "#fff";
         btnSkill.style.background = "transparent";
-        btnSkill.style.color = "#ff3344";
+        btnSkill.style.color = "#8f99ff";
       }
     }
 
@@ -2460,9 +2462,9 @@ function injectWidget(toolName) {
       chips.forEach((c) => {
         if (c.dataset.filter === currentChipFilter) {
           c.classList.add("active");
-          c.style.background = "#e3000f";
+          c.style.background = "#5b53f5";
           c.style.color = "#fff";
-          c.style.border = "1px solid #e3000f";
+          c.style.border = "1px solid #5b53f5";
           c.style.fontWeight = "bold";
         } else {
           c.classList.remove("active");
@@ -2472,9 +2474,9 @@ function injectWidget(toolName) {
             c.style.border = "1px solid rgba(245, 158, 11, 0.3)";
             c.style.fontWeight = "500";
           } else {
-            c.style.background = "#1a1a2e";
-            c.style.color = "#ff3344";
-            c.style.border = "1px solid #c40009";
+            c.style.background = "#12172a";
+            c.style.color = "#8f99ff";
+            c.style.border = "1px solid #4e46dc";
             c.style.fontWeight = "500";
           }
         }
@@ -2571,18 +2573,18 @@ function injectWidget(toolName) {
               c.style.border = "1px solid rgba(245, 158, 11, 0.3)";
               c.style.fontWeight = "500";
             } else {
-              c.style.background = "#1a1a2e";
-              c.style.color = "#ff3344";
-              c.style.border = "1px solid #c40009";
+              c.style.background = "#12172a";
+              c.style.color = "#8f99ff";
+              c.style.border = "1px solid #4e46dc";
               c.style.fontWeight = "500";
             }
           });
 
           // 2. Chỉ active DUY NHẤT chip vừa bấm
           chip.classList.add("active");
-          chip.style.background = "#e3000f";
+          chip.style.background = "#5b53f5";
           chip.style.color = "#fff";
-          chip.style.border = "1px solid #e3000f";
+          chip.style.border = "1px solid #5b53f5";
           chip.style.fontWeight = "bold";
 
           currentChipFilter = chip.dataset.filter || "all";
@@ -2621,26 +2623,26 @@ function injectWidget(toolName) {
 
     // 1. Cập nhật Card Project UI
     if (pushDestProjectSelected) {
-      cardProj.style.background = "rgba(227, 0, 15, 0.2)";
-      cardProj.style.border = "1px solid #e3000f";
+      cardProj.style.background = "rgba(91, 83, 245, 0.2)";
+      cardProj.style.border = "1px solid #5b53f5";
       const icon = cardProj.querySelector(".check-icon");
       if (icon) icon.style.display = "inline";
     } else {
-      cardProj.style.background = "#1a1a2e";
-      cardProj.style.border = "1px solid #27273a";
+      cardProj.style.background = "#12172a";
+      cardProj.style.border = "1px solid #2c3356";
       const icon = cardProj.querySelector(".check-icon");
       if (icon) icon.style.display = "none";
     }
 
     // 2. Cập nhật Card Dept UI
     if (pushDestDeptSelected) {
-      cardDept.style.background = "rgba(227, 0, 15, 0.2)";
-      cardDept.style.border = "1px solid #e3000f";
+      cardDept.style.background = "rgba(91, 83, 245, 0.2)";
+      cardDept.style.border = "1px solid #5b53f5";
       const icon = cardDept.querySelector(".check-icon");
       if (icon) icon.style.display = "inline";
     } else {
-      cardDept.style.background = "#1a1a2e";
-      cardDept.style.border = "1px solid #27273a";
+      cardDept.style.background = "#12172a";
+      cardDept.style.border = "1px solid #2c3356";
       const icon = cardDept.querySelector(".check-icon");
       if (icon) icon.style.display = "none";
     }
@@ -2668,8 +2670,8 @@ function injectWidget(toolName) {
     // NẾU Card 1 (Dự án) được chọn -> Hiển thị Box Dự án (Clickable outer box)
     if (pushDestProjectSelected) {
       html += `
-        <div id="btn-change-push-project" onmouseover="this.style.borderColor='#e3000f'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="background: #161625; border: 1px solid #27273a; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
-          <span style="font-size: 9px; font-weight: 500; color: #ff3344; letter-spacing: 0.5px;">📁 DỰ ÁN ĐƯỢC ÁP DỤNG</span>
+        <div id="btn-change-push-project" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="background: #111629; border: 1px solid #2c3356; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
+          <span style="font-size: 9px; font-weight: 500; color: #8f99ff; letter-spacing: 0.5px;">📁 DỰ ÁN ĐƯỢC ÁP DỤNG</span>
           <span style="font-size: 11px; font-weight: 500; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${projText}</span>
         </div>
       `;
@@ -2678,13 +2680,13 @@ function injectWidget(toolName) {
     // NẾU Card 2 (Phòng ban) được chọn -> Hiển thị Box Phòng ban & Box Team (Clickable outer boxes)
     if (pushDestDeptSelected) {
       html += `
-        <div id="btn-change-push-dept" onmouseover="this.style.borderColor='#e3000f'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="background: #161625; border: 1px solid #27273a; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
-          <span style="font-size: 9px; font-weight: 500; color: #ff3344; letter-spacing: 0.5px;">🏢 PHÒNG BAN ÁP DỤNG</span>
+        <div id="btn-change-push-dept" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="background: #111629; border: 1px solid #2c3356; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
+          <span style="font-size: 9px; font-weight: 500; color: #8f99ff; letter-spacing: 0.5px;">🏢 PHÒNG BAN ÁP DỤNG</span>
           <span style="font-size: 11px; font-weight: 500; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${deptText}</span>
         </div>
 
-        <div id="btn-change-push-team" onmouseover="this.style.borderColor='#e3000f'; this.style.background='#1e1e32';" onmouseout="this.style.borderColor='#27273a'; this.style.background='#161625';" style="background: #161625; border: 1px solid #27273a; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
-          <span style="font-size: 9px; font-weight: 500; color: #ff3344; letter-spacing: 0.5px;">👥 TEAM ÁP DỤNG</span>
+        <div id="btn-change-push-team" onmouseover="this.style.borderColor='#5b53f5'; this.style.background='#1b2038';" onmouseout="this.style.borderColor='#2c3356'; this.style.background='#111629';" style="background: #111629; border: 1px solid #2c3356; border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; cursor: pointer; user-select: none; transition: all 0.2s;">
+          <span style="font-size: 9px; font-weight: 500; color: #8f99ff; letter-spacing: 0.5px;">👥 TEAM ÁP DỤNG</span>
           <span style="font-size: 11px; font-weight: 500; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${teamText}</span>
         </div>
       `;
@@ -2895,14 +2897,14 @@ function injectWidget(toolName) {
           buttons.forEach((b) => {
             if (b.dataset.tab === tab) {
               b.classList.add("active");
-              b.style.background = tab === "fav" ? "#f59e0b" : "#e3000f";
-              b.style.borderColor = tab === "fav" ? "#f59e0b" : "#e3000f";
+              b.style.background = tab === "fav" ? "#f59e0b" : "#5b53f5";
+              b.style.borderColor = tab === "fav" ? "#f59e0b" : "#5b53f5";
               b.style.color = "#fff";
             } else {
               b.classList.remove("active");
-              b.style.background = "rgba(227, 0, 15, 0.15)";
-              b.style.borderColor = "#e3000f";
-              b.style.color = "#ff3344";
+              b.style.background = "rgba(91, 83, 245, 0.15)";
+              b.style.borderColor = "#5b53f5";
+              b.style.color = "#8f99ff";
             }
           });
 
@@ -2937,8 +2939,8 @@ function injectWidget(toolName) {
         justify-content: space-between;
         align-items: center;
         padding: 6px 8px;
-        background: ${isSelected ? "rgba(227, 0, 15, 0.25)" : "#161625"};
-        border: 1px solid ${isSelected ? "#e3000f" : "#27273a"};
+        background: ${isSelected ? "rgba(91, 83, 245, 0.25)" : "#111629"};
+        border: 1px solid ${isSelected ? "#5b53f5" : "#2c3356"};
         border-radius: 6px;
         cursor: pointer;
         user-select: none;
@@ -2947,20 +2949,20 @@ function injectWidget(toolName) {
 
       row.onmouseover = () => {
         if (currentSelectedId !== prjIdStr) {
-          row.style.borderColor = "#e3000f";
-          row.style.background = "#1e1e32";
+          row.style.borderColor = "#5b53f5";
+          row.style.background = "#1b2038";
         }
       };
       row.onmouseout = () => {
         if (currentSelectedId !== prjIdStr) {
-          row.style.borderColor = "#27273a";
-          row.style.background = "#161625";
+          row.style.borderColor = "#2c3356";
+          row.style.background = "#111629";
         }
       };
 
       row.innerHTML = `
         <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;">
-          <span style="font-size: 12px; flex-shrink: 0; color: #ff3344;">📁</span>
+          <span style="font-size: 12px; flex-shrink: 0; color: #8f99ff;">📁</span>
           <div style="display: flex; flex-direction: column; gap: 1px; min-width: 0;">
             <span style="font-size: 11px; font-weight: 400 !important; color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${p.name}</span>
             <span style="font-size: 10px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Khách hàng: ${custName || "--"}</span>
@@ -3420,9 +3422,9 @@ function injectWidget(toolName) {
               b.style.color = "#f59e0b";
               b.style.fontWeight = "500";
             } else {
-              b.style.background = "#1a1a2e";
-              b.style.borderColor = "#c40009";
-              b.style.color = "#ff3344";
+              b.style.background = "#12172a";
+              b.style.borderColor = "#4e46dc";
+              b.style.color = "#8f99ff";
               b.style.fontWeight = "500";
             }
           });
@@ -3788,7 +3790,7 @@ function injectWidget(toolName) {
         if (skills.length > 0) {
           skills.forEach((s) => {
             const item = document.createElement("div");
-            item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #1a1a2e; padding: 6px; border-radius: 4px; border: 1px solid #232340; margin-bottom: 4px;";
+            item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #12172a; padding: 6px; border-radius: 4px; border: 1px solid #232340; margin-bottom: 4px;";
 
             let displayTitle = s.title || "Tóm tắt";
             if (s.feature_name) displayTitle += ` [${s.feature_name}]`;
@@ -3858,7 +3860,7 @@ function injectWidget(toolName) {
             const loadMoreBtn = document.createElement("button");
             loadMoreBtn.id = "markee-wip-load-more";
             loadMoreBtn.innerText = "⬇ Xem thêm";
-            loadMoreBtn.style.cssText = ["width: 100%", "margin-top: 6px", "padding: 5px 0", "background: #2a1013", "color: #ff3344", "border: 1px solid #e3000f", "border-radius: 4px", "font-size: 10px", "cursor: pointer", "transition: background 0.2s"].join(";");
+            loadMoreBtn.style.cssText = ["width: 100%", "margin-top: 6px", "padding: 5px 0", "background: #2a1013", "color: #8f99ff", "border: 1px solid #5b53f5", "border-radius: 4px", "font-size: 10px", "cursor: pointer", "transition: background 0.2s"].join(";");
             loadMoreBtn.onmouseover = () => (loadMoreBtn.style.background = "#450a0a");
             loadMoreBtn.onmouseout = () => (loadMoreBtn.style.background = "#2a1013");
             loadMoreBtn.onclick = () => {
@@ -4140,11 +4142,11 @@ function wireProjectSearch(inputEl, resultsEl, currentNameEl, onChanged, theme) 
   function rowHtml(p) {
     const isSelected = selectedId && String(selectedId) === String(p.id);
     if (theme === "dark") {
-      const base = "width:100%;text-align:left;background:#161625;color:#fff;border:1px solid #c40009;border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-      const sel = isSelected ? "background:#2a1013;border-color:#ff3344;" : "";
+      const base = "width:100%;text-align:left;background:#111629;color:#fff;border:1px solid #4e46dc;border-radius:6px;padding:6px 8px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+      const sel = isSelected ? "background:#2a1013;border-color:#8f99ff;" : "";
       return `<button type="button" class="ktp-project-row" data-id="${p.id}" data-name="${p.name.replace(/"/g, "&quot;")}" style="${base}${sel}">
         <span style="overflow:hidden;text-overflow:ellipsis;">${p.name}</span>
-        ${isSelected ? '<span style="font-size:9px;font-weight:800;color:#ff3344;flex-shrink:0;">Đang chọn</span>' : ""}
+        ${isSelected ? '<span style="font-size:9px;font-weight:800;color:#8f99ff;flex-shrink:0;">Đang chọn</span>' : ""}
       </button>`;
     }
     return `<button type="button" class="project-result-item${isSelected ? " selected" : ""}" data-id="${p.id}" data-name="${p.name.replace(/"/g, "&quot;")}">
@@ -4155,7 +4157,7 @@ function wireProjectSearch(inputEl, resultsEl, currentNameEl, onChanged, theme) 
 
   function emptyHtml(text) {
     return theme === "dark"
-      ? `<div style="text-align:center;color:#ff3344;font-size:11px;padding:8px 0;">${text}</div>`
+      ? `<div style="text-align:center;color:#8f99ff;font-size:11px;padding:8px 0;">${text}</div>`
       : `<div class="project-empty">${text}</div>`;
   }
 
@@ -4402,7 +4404,7 @@ chrome.runtime.onMessage.addListener((msg) => {
           bottom: 38px;
           right: 0px;
           white-space: nowrap;
-          background: #1e1e2f;
+          background: #171c31;
           color: #ffffff;
           padding: 8px 14px;
           border-radius: 8px;
@@ -4466,7 +4468,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     Object.assign(overlay.style, { position: "fixed", top: "0", left: "0", width: "100%", height: "100%", backgroundColor: "rgba(0, 0, 0, 0.6)", backdropFilter: "blur(4px)", zIndex: "999998", display: "flex", alignItems: "center", justifyContent: "center" });
 
     const modal = document.createElement("div");
-    Object.assign(modal.style, { backgroundColor: "#1e1e2f", color: "#fff", padding: "24px", borderRadius: "16px", width: "400px", textAlign: "center", border: "1px solid #c40009" });
+    Object.assign(modal.style, { backgroundColor: "#171c31", color: "#fff", padding: "24px", borderRadius: "16px", width: "400px", textAlign: "center", border: "1px solid #4e46dc" });
 
     let descriptionText = `Bản ghi <strong>"${msg.title}"</strong> đã đẩy lên Thư viện.`;
     let actionBtnHtml = `<button id="markee-btn-download" style="padding: 10px 20px; background: #10b981; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold;">📥 Tải xuống .md</button>`;
@@ -4496,7 +4498,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     <p style="color: #cbd5e1; font-size: 14px; margin-bottom: 20px; text-align: center; line-height: 1.5;">${descriptionText}</p>
     <div style="display: flex; gap: 12px; justify-content: center;">
       ${actionBtnHtml}
-      <button id="markee-btn-close" style="padding: 10px 20px; background: #e3000f; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold;">Đóng</button>
+      <button id="markee-btn-close" style="padding: 10px 20px; background: #5b53f5; border: none; color: white; border-radius: 8px; cursor: pointer; font-weight: bold;">Đóng</button>
     </div>`;
 
     overlay.appendChild(modal);
