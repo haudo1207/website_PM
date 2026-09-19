@@ -13,6 +13,7 @@ import ProjectPrototypeTab from '@/components/ProjectPrototypeTab';
 import ProjectZaloSummaryTab from '@/components/ProjectZaloSummaryTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import { LinkChipsEditor, appendLinkValue } from '@/components/LinkChipsEditor';
+import { RemarkMultiSelectInput } from '@/components/tasks/RemarkMultiSelectInput';
 import ProjectFormModal from '@/components/ProjectFormModal';
 import ExportProjectTemplateModal from '@/components/ExportProjectTemplateModal';
 import { PieChart, Pie, Cell, Tooltip as RechartsTooltip, ResponsiveContainer } from 'recharts';
@@ -943,6 +944,7 @@ function ProjectDetailContent() {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [selectedTask, setSelectedTask] = useState<any>(null);
   const [drawerForm, setDrawerForm] = useState<Record<string, any>>({});
+  const drawerDetailRef = useRef<HTMLTextAreaElement>(null);
   const [drawerSaving, setDrawerSaving] = useState(false);
   const [drawerLinkDraft, setDrawerLinkDraft] = useState('');
   const [importingInboxId, setImportingInboxId] = useState<number | null>(null);
@@ -4172,6 +4174,13 @@ function ProjectDetailContent() {
       setDrawerLinkDraft('');
     }
   }, [selectedTask]);
+
+  useEffect(() => {
+    const textarea = drawerDetailRef.current;
+    if (!textarea || !selectedTask) return;
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.min(Math.max(textarea.scrollHeight, 44), 156)}px`;
+  }, [selectedTask, drawerForm.detail]);
 
   useEffect(() => {
     if (highlightTaskParam && items.length > 0) {
@@ -9918,82 +9927,74 @@ function ProjectDetailContent() {
               (bg-slate-900/40 backdrop-blur-sm removed) so the Tasks table
               stays fully visible/legible behind the drawer, per spec. */}
           <div onClick={() => setSelectedTask(null)} className="absolute inset-0" />
-          <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
-            <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#f8faff] to-white">
-              <div className="flex items-center gap-3">
-                <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg bg-[#e8f0fe] text-[#0058be]">
+          <div className="relative w-full max-w-[560px] bg-white h-full border-l border-slate-200 shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
+            <div className="sticky top-0 z-20 shrink-0 px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-white/95 backdrop-blur-sm">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#e8f0fe] text-[#0058be] ring-1 ring-[#c2d6f0] shrink-0">
                   <span className="material-symbols-outlined text-[18px]">task_alt</span>
                 </span>
-                <div>
-                  <h3 className="text-sm font-bold text-[#0b1c30]">Chi tiết Task</h3>
-                  <span className="font-mono text-[13px] text-[#0058be] font-bold tracking-wide">{selectedTask.task_code || selectedTask.task_id || ''}</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <h3 className="text-[15px] font-bold text-slate-900 leading-tight whitespace-nowrap">Chi tiết Task</h3>
+                  <span className="font-mono text-[11px] text-[#0058be] font-bold tracking-wide rounded-md bg-[#e8f0fe] px-1.5 py-0.5 ring-1 ring-[#c2d6f0] truncate">{selectedTask.task_code || selectedTask.task_id || ''}</span>
                 </div>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <button
-                  onClick={() => handleOpenAIReviewDrawer('TASK', selectedTask.id, selectedTask.detail)}
-                  className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
-                  title="AI Check Task"
+                  onClick={() => setOpenHeaderMenu(openHeaderMenu === 'task-drawer' ? null : 'task-drawer')}
+                  className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-blue-50 hover:text-[#0058be] transition-colors ${openHeaderMenu === 'task-drawer' ? 'bg-blue-50 text-[#0058be]' : ''}`}
+                  title="Thao tác Task"
                 >
-                  <Sparkles size={16} />
+                  <MoreHorizontal size={18} />
                 </button>
-                {canEditTask(project) && (
-                <button
-                  onClick={() => handleDuplicateTask(selectedTask.task_group_id, selectedTask.id)}
-                  className="w-8 h-8 rounded-lg hover:bg-blue-50 flex items-center justify-center text-slate-500 hover:text-[#0058be] transition-colors"
-                  title="Nhân bản Task"
-                >
-                  <Copy size={16} />
-                </button>
+                {openHeaderMenu === 'task-drawer' && (
+                  <div className="absolute right-14 top-12 z-30 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                    <button onClick={() => { setOpenHeaderMenu(null); handleOpenAIReviewDrawer('TASK', selectedTask.id, selectedTask.detail); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Sparkles size={14} /> AI Check</button>
+                    {canEditTask(project) && <button onClick={() => { setOpenHeaderMenu(null); handleDuplicateTask(selectedTask.task_group_id, selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Copy size={14} /> Nhân bản Task</button>}
+                    {canDeleteTask(project) && <><div className="my-1 border-t border-slate-100" /><button onClick={() => { setOpenHeaderMenu(null); setSelectedTask(null); setTaskToDelete(selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Xóa Task</button></>}
+                  </div>
                 )}
-                {canDeleteTask(project) && (
-                <button
-                  onClick={() => { setSelectedTask(null); setTaskToDelete(selectedTask.id); }}
-                  className="w-8 h-8 rounded-lg hover:bg-red-50 flex items-center justify-center text-slate-500 hover:text-red-600 transition-colors"
-                  title="Xóa Task"
-                >
-                  <Trash2 size={16} />
-                </button>
-                )}
-                <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors">
+                <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 transition-colors">
                   <X size={18} />
                 </button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto p-6 space-y-5">
+            <div className="flex-1 overflow-y-auto p-5 space-y-6">
               {/* KPI Snapshot — read-only, moved to the top of the drawer so
                   it's the first thing visible on open, matching the KPI
                   Snapshot placement decision. */}
               <div>
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">KPI Snapshot</label>
-                <div className="grid grid-cols-4 gap-3 mt-2">
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Base</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.14em]">KPI Snapshot</label>
+                <div className="grid grid-cols-4 gap-2 mt-2">
+                  <div className="h-16 bg-slate-50 rounded-xl px-2.5 py-2.5 text-center border border-slate-200 flex flex-col justify-center">
+                    <div className="text-[9px] text-slate-500 font-bold uppercase">Base</div>
+                    <div className="text-[14px] font-bold text-slate-800 mt-0.5">{selectedTask.kpi_base ?? '—'}</div>
                   </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">Perform</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
+                  <div className="h-16 bg-emerald-50/80 rounded-xl px-2.5 py-2.5 text-center border border-emerald-100 flex flex-col justify-center">
+                    <div className="text-[9px] text-emerald-600 font-bold uppercase">Perform</div>
+                    <div className="text-[14px] font-bold text-emerald-900 mt-0.5">{selectedTask.kpi_perform ?? '—'}</div>
                   </div>
-                  <div className="bg-slate-50 rounded-lg px-3 py-2.5 text-center border border-slate-100">
-                    <div className="text-[9px] text-slate-500 font-semibold uppercase">OT</div>
-                    <div className="text-[13px] font-bold text-[#0b1c30] mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
+                  <div className="h-16 bg-amber-50/80 rounded-xl px-2.5 py-2.5 text-center border border-amber-100 flex flex-col justify-center">
+                    <div className="text-[9px] text-amber-600 font-bold uppercase">OT</div>
+                    <div className="text-[14px] font-bold text-amber-900 mt-0.5">{selectedTask.kpi_ot ?? '—'}</div>
                   </div>
-                  <div className="bg-[#e8f0fe] rounded-lg px-3 py-2.5 text-center border border-[#c2d6f0]">
-                    <div className="text-[9px] text-[#0058be] font-semibold uppercase">Final</div>
-                    <div className="text-[13px] font-bold text-[#0058be] mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
+                  <div className="h-16 bg-blue-50 rounded-xl px-2.5 py-2.5 text-center border border-blue-200 shadow-sm flex flex-col justify-center">
+                    <div className="text-[9px] text-blue-700 font-bold uppercase">Final</div>
+                    <div className="text-[14px] font-bold text-blue-800 mt-0.5">{selectedTask.kpi_final ?? '—'}</div>
                   </div>
                 </div>
               </div>
 
-              {/* Detail Task */}
-              <div>
+              <section className="space-y-4">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.14em] border-b border-slate-100 pb-2">Thông tin công việc</h4>
+                <div>
                 <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">Detail Task</label>
                 <textarea
+                  ref={drawerDetailRef}
                   value={drawerForm.detail || ''}
                   onChange={e => setDrawerForm({ ...drawerForm, detail: e.target.value })}
-                  rows={3}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
+                  maxLength={500}
+                  rows={1}
+                    className="w-full min-h-11 max-h-[156px] overflow-y-auto bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors resize-none"
                 />
               </div>
 
@@ -10004,13 +10005,6 @@ function ProjectDetailContent() {
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-[12.5px]">
                   <div className="font-bold text-amber-800 flex items-center justify-between gap-2">
                     <span className="flex items-center gap-1.5"><Ban size={14} /> Task đang bị chặn</span>
-                    <button
-                      onClick={() => handleUnblockTask(selectedTask)}
-                      disabled={blockActionBusy}
-                      className="h-7 px-2.5 rounded-md text-[11.5px] font-semibold bg-emerald-600 hover:bg-emerald-700 text-white transition-colors disabled:opacity-60"
-                    >
-                      {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
-                    </button>
                   </div>
                   {selectedTask.blocked_reason && <div className="mt-1.5 text-amber-800">{selectedTask.blocked_reason}</div>}
                   {selectedTask.blocked_by_task && (
@@ -10020,59 +10014,69 @@ function ProjectDetailContent() {
                     bởi {selectedTask.blocked_by_name || 'Một thành viên'}{selectedTask.blocked_at ? ` · ${formatTimeAgo(selectedTask.blocked_at)}` : ''}
                   </div>
                 </div>
-              ) : (
-                <button
-                  onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: selectedTask.id }); }}
-                  className="h-8 px-3 rounded-lg text-[12.5px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5 w-fit"
-                >
-                  <Ban size={14} /> Đánh dấu bị chặn
-                </button>
-              )}
+              ) : null}
 
               {/* Status & Priority */}
-              <div className="grid grid-cols-2 gap-x-5 gap-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-3">
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Status</label>
+                  <div className="relative h-11">
                   <select
                     value={drawerForm.status || ''}
                     onChange={e => setDrawerForm({ ...drawerForm, status: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                    className="w-full h-11 appearance-none bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-transparent hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors"
                   >
                     {getAvailableStatuses().length === 0 ? (
                       <>
-                        <option value="Todo">Todo</option>
-                        <option value="Waiting">Waiting</option>
-                        <option value="Process">Process</option>
-                        <option value="Done">Done</option>
-                        <option value="Cancel">Cancel</option>
+                        <option value="Todo" className="text-[#0b1c30]">Todo</option>
+                        <option value="Waiting" className="text-[#0b1c30]">Waiting</option>
+                        <option value="Process" className="text-[#0b1c30]">Process</option>
+                        <option value="Done" className="text-[#0b1c30]">Done</option>
+                        <option value="Cancel" className="text-[#0b1c30]">Cancel</option>
                       </>
                     ) : (
                       getAvailableStatuses().map((st: any) => (
-                        <option key={st.id} value={st.name}>{st.name}</option>
+                        <option key={st.id} value={st.name} className="text-[#0b1c30]">{st.name}</option>
                       ))
                     )}
                   </select>
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center max-w-[calc(100%-44px)]">
+                    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold border truncate ${getStatusInfo(drawerForm.status || '').bg} border-current/10 shadow-sm`}>
+                      <span className={`w-1.5 h-1.5 shrink-0 rounded-full ${getStatusInfo(drawerForm.status || '').dot}`} />
+                      <span className="truncate">{getStatusInfo(drawerForm.status || '').label}</span>
+                    </span>
+                  </span>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center justify-center text-[11px] text-slate-400">▾</span>
+                  </div>
                 </div>
                 <div>
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">Priority</label>
+                  <div className="relative h-11">
                   <select
                     value={drawerForm.priority || ''}
                     onChange={e => setDrawerForm({ ...drawerForm, priority: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                    className="w-full h-11 appearance-none bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-transparent hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors"
                   >
                     {dbPriorities.length === 0 ? (
                       <>
-                        <option value="Normal">Normal</option>
-                        <option value="High">High</option>
-                        <option value="Critical">Critical</option>
-                        <option value="Interrupt">Interrupt</option>
+                        <option value="Normal" className="text-[#0b1c30]">Normal</option>
+                        <option value="High" className="text-[#0b1c30]">High</option>
+                        <option value="Critical" className="text-[#0b1c30]">Critical</option>
+                        <option value="Interrupt" className="text-[#0b1c30]">Interrupt</option>
                       </>
                     ) : (
                       dbPriorities.map((pr: any) => (
-                        <option key={pr.id} value={pr.name}>{pr.name}</option>
+                        <option key={pr.id} value={pr.name} className="text-[#0b1c30]">{pr.name}</option>
                       ))
                     )}
                   </select>
+                  <span className="pointer-events-none absolute inset-y-0 left-3 flex items-center max-w-[calc(100%-44px)]">
+                    <span className={`inline-block px-2.5 py-0.5 rounded-md border text-[11px] font-bold tracking-wide uppercase truncate ${getPriorityStyle(drawerForm.priority || '')}`}>
+                      {drawerForm.priority || 'Normal'}
+                    </span>
+                  </span>
+                  <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center justify-center text-[11px] text-slate-400">▾</span>
+                  </div>
                 </div>
 
                 {/* Manday Est & Start Date */}
@@ -10084,7 +10088,7 @@ function ProjectDetailContent() {
                     min="0"
                     value={drawerForm.manday_est || ''}
                     onChange={e => setDrawerForm({ ...drawerForm, manday_est: e.target.value })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                    className="w-full h-11 bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors"
                   />
                 </div>
                 <div>
@@ -10093,7 +10097,7 @@ function ProjectDetailContent() {
                     type="date"
                     value={drawerForm.start_date ? toPickerDate(drawerForm.start_date) : ''}
                     onChange={e => setDrawerForm({ ...drawerForm, start_date: fromPickerDate(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                    className="w-full h-11 bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors"
                   />
                 </div>
 
@@ -10103,11 +10107,12 @@ function ProjectDetailContent() {
                   <SearchableSelect
                     label="thành viên"
                     icon=""
-                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
+                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name, avatar_url: m.avatar_url }))}
                     value={drawerForm.assigned_id || ''}
                     onChange={(val: any) => setDrawerForm({ ...drawerForm, assigned_id: val === 'all' ? '' : val })}
                     placeholder="Tìm thành viên..."
-                    className="w-full"
+                    showAvatar
+                    className="w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:border-slate-200 [&>button]:bg-white [&>button]:px-3 [&>button]:text-[13px] [&>button]:hover:border-slate-300 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-[#0058be]/15"
                   />
                 </div>
                 <div>
@@ -10115,28 +10120,32 @@ function ProjectDetailContent() {
                   <SearchableSelect
                     label="thành viên"
                     icon=""
-                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name }))}
+                    options={projectMembers.map((m: any) => ({ id: String(m.id), name: m.display_name, avatar_url: m.avatar_url }))}
                     value={drawerForm.support_id || ''}
                     onChange={(val: any) => setDrawerForm({ ...drawerForm, support_id: val === 'all' ? '' : val })}
                     placeholder="Tìm thành viên..."
-                    className="w-full"
+                    showAvatar
+                    className="w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:border-slate-200 [&>button]:bg-white [&>button]:px-3 [&>button]:text-[13px] [&>button]:hover:border-slate-300 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-[#0058be]/15"
                   />
                 </div>
               </div>
 
               {/* KPI RATIO */}
-              <div>
+              <div className="w-full max-w-[190px]">
                 <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1.5">KPI Ratio</label>
                 <input
                   type="text"
                   value={drawerForm.kpi_ratio || '90/10'}
                   onChange={e => setDrawerForm({ ...drawerForm, kpi_ratio: e.target.value })}
                   placeholder="90/10"
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors font-mono"
+                  className="w-full h-11 bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors font-mono"
                 />
               </div>
+              </section>
 
-              {/* Skill Area */}
+              <section className="space-y-4">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.14em] border-b border-slate-100 pb-2">Kỹ năng</h4>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Skill Area</label>
@@ -10150,7 +10159,7 @@ function ProjectDetailContent() {
                           skill_vendor_id: '',
                         }));
                       })}
-                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors"
+                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-[#c2d6f0] bg-[#eff4ff] text-[#0058be] hover:border-[#0058be] hover:bg-[#e8f0fe] transition-colors"
                       title="Tạo Skill Area mới"
                       aria-label="Tạo Skill Area mới"
                     >
@@ -10175,7 +10184,7 @@ function ProjectDetailContent() {
                     });
                   }}
                   placeholder="Tìm Skill Area..."
-                  className="w-full"
+                  className="w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:border-slate-200 [&>button]:bg-white [&>button]:px-3 [&>button]:text-[13px] [&>button]:hover:border-slate-300 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-[#0058be]/15"
                 />
               </div>
 
@@ -10194,7 +10203,7 @@ function ProjectDetailContent() {
                         setNewSkillVendorName('');
                         setShowCreateSkillVendorModal(true);
                       }}
-                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-slate-300 bg-white text-slate-500 hover:border-[#0058be] hover:bg-[#eff4ff] hover:text-[#0058be] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-6 h-6 inline-flex items-center justify-center rounded-md border border-dashed border-[#c2d6f0] bg-[#eff4ff] text-[#0058be] hover:border-[#0058be] hover:bg-[#e8f0fe] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title={drawerForm.skill_solution_id ? 'Tạo Skill mới' : 'Chọn SKILL AREA trước'}
                       aria-label="Tạo Skill mới"
                     >
@@ -10225,12 +10234,17 @@ function ProjectDetailContent() {
                       value={drawerForm.skill_vendor_id || ''}
                       onChange={(val: any) => setDrawerForm({ ...drawerForm, skill_vendor_id: val === 'all' ? '' : val })}
                       placeholder="Tìm Skill..."
-                      className="w-full"
+                      className="w-full [&>button]:h-11 [&>button]:rounded-xl [&>button]:border-slate-200 [&>button]:bg-white [&>button]:px-3 [&>button]:text-[13px] [&>button]:hover:border-slate-300 [&>button]:focus-visible:ring-2 [&>button]:focus-visible:ring-[#0058be]/15"
                     />
                   );
                 })()}
               </div>
 
+                </div>
+              </section>
+
+              <section className="space-y-4">
+                <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.14em] border-b border-slate-100 pb-2">Thông tin bổ sung</h4>
               {/* Link - dùng chung LinkChipsEditor với cột LINK trên bảng
                   (nhiều link dạng chip, nối bằng "\n" trong cùng 1 field
                   ticket_id) để tránh 1 input text thường làm mất xuống dòng
@@ -10258,6 +10272,7 @@ function ProjectDetailContent() {
                 />
               </div>
 
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Remark - dùng chung RemarkMultiSelectInput với bảng (gắn
                   performanceSettings, ảnh hưởng KPI Final) thay vì text input
                   tự do để không tạo ra giá trị Remark không khớp danh mục. */}
@@ -10277,12 +10292,13 @@ function ProjectDetailContent() {
                 <select
                   value={drawerForm.send || ''}
                   onChange={e => setDrawerForm({ ...drawerForm, send: e.target.value })}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
+                  className="w-full h-11 bg-white border border-slate-200 rounded-xl px-3 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors"
                 >
                   <option value="">-- Chọn --</option>
                   <option value="gửi">gửi</option>
                   <option value="đã gửi">đã gửi</option>
                 </select>
+              </div>
               </div>
 
               {/* Notes */}
@@ -10291,20 +10307,45 @@ function ProjectDetailContent() {
                 <textarea
                   value={drawerForm.notes || ''}
                   onChange={e => setDrawerForm({ ...drawerForm, notes: e.target.value })}
-                  rows={2}
-                  className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-[13px] text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-none"
+                  rows={3}
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2.5 text-[13px] text-[#0b1c30] hover:border-slate-300 focus:outline-none focus:border-[#0058be] focus:ring-2 focus:ring-[#0058be]/15 transition-colors resize-none"
                 />
               </div>
+              </section>
             </div>
-            {/* Save button footer */}
-            <div className="px-6 py-4 border-t border-slate-200 bg-white">
-              <button
-                onClick={handleDrawerSave}
-                disabled={drawerSaving}
-                className="w-full px-4 py-2.5 rounded-lg text-xs font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {drawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
-              </button>
+            {/* Task actions retain their existing handlers; only the footer presentation changes. */}
+            <div className="sticky bottom-0 z-20 shrink-0 min-h-16 px-5 py-3 border-t border-slate-200 bg-white/95 backdrop-blur-sm flex items-center justify-between gap-3">
+              {selectedTask.is_blocked ? (
+                <button
+                  onClick={() => handleUnblockTask(selectedTask)}
+                  disabled={blockActionBusy}
+                  className="h-9 px-3 rounded-lg text-[12px] font-semibold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors disabled:opacity-60"
+                >
+                  {blockActionBusy ? 'Đang gỡ...' : 'Gỡ chặn'}
+                </button>
+              ) : (
+                <button
+                  onClick={() => { setBlockReason(''); setBlockDependencyTaskId(''); setBlockPrompt({ taskId: selectedTask.id }); }}
+                  className="h-9 px-3 rounded-lg text-[12px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 transition-colors flex items-center gap-1.5"
+                >
+                  <Ban size={14} /> Đánh dấu bị chặn
+                </button>
+              )}
+              <div className="flex items-center gap-2 ml-auto">
+                <button
+                  onClick={() => setSelectedTask(null)}
+                  className="h-9 px-3 rounded-lg text-[12px] font-semibold text-slate-600 hover:bg-slate-100 transition-colors"
+                >
+                  Hủy
+                </button>
+                <button
+                  onClick={handleDrawerSave}
+                  disabled={drawerSaving}
+                  className="h-9 px-4 rounded-lg text-[12px] font-semibold text-white bg-[#0058be] hover:bg-[#004a9e] focus:outline-none focus:ring-2 focus:ring-[#0058be]/20 transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {drawerSaving ? 'Đang lưu...' : 'Lưu thay đổi'}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -12076,211 +12117,6 @@ function renderRemarkTags(remarkVal: string, settings: any[]) {
 // Link chips (normalizeLinkValue/appendLinkValue/linkChipLabel/
 // LinkChipsEditor) moved to components/LinkChipsEditor.tsx — shared with
 // Quick Create, not just the two spots in this file.
-
-interface RemarkMultiSelectInputProps {
-  value: string;
-  performanceSettings: any[];
-  onChange: (newValue: string) => void;
-  placeholder?: string;
-}
-
-function RemarkMultiSelectInput({ value, performanceSettings, onChange, placeholder }: RemarkMultiSelectInputProps) {
-  const [isOpen, setIsOpen] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const getSelectedIds = (): number[] => {
-    if (!value) return [];
-    return value.split(',').map(p => p.trim()).filter(Boolean).map(part => {
-      if (/^\d+$/.test(part)) {
-        return parseInt(part, 10);
-      }
-      const found = performanceSettings.find(rule => {
-        const rulePerf = rule.performance.trim().toLowerCase();
-        const cleanRulePerf = rulePerf.startsWith('(t)') || rulePerf.startsWith('(p)')
-          ? rulePerf.substring(3).trim()
-          : rulePerf;
-        const partLower = part.toLowerCase();
-        return rulePerf === partLower || cleanRulePerf === partLower;
-      });
-      return found ? found.id : null;
-    }).filter((id): id is number => id !== null);
-  };
-
-  const selectedIds = getSelectedIds();
-
-  const getRuleGroup = (performance: string): string => {
-    const p = performance.trim().toLowerCase();
-    if (p.startsWith('(t)')) return 'I. Tasks khen thưởng';
-    if (p.startsWith('(p)')) return 'II. Tasks bị phạt';
-    if (p.includes('rework') || p.includes('change request') || p.includes('issue') || p.includes('unplanned')) return 'IV. Tasks phát sinh';
-    if (p.includes('xử lý sự cố') || p.includes('ngày lễ') || p.includes('cuối tuần') || p.includes('tối trong tuần') || p.includes('ot') || /^\d+\s*day/.test(p)) return 'III. Tasks làm ngoài giờ';
-    return 'IV. Tasks phát sinh';
-  };
-
-  const filteredRules = performanceSettings.filter(rule => {
-    if (!rule.is_active) return false;
-    const term = searchTerm.toLowerCase().trim();
-    if (!term) return true;
-    return rule.performance.toLowerCase().includes(term);
-  });
-
-  const groupedRules: { [key: string]: any[] } = {};
-  filteredRules.forEach(rule => {
-    const grp = getRuleGroup(rule.performance);
-    if (!groupedRules[grp]) groupedRules[grp] = [];
-    groupedRules[grp].push(rule);
-  });
-
-  const groupOrder = [
-    'I. Tasks khen thưởng',
-    'II. Tasks bị phạt',
-    'III. Tasks làm ngoài giờ',
-    'IV. Tasks phát sinh'
-  ];
-
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-        setSearchTerm('');
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
-
-  return (
-    <div className="relative w-full" ref={containerRef}>
-      <div
-        onClick={() => setIsOpen(!isOpen)}
-        className="w-full min-h-[28px] bg-white border border-[#c2c6d6] rounded px-1.5 py-1 text-xs text-[#0b1c30] cursor-pointer flex flex-wrap gap-1 items-center focus:outline-none focus:border-[#0058be] shadow-sm hover:border-[#0058be] transition-colors"
-      >
-        {selectedIds.length === 0 ? (
-          <span className="text-slate-400 font-medium select-none">{placeholder || 'Chọn Remark...'}</span>
-        ) : (
-          selectedIds.map(id => {
-            const r = performanceSettings.find(rule => rule.id === id);
-            if (!r) return null;
-            let display = r.performance;
-            let badgeStyle = "bg-slate-100 text-slate-700";
-            if (display.toLowerCase().startsWith('(t)')) {
-              display = '[T] ' + display.substring(3).trim();
-              badgeStyle = "bg-emerald-50 text-emerald-700 border border-emerald-200";
-            } else if (display.toLowerCase().startsWith('(p)')) {
-              if (display.toLowerCase().includes('fail')) {
-                display = '[FAIL] ' + display.substring(3).trim();
-                badgeStyle = "bg-amber-50 text-amber-700 border border-amber-200";
-              } else {
-                display = '[P] ' + display.substring(3).trim();
-                badgeStyle = "bg-rose-50 text-rose-700 border border-rose-200";
-              }
-            } else if (display.toLowerCase().includes('xử lý sự cố') || display.toLowerCase().includes('ngày lễ') || display.toLowerCase().includes('cuối tuần') || display.toLowerCase().includes('tối trong tuần') || display.toLowerCase().includes('ot') || /^\d+\s*day/.test(display.toLowerCase())) {
-              badgeStyle = "bg-blue-50 text-blue-700 border border-blue-200";
-            }
-            return (
-              <span key={id} className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${badgeStyle}`}>
-                {display}
-              </span>
-            );
-          })
-        )}
-      </div>
-
-      {isOpen && (
-        <div className="absolute left-0 mt-1 w-[400px] max-h-[300px] bg-white border border-slate-200 rounded-lg shadow-2xl z-[9999] p-3 flex flex-col gap-2 transition-all animate-fadeIn">
-          <input
-            type="text"
-            value={searchTerm}
-            placeholder="Tìm kiếm Remark..."
-            autoFocus
-            onChange={e => setSearchTerm(e.target.value)}
-            className="w-full bg-white border border-slate-200 rounded px-2.5 py-1.5 text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] font-semibold shadow-sm"
-          />
-          <div className="overflow-y-auto flex-1 max-h-[200px] pr-1 space-y-3">
-            {groupOrder.map(groupName => {
-              const rules = groupedRules[groupName] || [];
-              if (rules.length === 0) return null;
-              return (
-                <div key={groupName} className="space-y-1">
-                  <div className="text-[10px] font-black tracking-wider uppercase text-slate-400 select-none px-1 border-b border-slate-100 pb-0.5 mb-1">
-                    {groupName}
-                  </div>
-                  {rules.map(rule => {
-                    const isSelected = selectedIds.includes(rule.id);
-                    const kpiVal = parseFloat(rule.kpi);
-                    let kpiBadge = null;
-                    if (kpiVal > 0) {
-                      kpiBadge = (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 border border-emerald-100">
-                          +{kpiVal}
-                        </span>
-                      );
-                    } else if (kpiVal < 0) {
-                      kpiBadge = (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 border border-rose-100">
-                          {kpiVal}
-                        </span>
-                      );
-                    } else if (rule.performance.toLowerCase().includes('fail') || rule.performance.toLowerCase().includes('rework') || (kpiVal > 0 && kpiVal < 1.0)) {
-                      kpiBadge = (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 border border-amber-100">
-                          x{kpiVal}
-                        </span>
-                      );
-                    } else {
-                      kpiBadge = (
-                        <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-slate-50 text-slate-400 border border-slate-100">
-                          0
-                        </span>
-                      );
-                    }
-
-                    return (
-                      <div
-                        key={rule.id}
-                        onClick={() => {
-                          const updated = isSelected
-                            ? selectedIds.filter(id => id !== rule.id)
-                            : [...selectedIds, rule.id];
-                          onChange(updated.join(','));
-                        }}
-                        className={`group flex items-center justify-between px-2.5 py-1.5 rounded cursor-pointer text-xs font-semibold transition-all duration-150 ${isSelected
-                          ? 'bg-[#eff4ff] text-[#0058be]'
-                          : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                      >
-                        <div className="flex items-center gap-2 max-w-[80%]">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            readOnly
-                            className="w-3.5 h-3.5 rounded border-slate-300 text-[#0058be] focus:ring-[#0058be] pointer-events-none"
-                          />
-                          <span className="truncate" title={rule.performance}>
-                            {rule.performance}
-                          </span>
-                        </div>
-                        <div className="shrink-0">
-                          {kpiBadge}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              );
-            })}
-            {Object.keys(groupedRules).length === 0 && (
-              <div className="text-center py-6 text-slate-400 text-xs italic font-medium">
-                Không tìm thấy remark nào hợp lệ.
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 interface RemarkDropdownCellProps {
   col: string;

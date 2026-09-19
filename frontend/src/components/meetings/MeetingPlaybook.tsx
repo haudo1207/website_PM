@@ -48,7 +48,7 @@ export default function MeetingPlaybook() {
           className="flex-1 min-w-[220px] text-left"
         >
           <h2 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
-            <BookOpen size={16} className="text-[#6366f1]" />
+            <BookOpen size={16} className="text-[#0058be]" />
             Hướng dẫn sử dụng & đặc tả triển khai
           </h2>
           <p className="text-[11px] text-[#64748b] mt-1">Nhân sự hiểu quy trình; Dev biết chính xác dữ liệu & endpoint đã xây dựng.</p>
@@ -58,13 +58,13 @@ export default function MeetingPlaybook() {
             <div className="flex bg-[#f0f3f7] rounded-lg p-1">
               <button
                 onClick={() => setTab('employee')}
-                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'employee' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'employee' ? 'bg-white text-[#0058be] shadow-2xs' : 'text-[#69788e]'}`}
               >
                 Dành cho nhân sự
               </button>
               <button
                 onClick={() => setTab('dev')}
-                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'dev' ? 'bg-white text-[#6366f1] shadow-2xs' : 'text-[#69788e]'}`}
+                className={`px-3 py-1.5 rounded-md text-[11px] font-bold transition-colors ${tab === 'dev' ? 'bg-white text-[#0058be] shadow-2xs' : 'text-[#69788e]'}`}
               >
                 Dành cho Dev
               </button>
@@ -73,7 +73,7 @@ export default function MeetingPlaybook() {
           <button
             type="button"
             onClick={() => setExpanded(prev => !prev)}
-            className="flex items-center gap-1 text-[11px] font-bold text-[#6366f1] px-2 py-1.5 rounded-lg hover:bg-[#f5f3ff] transition-colors"
+            className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] px-2 py-1.5 rounded-lg hover:bg-[#eff4ff] transition-colors"
           >
             {expanded ? 'Thu gọn' : 'Mở rộng'}
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
@@ -86,7 +86,7 @@ export default function MeetingPlaybook() {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {WORKFLOW.map((step, idx) => (
               <div key={step.title} className="border border-[#e2e8f0] rounded-xl p-3.5">
-                <div className="w-7 h-7 rounded-lg bg-[#f5f3ff] text-[#6366f1] flex items-center justify-center font-extrabold text-xs mb-2.5">
+                <div className="w-7 h-7 rounded-lg bg-[#eff4ff] text-[#0058be] flex items-center justify-center font-extrabold text-xs mb-2.5">
                   {idx + 1}
                 </div>
                 <h3 className="text-xs font-bold text-[#0b1c30] mb-1.5">{step.title}</h3>
