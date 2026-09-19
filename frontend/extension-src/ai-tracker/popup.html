@@ -225,14 +225,12 @@
   </head>
   <body>
     <main class="popup">
-      <h1>KPI Prototype</h1>
-      <div class="project-picker">
-        <label>Dự án đang chọn: <span class="current-name" id="project-current-name">—</span></label>
-        <div class="search-wrap">
-          <input id="project-search-input" type="text" placeholder="Tìm kiếm dự án..." autocomplete="off" />
-        </div>
-        <div id="project-search-results" class="project-results"></div>
-      </div>
+      <h1 id="popup-title">KPI Prototype</h1>
+      <!-- Project picker used to be duplicated here AND in the richer
+           injected widget (see ui.js's injectWidget/mockup-based redesign) —
+           dropped from this small toolbar popup since picking a project now
+           only happens in that one place; this popup is just identity +
+           session control. -->
 
       <div id="logged-in-view" hidden>
         <div class="logged-in-row">

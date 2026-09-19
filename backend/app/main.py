@@ -785,6 +785,9 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS title VARCHAR(255)"
+        ))
 
         # ── Workload Settings: configurable thresholds for Section 4 ────
         conn.execute(text("""
@@ -1819,10 +1822,14 @@ async def start_zalo_summary_loop():
 @app.on_event("startup")
 async def start_meeting_reminder_loop():
     async def _loop():
+        import time
+        import logging
+        logger = logging.getLogger("meeting_reminders")
         await asyncio.sleep(10)  # stagger from the auto-sync loop above
         from .database import BackgroundSessionLocal
         from .services.meeting_reminders import dispatch_due_reminders, dispatch_start_link_notifications
         while True:
+            cycle_started = time.monotonic()
             db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(dispatch_due_reminders, db)
@@ -1833,7 +1840,23 @@ async def start_meeting_reminder_loop():
                 pass
             finally:
                 db.close()
-            await asyncio.sleep(60)
+            # A meeting was reported live in production as ~3 minutes late
+            # (reminder/link fired well past its due time, not just the
+            # expected few-seconds poll slack) — this loop had no visibility
+            # into how long a cycle itself takes, so a slow Zalo HTTP call
+            # (each up to zalo.DEFAULT_TIMEOUT=15s, once per linked
+            # conversation, run serially) could silently push the NEXT
+            # cycle's claim minutes late with nothing in the logs to explain
+            # it. Log any cycle taking noticeably longer than the 20s sleep
+            # below so a repeat is diagnosable instead of guessed at.
+            elapsed = time.monotonic() - cycle_started
+            if elapsed > 20:
+                logger.warning("Meeting reminder cycle took %.1fs (longer than the 20s poll interval) — a Zalo/Telegram send is likely running slow.", elapsed)
+            # Was 60s — halved worst-case poll slack (previously up to ~60s
+            # baseline before any actual send time on top; see the cycle-time
+            # warning above for what to check if delays are still minutes,
+            # not seconds).
+            await asyncio.sleep(20)
 
     asyncio.create_task(_loop())
 

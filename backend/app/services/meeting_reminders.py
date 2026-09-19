@@ -33,32 +33,49 @@ logger = logging.getLogger(__name__)
 STALE_AFTER_MINUTES = 30
 
 
-def _build_text(meeting, start_dt) -> str:
+def _participant_names(meeting) -> list[str]:
+    return [mm.member.display_name for mm in (meeting.members or []) if getattr(mm, "member", None) and mm.member.display_name]
+
+
+def _build_body(meeting, start_dt, header: str, include_link: bool) -> str:
+    """Shared body builder for both the before-start reminder and the
+    at-start nudge — same field set (Requirement: "cuộc họp thêm vài trường
+    sao cho đầy đủ"), just a different header/emoji per call site.
+    `include_link` is False for the copy sent to Zalo's main text (the link
+    is sent as its own follow-up message there instead — see _notify_zalo —
+    so Zalo's client actually renders the rich Meet/Zoom preview card
+    instead of a plain hyperlink buried inside a multi-line message)."""
     proj_name = meeting.project.name if getattr(meeting, "project", None) else "Dự án chung"
-    text = (
-        f"🔔 Nhắc lịch họp: {meeting.title}\n"
-        f"🕒 {start_dt.strftime('%H:%M ngày %d/%m/%Y')} — {proj_name}"
-    )
+    lines = [
+        f"{header}: {meeting.title}",
+        f"🕒 {start_dt.strftime('%H:%M ngày %d/%m/%Y')} — {proj_name}",
+    ]
+    if meeting.platform:
+        lines.append(f"📹 Nền tảng: {meeting.platform}")
+    names = _participant_names(meeting)
+    if names:
+        lines.append(f"👥 Người tham gia: {', '.join(names)}")
+    if meeting.agenda:
+        lines.append(f"📋 Agenda: {meeting.agenda.strip()}")
+    elif meeting.objective:
+        lines.append(f"🎯 Mục tiêu: {meeting.objective.strip()}")
+    if include_link and meeting.meeting_url:
+        lines.append(f"🔗 {meeting.meeting_url}")
+    return "\n".join(lines)
+
+
+def _build_text(meeting, start_dt, include_link: bool = True) -> str:
     # The join link no longer goes out immediately on meeting creation (see
     # routers/meetings.py) — this reminder, timed to reminder_minutes before
-    # start, carries the link itself so participants have it ahead of time.
-    # A second message with the same link fires again exactly at start_time
-    # (see _build_start_text / dispatch_start_link_notifications below), for
-    # anyone who missed the earlier reminder.
-    if getattr(meeting, "meeting_url", None):
-        text += f"\n🔗 {meeting.meeting_url}"
-    return text
+    # start, carries the link itself (App/Telegram) so participants have it
+    # ahead of time. A second message with the same link fires again exactly
+    # at start_time (see _build_start_text / dispatch_start_link_notifications
+    # below), for anyone who missed the earlier reminder.
+    return _build_body(meeting, start_dt, "🔔 Nhắc lịch họp", include_link)
 
 
-def _build_start_text(meeting, start_dt) -> str:
-    proj_name = meeting.project.name if getattr(meeting, "project", None) else "Dự án chung"
-    text = (
-        f"🚀 Cuộc họp bắt đầu: {meeting.title}\n"
-        f"🕒 {start_dt.strftime('%H:%M ngày %d/%m/%Y')} — {proj_name}"
-    )
-    if getattr(meeting, "meeting_url", None):
-        text += f"\n🔗 {meeting.meeting_url}"
-    return text
+def _build_start_text(meeting, start_dt, include_link: bool = True) -> str:
+    return _build_body(meeting, start_dt, "🚀 Cuộc họp bắt đầu", include_link)
 
 
 def _notify_app(db, meeting, member_ids, text) -> None:
@@ -82,7 +99,7 @@ def _notify_telegram(meeting, text) -> None:
         logger.exception("Telegram reminder failed for meeting %s", meeting.id)
 
 
-def _notify_zalo(db, meeting, member_ids, text) -> None:
+def _notify_zalo(db, meeting, member_ids, text, meeting_url: str | None = None) -> None:
     if not zalo_service.is_configured():
         return
     project_ids = {meeting.project_id} if meeting.project_id else set()
@@ -116,6 +133,18 @@ def _notify_zalo(db, meeting, member_ids, text) -> None:
             zalo_service.send_message(conv.account_id, conv.zalo_thread_id, body, conv.is_group, mentions or None)
         except Exception:
             logger.exception("Zalo reminder failed for meeting %s conversation %s", meeting.id, conv.id)
+            continue
+        # The join link goes out as its OWN message, containing nothing but
+        # the bare URL — Zalo's client only renders the rich Meet/Zoom
+        # preview card (thumbnail + title + description) when a message is
+        # JUST a link, not when a link is one line among others in a longer
+        # message. Best-effort: a failure here still leaves the informative
+        # text above delivered.
+        if meeting_url:
+            try:
+                zalo_service.send_message(conv.account_id, conv.zalo_thread_id, meeting_url, conv.is_group, None)
+            except Exception:
+                logger.exception("Zalo link-only send failed for meeting %s conversation %s", meeting.id, conv.id)
 
 
 def _claim_due_meetings(db):
@@ -223,7 +252,8 @@ def dispatch_start_link_notifications(db) -> int:
             if "Telegram" in channels:
                 _notify_telegram(meeting, text)
             if "Zalo" in channels or "Nhóm dự án" in channels:
-                _notify_zalo(db, meeting, member_ids, text)
+                zalo_text = _build_start_text(meeting, start_dt, include_link=False)
+                _notify_zalo(db, meeting, member_ids, zalo_text, meeting.meeting_url)
 
             sent += 1
             logger.info("Dispatched meeting start-link id=%s via %s", meeting.id, channels)
@@ -259,7 +289,8 @@ def dispatch_due_reminders(db) -> int:
             if "Telegram" in channels:
                 _notify_telegram(meeting, text)
             if "Zalo" in channels or "Nhóm dự án" in channels:
-                _notify_zalo(db, meeting, member_ids, text)
+                zalo_text = _build_text(meeting, start_dt, include_link=False)
+                _notify_zalo(db, meeting, member_ids, zalo_text, meeting.meeting_url)
 
             sent += 1
             logger.info("Dispatched meeting reminder id=%s via %s", meeting.id, channels)
