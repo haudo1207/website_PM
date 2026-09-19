@@ -1401,6 +1401,18 @@ export default function OverviewTab() {
       // Replaces the old contributingNames flat comma list, which read as
       // "everyone did everything" instead of showing each member's own task
       // count/manday/KPI.
+      //
+      // pTasksForStats (via pLeaderTasks) includes a task if EITHER its
+      // assigned OR support person is in the current team roster — a task
+      // I'm assigned that some OTHER team's member merely supported on
+      // legitimately belongs in "my" numbers. But that does NOT make the
+      // support person "my team member": without this guard, that person
+      // (possibly another Leader entirely) got a row here too, just because
+      // they happened to touch the same task — showing people who were
+      // never part of the team being viewed. Only roles held by someone
+      // actually in teamMemberIds get a row (teamMemberIds is the whole
+      // company when unscoped, e.g. Admin's "Toàn bộ", so this is a no-op
+      // there).
       const memberStatsMap: Record<string, { name: string; total: number; done: number; manday: number; kpi: number }> = {};
       pTasksForStats.forEach((t: any) => {
         const isDoneT = t.status === 'Done' || t.status === 'done';
@@ -1410,6 +1422,7 @@ export default function OverviewTab() {
         }
         roles.forEach(({ id, name }) => {
           if (id == null) return;
+          if (teamMemberIds.length > 0 && !isIdInList(teamMemberIds, id)) return;
           const key = String(id);
           if (!memberStatsMap[key]) memberStatsMap[key] = { name: name || 'Không rõ', total: 0, done: 0, manday: 0, kpi: 0 };
           memberStatsMap[key].total++;
