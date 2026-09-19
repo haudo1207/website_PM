@@ -1,15 +1,18 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   Target, Paperclip, Plus, Clock, Brain, Info, Trash2, Loader2, Download, Pencil, Check, X, Eye, FileText, Sparkles, Upload,
+  Share2, Users, ChevronDown, ChevronUp, BookOpen,
 } from 'lucide-react';
 import {
   getProjectFeatures, createProjectFeature, renameProjectFeature, deleteProjectFeature,
   getProjectFeatureLogs, createProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
-  uploadFeatureLogAttachment,
+  uploadFeatureLogAttachment, createProjectShareLink,
+  getProjectKnowledgeItems, createProjectKnowledgeItem, updateProjectKnowledgeItem, deleteProjectKnowledgeItem,
 } from '@/lib/api';
 import WipLogDetailModal from './WipLogDetailModal';
+import EditWipLogModal from './EditWipLogModal';
 
 // Real feature: "Tính năng" + WIP log timeline scoped to one project. Ported
 // from markee-dashboard's ProjectDetailContent.tsx concept (skill_library
@@ -52,6 +55,7 @@ export interface AiTask {
 export interface FeatureLog {
   id: number;
   feature_id: number;
+  title?: string | null;
   content: string;
   status: string;
   author: string | null;
@@ -59,6 +63,17 @@ export interface FeatureLog {
   attached_files: AttachedFile[];
   ai_summary?: string | null;
   ai_tasks?: AiTask[];
+}
+
+interface KnowledgeItem {
+  id: number;
+  project_id: number;
+  feature_id: number | null;
+  title: string;
+  content: string;
+  author: string | null;
+  created_at: string | null;
+  updated_at: string | null;
 }
 
 export const CONTENT_TRUNCATE_LENGTH = 320;
@@ -105,6 +120,33 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
   const [renameValue, setRenameValue] = useState('');
   const [expandedLogIds, setExpandedLogIds] = useState<Set<number>>(new Set());
   const [detailModal, setDetailModal] = useState<{ log: FeatureLog; attachmentIdx?: number; tab?: 'description' | 'tasks' } | null>(null);
+  const [editModalLog, setEditModalLog] = useState<FeatureLog | null>(null);
+  const [shareStatusLogId, setShareStatusLogId] = useState<number | null>(null);
+
+  // "Lịch sử dự án" (WIP timeline) vs "Knowledge Hub" (curated notes) — mirrors
+  // markee-dashboard's two-tab "Lịch sử làm việc" modal, kept as a sub-tab
+  // inside pm-new's existing Prototype tab rather than a separate overlay.
+  const [mainSubTab, setMainSubTab] = useState<'timeline' | 'knowledge'>('timeline');
+
+  // "Thành viên hoạt động" — distinct WIP-log authors on this project, purely
+  // derived client-side from `logs` (no dedicated backend aggregation exists,
+  // or is needed: the full log list is already loaded here). Clicking a
+  // member filters the visible timeline down to just their entries.
+  const [selectedAuthorFilter, setSelectedAuthorFilter] = useState<string | null>(null);
+  const [membersCollapsed, setMembersCollapsed] = useState(false);
+
+  // Knowledge Hub state
+  const [knowledgeItems, setKnowledgeItems] = useState<KnowledgeItem[]>([]);
+  const [knowledgeLoaded, setKnowledgeLoaded] = useState(false);
+  const [knowledgeLoading, setKnowledgeLoading] = useState(false);
+  const [showNewKnowledgeForm, setShowNewKnowledgeForm] = useState(false);
+  const [newKnowledgeTitle, setNewKnowledgeTitle] = useState('');
+  const [newKnowledgeContent, setNewKnowledgeContent] = useState('');
+  const [submittingKnowledge, setSubmittingKnowledge] = useState(false);
+  const [editingKnowledgeId, setEditingKnowledgeId] = useState<number | null>(null);
+  const [editKnowledgeTitle, setEditKnowledgeTitle] = useState('');
+  const [editKnowledgeContent, setEditKnowledgeContent] = useState('');
+  const [expandedKnowledgeIds, setExpandedKnowledgeIds] = useState<Set<number>>(new Set());
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -124,6 +166,23 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
   }, [projectId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  const loadKnowledge = useCallback(async () => {
+    setKnowledgeLoading(true);
+    try {
+      const items = await getProjectKnowledgeItems(projectId);
+      setKnowledgeItems(items);
+      setKnowledgeLoaded(true);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Không tải được Knowledge Hub');
+    } finally {
+      setKnowledgeLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (mainSubTab === 'knowledge' && !knowledgeLoaded) loadKnowledge();
+  }, [mainSubTab, knowledgeLoaded, loadKnowledge]);
 
   async function handleCreateFeature(e: React.FormEvent) {
     e.preventDefault();
@@ -258,6 +317,24 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
     }
   }
 
+  function handleLogSaved(updated: FeatureLog, movedToProjectId: number) {
+    if (movedToProjectId !== projectId) {
+      // Moved to a different project — it no longer belongs in this
+      // project's timeline/feature counts at all.
+      setLogs((prev) => prev.filter((l) => l.id !== updated.id));
+      setFeatures((prev) => prev.map((f) => f.id === updated.feature_id ? { ...f, log_count: Math.max(0, f.log_count - 1) } : f));
+      return;
+    }
+    setLogs((prev) => {
+      const exists = prev.some((l) => l.id === updated.id);
+      return exists ? prev.map((l) => (l.id === updated.id ? updated : l)) : prev;
+    });
+    // Feature reassignment within the same project — refresh feature list
+    // counts since the log may have moved to a brand-new Feature.
+    getProjectFeatures(projectId).then(setFeatures).catch(() => {});
+    setDetailModal((prev) => (prev && prev.log.id === updated.id ? { ...prev, log: updated } : prev));
+  }
+
   async function handleDeleteLog(log: FeatureLog) {
     if (!confirm('Xóa log này?')) return;
     try {
@@ -269,9 +346,94 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
     }
   }
 
-  const visibleLogs = selectedFeatureId === 'all'
-    ? logs
-    : logs.filter((l) => l.feature_id === selectedFeatureId);
+  // Real public share link (same /share/project/{token} page every other
+  // "Chia sẻ" entry point in the app uses) — deep-linked straight to this
+  // log's Feature via ?feature=<name>, matching markee-dashboard's own
+  // "Mở Link" flow after saving a WIP entry, instead of an internal URL that
+  // requires being logged in to even open.
+  async function handleShareLog(log: FeatureLog) {
+    try {
+      const { share_url } = await createProjectShareLink(projectId, log.feature_id);
+      await navigator.clipboard.writeText(share_url);
+      setShareStatusLogId(log.id);
+      setTimeout(() => setShareStatusLogId((cur) => (cur === log.id ? null : cur)), 2000);
+    } catch {
+      setError('Không tạo được link chia sẻ');
+    }
+  }
+
+  const activeMembers = useMemo(() => {
+    const map = new Map<string, { name: string; count: number }>();
+    logs.forEach((l) => {
+      const name = l.author || 'Ẩn danh';
+      const cur = map.get(name) || { name, count: 0 };
+      cur.count += 1;
+      map.set(name, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.count - a.count);
+  }, [logs]);
+
+  const visibleLogs = logs
+    .filter((l) => selectedFeatureId === 'all' || l.feature_id === selectedFeatureId)
+    .filter((l) => !selectedAuthorFilter || (l.author || 'Ẩn danh') === selectedAuthorFilter);
+
+  function startEditKnowledge(item: KnowledgeItem) {
+    setEditingKnowledgeId(item.id);
+    setEditKnowledgeTitle(item.title);
+    setEditKnowledgeContent(item.content);
+  }
+
+  async function handleCreateKnowledge(e: React.FormEvent) {
+    e.preventDefault();
+    const title = newKnowledgeTitle.trim();
+    const content = newKnowledgeContent.trim();
+    if (!title || !content) return;
+    setSubmittingKnowledge(true);
+    setError(null);
+    try {
+      const created = await createProjectKnowledgeItem(projectId, title, content, selectedFeatureId === 'all' ? undefined : selectedFeatureId);
+      setKnowledgeItems((prev) => [created, ...prev]);
+      setNewKnowledgeTitle('');
+      setNewKnowledgeContent('');
+      setShowNewKnowledgeForm(false);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Lỗi khi thêm mục Knowledge Hub');
+    } finally {
+      setSubmittingKnowledge(false);
+    }
+  }
+
+  async function handleSaveEditKnowledge(item: KnowledgeItem) {
+    const title = editKnowledgeTitle.trim();
+    const content = editKnowledgeContent.trim();
+    if (!title || !content) return;
+    try {
+      const updated = await updateProjectKnowledgeItem(projectId, item.id, { title, content });
+      setKnowledgeItems((prev) => prev.map((k) => (k.id === item.id ? updated : k)));
+      setEditingKnowledgeId(null);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Lỗi khi sửa mục Knowledge Hub');
+    }
+  }
+
+  async function handleDeleteKnowledge(item: KnowledgeItem) {
+    if (!confirm(`Xóa mục Knowledge Hub "${item.title}"?`)) return;
+    try {
+      await deleteProjectKnowledgeItem(projectId, item.id);
+      setKnowledgeItems((prev) => prev.filter((k) => k.id !== item.id));
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Lỗi khi xóa mục Knowledge Hub');
+    }
+  }
+
+  function toggleExpandKnowledge(id: number) {
+    setExpandedKnowledgeIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   if (loading) {
     return (
@@ -311,108 +473,183 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
       )}
 
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        {/* Sub-tabs: Lịch sử dự án / Knowledge Hub */}
+        <div className="flex items-center gap-1 px-4 pt-3 border-b border-slate-200">
+          <button
+            onClick={() => setMainSubTab('timeline')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-bold rounded-t-lg border-b-2 transition-colors ${
+              mainSubTab === 'timeline' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" /> Lịch sử dự án
+          </button>
+          <button
+            onClick={() => setMainSubTab('knowledge')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-bold rounded-t-lg border-b-2 transition-colors ${
+              mainSubTab === 'knowledge' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <BookOpen className="w-3.5 h-3.5" /> Knowledge Hub ({knowledgeItems.length})
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr]">
-          {/* LEFT: Features sidebar */}
-          <div className="border-b lg:border-b-0 lg:border-r border-slate-200 p-4 space-y-2 bg-slate-50/50">
-            <div className="flex items-center justify-between mb-1">
-              <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
-                <Target className="w-3.5 h-3.5" /> Tính năng ({features.length})
-              </span>
-              <button
-                onClick={() => setShowNewFeatureInput((v) => !v)}
-                title="Tạo tính năng mới"
-                className="w-5 h-5 rounded flex items-center justify-center text-[#0058be] border border-[#0058be]/30 bg-white hover:bg-[#0058be]/5 transition-colors"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
+          {/* LEFT: Features sidebar + Active Members (shared across both sub-tabs) */}
+          <div className="border-b lg:border-b-0 lg:border-r border-slate-200 p-4 space-y-4 bg-slate-50/50">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <Target className="w-3.5 h-3.5" /> Tính năng ({features.length})
+                </span>
+                <button
+                  onClick={() => setShowNewFeatureInput((v) => !v)}
+                  title="Tạo tính năng mới"
+                  className="w-5 h-5 rounded flex items-center justify-center text-[#0058be] border border-[#0058be]/30 bg-white hover:bg-[#0058be]/5 transition-colors"
+                >
+                  <Plus className="w-3 h-3" />
+                </button>
+              </div>
+
+              {showNewFeatureInput && (
+                <form onSubmit={handleCreateFeature} className="flex items-center gap-1.5 mb-2">
+                  <input
+                    autoFocus
+                    value={newFeatureName}
+                    onChange={(e) => setNewFeatureName(e.target.value)}
+                    placeholder="Tên tính năng..."
+                    className="flex-1 min-w-0 text-[12px] border border-slate-300 rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
+                  />
+                  <button
+                    type="submit"
+                    disabled={submittingFeature || !newFeatureName.trim()}
+                    className="text-[11px] font-semibold text-white bg-[#0058be] px-2 py-1.5 rounded-lg disabled:opacity-50"
+                  >
+                    Tạo
+                  </button>
+                </form>
+              )}
+
+              <div className="space-y-1">
+                <button
+                  onClick={() => setSelectedFeatureId('all')}
+                  className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[12px] font-medium flex items-center justify-between transition-colors ${
+                    selectedFeatureId === 'all' ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  Tất cả tính năng
+                  <span className="opacity-70">{logs.length}</span>
+                </button>
+                {features.length === 0 && (
+                  <p className="text-[11.5px] text-slate-400 px-2.5 py-2">Chưa có tính năng nào.</p>
+                )}
+                {features.map((f) => (
+                  renamingFeatureId === f.id ? (
+                    <form
+                      key={f.id}
+                      onSubmit={(e) => { e.preventDefault(); handleRenameFeature(f); }}
+                      className="flex items-center gap-1 px-1"
+                    >
+                      <input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Escape') setRenamingFeatureId(null); }}
+                        className="flex-1 min-w-0 text-[12px] border border-[#0058be] rounded-lg px-2 py-1 outline-none"
+                      />
+                      <button type="submit" title="Lưu" className="w-5 h-5 shrink-0 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 rounded">
+                        <Check className="w-3.5 h-3.5" />
+                      </button>
+                      <button type="button" title="Hủy" onClick={() => setRenamingFeatureId(null)} className="w-5 h-5 shrink-0 flex items-center justify-center text-slate-400 hover:bg-slate-100 rounded">
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </form>
+                  ) : (
+                    <div
+                      key={f.id}
+                      className={`group w-full px-2.5 py-1.5 rounded-lg text-[12px] font-medium flex items-center justify-between transition-colors cursor-pointer ${
+                        selectedFeatureId === f.id ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                      onClick={() => setSelectedFeatureId(f.id)}
+                    >
+                      <span className="truncate" title={f.name}>{f.name}</span>
+                      <span className="flex items-center gap-1.5 shrink-0">
+                        <span className="opacity-70">{f.log_count}</span>
+                        <Pencil
+                          className={`w-3 h-3 opacity-0 group-hover:opacity-70 hover:!opacity-100 ${selectedFeatureId === f.id ? 'text-white' : 'text-slate-500'}`}
+                          onClick={(e) => { e.stopPropagation(); startRename(f); }}
+                        />
+                        <Trash2
+                          className={`w-3 h-3 opacity-0 group-hover:opacity-70 hover:!opacity-100 ${selectedFeatureId === f.id ? 'text-white' : 'text-red-500'}`}
+                          onClick={(e) => { e.stopPropagation(); handleDeleteFeature(f); }}
+                        />
+                      </span>
+                    </div>
+                  )
+                ))}
+              </div>
             </div>
 
-            {showNewFeatureInput && (
-              <form onSubmit={handleCreateFeature} className="flex items-center gap-1.5 mb-2">
-                <input
-                  autoFocus
-                  value={newFeatureName}
-                  onChange={(e) => setNewFeatureName(e.target.value)}
-                  placeholder="Tên tính năng..."
-                  className="flex-1 min-w-0 text-[12px] border border-slate-300 rounded-lg px-2 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
-                />
-                <button
-                  type="submit"
-                  disabled={submittingFeature || !newFeatureName.trim()}
-                  className="text-[11px] font-semibold text-white bg-[#0058be] px-2 py-1.5 rounded-lg disabled:opacity-50"
-                >
-                  Tạo
-                </button>
-              </form>
-            )}
-
-            <div className="space-y-1">
+            {/* Thành viên hoạt động — click to filter the timeline by author */}
+            <div className="border-t border-slate-200 pt-3">
               <button
-                onClick={() => setSelectedFeatureId('all')}
-                className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[12px] font-medium flex items-center justify-between transition-colors ${
-                  selectedFeatureId === 'all' ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
-                }`}
+                onClick={() => setMembersCollapsed((v) => !v)}
+                className="w-full flex items-center justify-between mb-1"
               >
-                Tất cả tính năng
-                <span className="opacity-70">{logs.length}</span>
+                <span className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                  <Users className="w-3.5 h-3.5" /> Thành viên hoạt động ({activeMembers.length})
+                </span>
+                {membersCollapsed ? <ChevronDown className="w-3.5 h-3.5 text-slate-400" /> : <ChevronUp className="w-3.5 h-3.5 text-slate-400" />}
               </button>
-              {features.length === 0 && (
-                <p className="text-[11.5px] text-slate-400 px-2.5 py-2">Chưa có tính năng nào.</p>
-              )}
-              {features.map((f) => (
-                renamingFeatureId === f.id ? (
-                  <form
-                    key={f.id}
-                    onSubmit={(e) => { e.preventDefault(); handleRenameFeature(f); }}
-                    className="flex items-center gap-1 px-1"
-                  >
-                    <input
-                      autoFocus
-                      value={renameValue}
-                      onChange={(e) => setRenameValue(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Escape') setRenamingFeatureId(null); }}
-                      className="flex-1 min-w-0 text-[12px] border border-[#0058be] rounded-lg px-2 py-1 outline-none"
-                    />
-                    <button type="submit" title="Lưu" className="w-5 h-5 shrink-0 flex items-center justify-center text-emerald-600 hover:bg-emerald-50 rounded">
-                      <Check className="w-3.5 h-3.5" />
-                    </button>
-                    <button type="button" title="Hủy" onClick={() => setRenamingFeatureId(null)} className="w-5 h-5 shrink-0 flex items-center justify-center text-slate-400 hover:bg-slate-100 rounded">
-                      <X className="w-3.5 h-3.5" />
-                    </button>
-                  </form>
-                ) : (
-                  <div
-                    key={f.id}
-                    className={`group w-full px-2.5 py-1.5 rounded-lg text-[12px] font-medium flex items-center justify-between transition-colors cursor-pointer ${
-                      selectedFeatureId === f.id ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
+              {!membersCollapsed && (
+                <div className="space-y-1">
+                  <button
+                    onClick={() => setSelectedAuthorFilter(null)}
+                    className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[12px] font-medium transition-colors ${
+                      !selectedAuthorFilter ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
                     }`}
-                    onClick={() => setSelectedFeatureId(f.id)}
                   >
-                    <span className="truncate" title={f.name}>{f.name}</span>
-                    <span className="flex items-center gap-1.5 shrink-0">
-                      <span className="opacity-70">{f.log_count}</span>
-                      <Pencil
-                        className={`w-3 h-3 opacity-0 group-hover:opacity-70 hover:!opacity-100 ${selectedFeatureId === f.id ? 'text-white' : 'text-slate-500'}`}
-                        onClick={(e) => { e.stopPropagation(); startRename(f); }}
-                      />
-                      <Trash2
-                        className={`w-3 h-3 opacity-0 group-hover:opacity-70 hover:!opacity-100 ${selectedFeatureId === f.id ? 'text-white' : 'text-red-500'}`}
-                        onClick={(e) => { e.stopPropagation(); handleDeleteFeature(f); }}
-                      />
-                    </span>
-                  </div>
-                )
-              ))}
+                    Tất cả thành viên
+                  </button>
+                  {activeMembers.length === 0 && (
+                    <p className="text-[11.5px] text-slate-400 px-2.5 py-2">Chưa có ai ghi log.</p>
+                  )}
+                  {activeMembers.map((m) => (
+                    <button
+                      key={m.name}
+                      onClick={() => setSelectedAuthorFilter(m.name === selectedAuthorFilter ? null : m.name)}
+                      className={`w-full px-2.5 py-1.5 rounded-lg text-[12px] font-medium flex items-center gap-2 transition-colors ${
+                        selectedAuthorFilter === m.name ? 'bg-[#0058be] text-white' : 'text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <span
+                        className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0"
+                        style={{ backgroundColor: colorFor(m.name) }}
+                      >
+                        {initialsFor(m.name)}
+                      </span>
+                      <span className="truncate flex-1 text-left" title={m.name}>{m.name}</span>
+                      <span className="opacity-70 shrink-0">{m.count}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* RIGHT: Log timeline */}
+          {/* RIGHT: Timeline or Knowledge Hub, depending on mainSubTab */}
+          {mainSubTab === 'timeline' ? (
           <div className="p-4">
             <div className="flex items-center gap-1.5 border-b border-slate-200 mb-4 pb-2">
               <Clock className="w-3.5 h-3.5 text-[#0058be]" />
               <span className="text-[12px] font-semibold text-[#0058be]">
                 {selectedFeatureId === 'all' ? 'Tất cả log' : features.find((f) => f.id === selectedFeatureId)?.name}
               </span>
+              {selectedAuthorFilter && (
+                <span className="ml-auto text-[11px] font-semibold text-slate-500 flex items-center gap-1">
+                  Lọc theo: <strong className="text-slate-700">{selectedAuthorFilter}</strong>
+                  <X className="w-3 h-3 cursor-pointer hover:text-red-500" onClick={() => setSelectedAuthorFilter(null)} />
+                </span>
+              )}
             </div>
 
             {selectedFeatureId !== 'all' && (
@@ -437,6 +674,7 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
             <div className="space-y-3">
               {visibleLogs.map((log) => {
                 const authorName = log.author || 'Ẩn danh';
+                const logFeature = features.find((f) => f.id === log.feature_id);
                 return (
                   <div key={log.id} className="group border border-slate-200 rounded-lg p-3.5 hover:border-slate-300 transition-colors">
                     <div className="flex items-start justify-between gap-3 mb-2">
@@ -448,19 +686,34 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                           {initialsFor(authorName)}
                         </div>
                         <div className="min-w-0">
-                          <div className="text-[12.5px] font-semibold text-slate-800 truncate">{authorName}</div>
-                          <div className="text-[11px] text-slate-400">
-                            {formatDate(log.created_at)}
-                            {selectedFeatureId === 'all' && (
-                              <> · {features.find((f) => f.id === log.feature_id)?.name || ''}</>
+                          <div className="text-[12.5px] font-semibold text-slate-800 truncate flex items-center gap-1.5 flex-wrap">
+                            {authorName}
+                            {selectedFeatureId === 'all' && logFeature && (
+                              <span className="px-1.5 py-0.5 rounded-full text-[9.5px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                                {logFeature.name}
+                              </span>
                             )}
                           </div>
+                          <div className="text-[11px] text-slate-400">{formatDate(log.created_at)}</div>
                         </div>
                       </div>
-                      <Trash2
-                        className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-red-500 cursor-pointer shrink-0"
-                        onClick={() => handleDeleteLog(log)}
-                      />
+                      <span className="flex items-center gap-1 shrink-0">
+                        {shareStatusLogId === log.id && (
+                          <span className="text-[10.5px] font-bold text-emerald-600 mr-1">Đã sao chép!</span>
+                        )}
+                        <Share2
+                          className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-[#0058be] cursor-pointer"
+                          onClick={() => handleShareLog(log)}
+                        />
+                        <Pencil
+                          className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-[#0058be] cursor-pointer"
+                          onClick={() => setEditModalLog(log)}
+                        />
+                        <Trash2
+                          className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-red-500 cursor-pointer"
+                          onClick={() => handleDeleteLog(log)}
+                        />
+                      </span>
                     </div>
                     {(() => {
                       const isLong = log.content.length > CONTENT_TRUNCATE_LENGTH;
@@ -468,6 +721,7 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
                       const shown = isLong && !isExpanded ? log.content.slice(0, CONTENT_TRUNCATE_LENGTH).trimEnd() + '…' : log.content;
                       return (
                         <>
+                          {log.title && <p className="text-[13px] font-bold text-slate-800 mb-1">{log.title}</p>}
                           <p className="text-[12.5px] text-slate-600 leading-relaxed whitespace-pre-wrap">{shown}</p>
                           {isLong && (
                             <button
@@ -546,6 +800,144 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
               )}
             </div>
           </div>
+          ) : (
+          <div className="p-4">
+            <div className="flex items-center justify-between border-b border-slate-200 mb-4 pb-2">
+              <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#0058be]">
+                <BookOpen className="w-3.5 h-3.5" /> Knowledge Hub
+              </span>
+              <button
+                onClick={() => setShowNewKnowledgeForm((v) => !v)}
+                className="flex items-center gap-1 text-[11.5px] font-semibold text-white bg-[#0058be] px-2.5 py-1.5 rounded-lg"
+              >
+                <Plus className="w-3.5 h-3.5" /> Thêm mục
+              </button>
+            </div>
+
+            {showNewKnowledgeForm && (
+              <form onSubmit={handleCreateKnowledge} className="mb-4 space-y-2 border border-slate-200 rounded-lg p-3 bg-slate-50/50">
+                <input
+                  autoFocus
+                  value={newKnowledgeTitle}
+                  onChange={(e) => setNewKnowledgeTitle(e.target.value)}
+                  placeholder="Tiêu đề..."
+                  className="w-full text-[12.5px] border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-[#0058be]"
+                />
+                <textarea
+                  value={newKnowledgeContent}
+                  onChange={(e) => setNewKnowledgeContent(e.target.value)}
+                  placeholder="Nội dung tri thức cần lưu lại..."
+                  rows={3}
+                  className="w-full text-[12.5px] border border-slate-300 rounded-lg px-3 py-2 outline-none focus:ring-1 focus:ring-[#0058be] resize-none"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    type="submit"
+                    disabled={submittingKnowledge || !newKnowledgeTitle.trim() || !newKnowledgeContent.trim()}
+                    className="text-[11.5px] font-semibold text-white bg-[#0058be] px-3 py-1.5 rounded-lg disabled:opacity-50"
+                  >
+                    {submittingKnowledge ? 'Đang lưu...' : 'Lưu'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowNewKnowledgeForm(false)}
+                    className="text-[11.5px] font-semibold text-slate-500 hover:bg-slate-100 px-3 py-1.5 rounded-lg"
+                  >
+                    Hủy
+                  </button>
+                </div>
+              </form>
+            )}
+
+            {knowledgeLoading ? (
+              <div className="flex items-center justify-center py-10 text-slate-400 gap-2 text-[12.5px]">
+                <Loader2 className="w-4 h-4 animate-spin" /> Đang tải Knowledge Hub...
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {knowledgeItems.map((item) => (
+                  <div key={item.id} className="group border border-slate-200 rounded-lg p-3.5 hover:border-slate-300 transition-colors">
+                    {editingKnowledgeId === item.id ? (
+                      <div className="space-y-1.5">
+                        <input
+                          autoFocus
+                          value={editKnowledgeTitle}
+                          onChange={(e) => setEditKnowledgeTitle(e.target.value)}
+                          className="w-full text-[13px] font-bold border border-[#0058be] rounded-lg px-3 py-1.5 outline-none"
+                        />
+                        <textarea
+                          value={editKnowledgeContent}
+                          onChange={(e) => setEditKnowledgeContent(e.target.value)}
+                          rows={4}
+                          className="w-full text-[12.5px] border border-[#0058be] rounded-lg px-3 py-2 outline-none resize-y"
+                        />
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => handleSaveEditKnowledge(item)}
+                            disabled={!editKnowledgeTitle.trim() || !editKnowledgeContent.trim()}
+                            className="text-[11.5px] font-semibold text-white bg-[#0058be] px-2.5 py-1 rounded-lg disabled:opacity-50"
+                          >
+                            Lưu
+                          </button>
+                          <button
+                            onClick={() => setEditingKnowledgeId(null)}
+                            className="text-[11.5px] font-semibold text-slate-500 hover:bg-slate-100 px-2.5 py-1 rounded-lg"
+                          >
+                            Hủy
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex items-start justify-between gap-3 mb-1.5">
+                          <div className="min-w-0">
+                            <div className="text-[13px] font-bold text-slate-800 truncate">{item.title}</div>
+                            <div className="text-[11px] text-slate-400">
+                              {item.author || 'Ẩn danh'} · {formatDate(item.created_at)}
+                            </div>
+                          </div>
+                          <span className="flex items-center gap-1 shrink-0">
+                            <Pencil
+                              className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-[#0058be] cursor-pointer"
+                              onClick={() => startEditKnowledge(item)}
+                            />
+                            <Trash2
+                              className="w-3.5 h-3.5 text-slate-300 opacity-0 group-hover:opacity-100 hover:!text-red-500 cursor-pointer"
+                              onClick={() => handleDeleteKnowledge(item)}
+                            />
+                          </span>
+                        </div>
+                        {(() => {
+                          const isLong = item.content.length > CONTENT_TRUNCATE_LENGTH;
+                          const isExpanded = expandedKnowledgeIds.has(item.id);
+                          const shown = isLong && !isExpanded ? item.content.slice(0, CONTENT_TRUNCATE_LENGTH).trimEnd() + '…' : item.content;
+                          return (
+                            <>
+                              <p className="text-[12.5px] text-slate-600 leading-relaxed whitespace-pre-wrap">{shown}</p>
+                              {isLong && (
+                                <button
+                                  onClick={() => toggleExpandKnowledge(item.id)}
+                                  className="mt-1 text-[11.5px] font-semibold text-[#0058be] hover:underline"
+                                >
+                                  {isExpanded ? 'Thu gọn ↑' : 'Xem thêm ↓'}
+                                </button>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </>
+                    )}
+                  </div>
+                ))}
+                {knowledgeItems.length === 0 && (
+                  <div className="text-center py-10 text-[12.5px] text-slate-400">
+                    Chưa có mục Knowledge Hub nào — bấm "Thêm mục" để lưu lại tri thức đầu tiên.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          )}
         </div>
       </div>
 
@@ -558,6 +950,17 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
           initialTab={detailModal.tab}
           onClose={() => setDetailModal(null)}
           onLogUpdated={handleLogUpdated}
+        />
+      )}
+
+      {editModalLog && (
+        <EditWipLogModal
+          projectId={projectId}
+          log={editModalLog}
+          featureName={features.find((f) => f.id === editModalLog.feature_id)?.name || ''}
+          featureNames={features.map((f) => f.name)}
+          onClose={() => setEditModalLog(null)}
+          onSaved={handleLogSaved}
         />
       )}
     </div>

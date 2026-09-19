@@ -722,14 +722,35 @@ export const getProjectFeatureLogs = (projectId: number, featureId?: number) =>
   api.get(`/projects/${projectId}/feature-logs`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
 export const createProjectFeatureLog = (projectId: number, featureId: number, content: string, status?: string) =>
   api.post(`/projects/${projectId}/features/${featureId}/logs`, { content, status }).then(r => r.data);
+// content is required (kept for the simple inline-edit callers); title/
+// feature_name/target_project_id are all optional extras used by the full
+// "Sửa bản nháp WIP" modal (title + move Feature/Project in one save).
+export const updateProjectFeatureLog = (
+  projectId: number, logId: number, content: string,
+  extra?: { title?: string; feature_name?: string; target_project_id?: number },
+) => api.patch(`/projects/${projectId}/feature-logs/${logId}`, { content, ...extra }).then(r => r.data);
+export const createProjectShareLink = (projectId: number, featureId?: number) =>
+  api.post(`/projects/${projectId}/share-link`, featureId ? { feature_id: featureId } : {}).then(r => r.data as { share_token: string; share_url: string });
 export const deleteProjectFeatureLog = (projectId: number, logId: number) =>
   api.delete(`/projects/${projectId}/feature-logs/${logId}`).then(r => r.data);
 export const getProjectFeatureLogAttachmentBlob = (projectId: number, logId: number, idx: number) =>
   api.get(`/projects/${projectId}/feature-logs/${logId}/attachments/${idx}`, { responseType: 'blob' }).then(r => r.data as Blob);
+export const removeProjectFeatureLogAttachment = (projectId: number, logId: number, idx: number) =>
+  api.delete(`/projects/${projectId}/feature-logs/${logId}/attachments/${idx}`).then(r => r.data);
 export const generateFeatureLogAiTasks = (projectId: number, logId: number) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/ai-tasks`).then(r => r.data);
 export const pushFeatureLogTasks = (projectId: number, logId: number, tasks: any[]) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/push-tasks`, { tasks }).then(r => r.data);
+// Project Knowledge Hub — curated entries, separate from the WIP log timeline
+export const getProjectKnowledgeItems = (projectId: number, featureId?: number) =>
+  api.get(`/projects/${projectId}/knowledge-items`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
+export const createProjectKnowledgeItem = (projectId: number, title: string, content: string, featureId?: number) =>
+  api.post(`/projects/${projectId}/knowledge-items`, { title, content, feature_id: featureId }).then(r => r.data);
+export const updateProjectKnowledgeItem = (projectId: number, itemId: number, body: { title?: string; content?: string }) =>
+  api.patch(`/projects/${projectId}/knowledge-items/${itemId}`, body).then(r => r.data);
+export const deleteProjectKnowledgeItem = (projectId: number, itemId: number) =>
+  api.delete(`/projects/${projectId}/knowledge-items/${itemId}`).then(r => r.data);
+
 export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
   new Promise<any>((resolve, reject) => {
     const reader = new FileReader();

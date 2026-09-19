@@ -1329,7 +1329,18 @@ export default function OverviewTab() {
         return pmName.includes(mName);
       });
 
-      const pTasksToUse = (isDrilledIn && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
+      // A Leader viewing "Toàn bộ team" (not drilled into one specific
+      // Member/other-Leader) still has `teamMemberIds` scoped to their own
+      // (or a browsed) team's real roster — never the whole company, see
+      // showsMemberCards below — so this must use pLeaderTasks too, not just
+      // when isDrilledIn. Otherwise "Toàn bộ team" silently fell back to
+      // pAllTasks (the project's WHOLE cast, every other team/Leader
+      // included), which is exactly why the contribution modal's per-member
+      // breakdown showed people who aren't even on this Leader's team. Same
+      // reasoning already applied to tasksForPeriodCheck below — kept in
+      // sync here so the numbers shown match whether the project itself
+      // qualifies to appear at all.
+      const pTasksToUse = ((currentUserRole === 'leader' && !isDrilledIn) || (isDrilledIn && teamMemberIds.length > 0)) ? pLeaderTasks : pAllTasks;
       // "Dự án đang triển khai" respects the Tuần/Tháng/Năm/quick-filter period
       // for whether a project shows up at all (hasTaskInPeriod below), but the
       // Task/Manday/KPI numbers on each card were still summed from
