@@ -398,6 +398,37 @@ def list_conversations(
     ]
 
 
+def _serialize_conversation(c: ZaloConversation) -> dict:
+    return {
+        "id": c.id,
+        "thread_id": c.zalo_thread_id,
+        "name": c.name or c.zalo_thread_id,
+        "is_group": c.is_group,
+        "last_message_at": c.last_message_at,
+        "last_message_preview": c.last_message_preview,
+        "project_id": c.project_id,
+        "project_name": c.project.name if c.project else None,
+    }
+
+
+@router.get("/conversations/{conversation_id}")
+def get_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_zalo_user),
+):
+    """Single-conversation lookup for the project Chat tab's ZaloConversationPane
+    — unlike GET /conversations (the personal-owner's own list, used by
+    /zalo-account and the group picker), this uses _resolve_conversation_for_viewer
+    so any project member the conversation is linked to can look it up by id,
+    not just whoever personally connected the Zalo session."""
+    conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
+    conv = db.query(ZaloConversation).options(joinedload(ZaloConversation.project)).filter(
+        ZaloConversation.id == conv.id
+    ).first()
+    return _serialize_conversation(conv)
+
+
 @router.post("/conversations/{conversation_id}/link-project")
 def link_conversation_project(
     conversation_id: int,

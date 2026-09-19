@@ -55,6 +55,17 @@ class SessionState {
     // arriving right after) would silently re-log the user back in a few
     // seconds later. Cleared the moment a fresh login succeeds.
     this.manualDisconnect = false;
+    // Set right before a fresh login when the previous session ended via an
+    // explicit user-initiated disconnect (not an automatic recovery
+    // reconnect after a dropped connection) — every message whose OWN Zalo
+    // timestamp is older than this moment gets silently dropped in
+    // forwardMessage(), from both the on-connect backfill AND the ongoing
+    // 5s safety-net poll, so reconnecting starts clean instead of
+    // re-pulling (and re-showing) days-old messages the user had just
+    // disconnected to get away from. null = no filter (automatic recovery
+    // reconnects never set this, so they keep catching up on anything
+    // missed during the drop, same as before).
+    this.freshReconnectAtMs = null;
     // Which attachListener() call currently "owns" this session's events.
     // zca-js's own reconnect handling can leave an old listener's socket
     // alive for a while after we've already attached a fresh one on
@@ -296,7 +307,9 @@ function attachListener(session, zaloApi) {
     session.listenerConnected = true;
     console.log(`[listener:${session.accountId}] connected`);
     // 2s delay gives the cipher key exchange (needed to decode the
-    // response) time to land right after a fresh connect.
+    // response) time to land right after a fresh connect. Any message this
+    // pulls in from before a fresh manual reconnect gets filtered out in
+    // forwardMessage() (session.freshReconnectAtMs), not here.
     setTimeout(() => requestGroupBackfill(session), 2000);
   });
 
@@ -371,6 +384,17 @@ async function forwardMessage(session, message) {
     // which is why messages sent directly from a phone never showed up.
     const isPlainText = typeof message.data?.content === "string";
     if (!isPlainText) return; // phase 1: text only, matches existing services/zalo-crawler precedent
+
+    // A fresh reconnect after an explicit manual disconnect wants a clean
+    // slate — drop anything from before that moment (both the on-connect
+    // backfill AND the ongoing 5s safety-net poll pull the SAME
+    // most-recent-across-all-groups batch, so this is the one place that
+    // reliably distinguishes "genuinely new" from "old, just resurfaced").
+    // message.data.ts is Zalo's own send time (epoch ms, as a string).
+    if (session.freshReconnectAtMs) {
+      const sentAtMs = Number(message.data?.ts);
+      if (Number.isFinite(sentAtMs) && sentAtMs < session.freshReconnectAtMs) return;
+    }
 
     const isGroup = message.type === ThreadType.Group;
     const senderName = message.data.dName || "Người dùng Zalo";
@@ -579,6 +603,7 @@ async function loginWithAuth(session, { cookies, imei, userAgent }) {
   session.lastLoginAt = new Date().toISOString();
   session.lastError = null;
   session.consecutiveReconnectFailures = 0;
+  session.freshReconnectAtMs = session.manualDisconnect ? Date.now() : null;
   session.manualDisconnect = false;
   session.groupNameCache = new Map();
   session.friendNameCache = new Map();
