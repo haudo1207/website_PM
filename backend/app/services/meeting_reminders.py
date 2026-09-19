@@ -35,10 +35,17 @@ STALE_AFTER_MINUTES = 30
 
 def _build_text(meeting, start_dt) -> str:
     proj_name = meeting.project.name if getattr(meeting, "project", None) else "Dự án chung"
-    return (
+    text = (
         f"🔔 Nhắc lịch họp: {meeting.title}\n"
         f"🕒 {start_dt.strftime('%H:%M ngày %d/%m/%Y')} — {proj_name}"
     )
+    # The join link no longer goes out immediately on meeting creation (see
+    # routers/meetings.py) — this reminder, timed to reminder_minutes before
+    # start, is now the only Zalo message for the meeting, so it must carry
+    # the link itself or nobody gets it at all.
+    if getattr(meeting, "meeting_url", None):
+        text += f"\n🔗 {meeting.meeting_url}"
+    return text
 
 
 def _notify_app(db, meeting, member_ids, text) -> None:
