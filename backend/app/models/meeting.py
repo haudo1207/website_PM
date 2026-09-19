@@ -58,6 +58,10 @@ class Meeting(Base):
     # guard that keeps two uvicorn workers from both sending it (see
     # meeting_reminders._claim_due_meetings).
     reminder_sent_at = Column(DateTime, nullable=True)
+    # Set once the "meeting is starting now" link message has been dispatched
+    # (fires exactly at start_time, separate from the reminder_minutes-before
+    # reminder above) — see meeting_reminders.dispatch_due_start_notifications.
+    start_link_sent_at = Column(DateTime, nullable=True)
 
     # Effectiveness score — deterministic, computed from real data (not AI-judged).
     # See backend/app/services/meeting_score_engine.py for the formula.

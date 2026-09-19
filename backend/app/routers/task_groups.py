@@ -25,7 +25,7 @@ from ..models.user import User
 from ..models.project import Project, project_members
 from ..models.notification import Notification
 from ..utils.kpi_engine import recalculate_task, parse_date, parse_datetime
-from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader
+from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader, has_full_project_access
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 from ..utils.skill_validation import validate_skill_area_consistency
@@ -794,10 +794,15 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
         tg.end_date_actual_override = parse_date(body["end_date_actual_override"])
 
     project_id = tg.phase.project_id if tg.phase else None
-    # Người thực hiện (assigned_ids) is fixed to whoever created the Group —
-    # not editable afterward, so any "assigned_ids" the client sends here is
-    # silently ignored rather than erroring (older clients/forms may still
-    # submit it as part of a broader payload). SP (support_ids) stays free.
+    # Người thực hiện (assigned_ids) defaults to whoever created the Group and
+    # stays locked for everyone else — but the project's own PM/Leader, or
+    # any global Leader/super_admin, can reassign it (e.g. the creator moved
+    # off the project, or a Leader created it on someone's behalf and needs
+    # to hand it over). Anyone without that access still has it silently
+    # ignored rather than erroring (older clients/forms may still submit it
+    # as part of a broader payload). SP (support_ids) stays free for everyone.
+    if "assigned_ids" in body and has_full_project_access(db, current_user, project_id):
+        tg.assigned_ids = validate_member_ids_for_project(body["assigned_ids"], project_id, db, "Người thực hiện")
     if "support_ids" in body:
         tg.support_ids = validate_member_ids_for_project(body["support_ids"], project_id, db, "SP")
 
