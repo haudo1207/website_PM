@@ -701,7 +701,16 @@ export default function OverviewTab() {
   const recentActivity: any[] = overviewData?.recentActivity || [];
   const currentUser: any = overviewData?.currentUser || null;
   const currentUserRole = currentUser?.role || getRole() || '';
-  const showsMemberCards = String(currentUserRole).toLowerCase() === 'leader';
+  const isLeaderRole = String(currentUserRole).toLowerCase() === 'leader';
+  // A Leader defaults to their own team (showsMemberCards), same as always.
+  // Toggling "Xem Leader khác" flips them into the exact same Leader-cards
+  // browsing flow Admin already uses (showsLeaderCards below) — visibleLeaders
+  // is already backend-scoped to the caller's own Workspace(s) for a Leader
+  // (workspace_leader_names/member_query_for_user), so this only ever surfaces
+  // other Leaders in the SAME (fixed, non-switchable for Leader) Workspace —
+  // never blocked by the switcher, same unrestricted numbers Admin sees.
+  const [leaderBrowseOther, setLeaderBrowseOther] = useState(false);
+  const showsMemberCards = isLeaderRole && !leaderBrowseOther;
   const showsLeaderCards = !showsMemberCards;
 
   // Carries the currently-selected Tuần/Tháng/Năm period into project/detail
@@ -893,8 +902,15 @@ export default function OverviewTab() {
       } else {
         visibleLeaders = lList.filter(ld => ld.name && ld.name !== 'Không có Leader');
       }
-      if (selectedWorkspaceCode || workspaceCode) {
-        const activeCode = String(selectedWorkspaceCode || workspaceCode || '').trim().toLowerCase();
+      // A Leader browsing "Leader khác" has no switcher of their own (their
+      // Workspace is fixed) — fall back to their own data_scope so the
+      // picker stays scoped to their home Workspace instead of leaking in
+      // leaders from a Phụ Workspace they merely have secondary/report-only
+      // access to (workspace_leader_names authorizes those too, since it's
+      // "every leader the caller may see", broader than "leader's own team").
+      const wsFilterCode = selectedWorkspaceCode || workspaceCode || (isLeaderRole ? (currentUser?.data_scope || '') : '');
+      if (wsFilterCode) {
+        const activeCode = String(wsFilterCode).trim().toLowerCase();
         visibleLeaders = visibleLeaders.filter(ld => {
           if (ld.count <= 0) return false;
           // A Workspace filter must only surface leaders whose own Chính is
@@ -1617,6 +1633,23 @@ export default function OverviewTab() {
             </button>
           </div>
         </div>
+
+        {isLeaderRole && (
+          <div className="flex items-center gap-2 mb-2">
+            <button
+              onClick={() => { setLeaderBrowseOther(false); setSelectedLeader('all'); setSelectedMemberId('all'); setSelectedWorkspaceScope(null); }}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!leaderBrowseOther ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              👤 Team của tôi
+            </button>
+            <button
+              onClick={() => { setLeaderBrowseOther(true); setSelectedLeader('all'); setSelectedMemberId('all'); setSelectedWorkspaceScope(null); }}
+              className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${leaderBrowseOther ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              👥 Xem Leader khác (cùng Workspace)
+            </button>
+          </div>
+        )}
 
         {/* 2. LEADER / MEMBER SELECTOR BAR WITH PERCENTAGE CIRCLE */}
         {showsLeaderCards ? (
