@@ -1380,12 +1380,12 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     except Exception as e:
         logger.warning(f"Failed to send Telegram notification for meeting {m.id}: {e}")
 
-    # Push the join link to any Zalo group(s) linked to the meeting's project(s)
-    try:
-        from ..services.meeting_notify import notify_zalo_groups_meeting_created
-        notify_zalo_groups_meeting_created(db, m)
-    except Exception as e:
-        logger.warning(f"Failed to send Zalo notification for meeting {m.id}: {e}")
+    # The Zalo join-link message is sent by the reminder scheduler
+    # (meeting_reminders.dispatch_due_reminders), timed to reminder_minutes
+    # before the meeting actually starts — not here on creation. Blasting the
+    # link out immediately regardless of how far in the future the meeting
+    # is scheduled meant it was long buried in the group chat by the time
+    # anyone needed it; the reminder is the one message that should carry it.
 
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
