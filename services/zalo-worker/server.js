@@ -856,9 +856,15 @@ setInterval(() => {
   }
 }, BACKFILL_INTERVAL_MS);
 
-// Disabled: confirmed via [zca-http] logs that Zalo's own server now 404s
-// api/group/history (https://tt-group-wpa.chat.zalo.me/api/group/history)
-// for a well-formed request built exactly per zca-js's own implementation —
-// this is Zalo having removed/changed the endpoint server-side, not
-// something fixable here. Re-enable if a future zca-js version restores it.
-// startPolling();
+// Re-enabled: this got disabled earlier after [zca-http] logs showed Zalo's
+// server 404-ing api/group/history for a well-formed request. Re-checked
+// against C:\Markeeai\SMB_Deployment\zalo-bridge (same zca-js 2.1.2), which
+// actively relies on this exact same api.getGroupChatHistory() call for its
+// own missed-message sync with no reported failures — worth re-verifying
+// here rather than assuming it's still dead. pollGroupHistory() already
+// logs+continues per-group on failure, so if Zalo still 404s this for this
+// account, it just no-ops with a log line, same as being disabled — no
+// regression either way. This is also the ONE mechanism that avoids the
+// "most recent batch across ALL groups" crowding-out problem the listener's
+// requestOldMessages() backfill has, since it's scoped to a single thread_id.
+startPolling();
