@@ -143,6 +143,36 @@ export default function MemberDetailModal({
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
 
+  // Skill Area / Skill breakdown — which Skill Area (skill_solution) and
+  // which Skill (skill_vendor) this member's tasks in the current period
+  // concentrate in the most, and how their total Manday splits across
+  // Skills. Same "task count + manday per bucket, sorted desc" shape as
+  // mandayByWs on the ranking table, just bucketed by Skill instead of
+  // Workspace.
+  const skillAreaBreakdown = useMemo(() => {
+    const map: Record<string, { name: string; count: number; manday: number }> = {};
+    memberTasks.forEach(t => {
+      const name = t.skill_solution_name;
+      if (!name) return;
+      if (!map[name]) map[name] = { name, count: 0, manday: 0 };
+      map[name].count++;
+      map[name].manday += (t.manday_actual || t.manday_est || 0);
+    });
+    return Object.values(map).sort((a, b) => b.manday - a.manday);
+  }, [memberTasks]);
+
+  const skillBreakdown = useMemo(() => {
+    const map: Record<string, { name: string; count: number; manday: number }> = {};
+    memberTasks.forEach(t => {
+      const name = t.skill_vendor_name;
+      if (!name) return;
+      if (!map[name]) map[name] = { name, count: 0, manday: 0 };
+      map[name].count++;
+      map[name].manday += (t.manday_actual || t.manday_est || 0);
+    });
+    return Object.values(map).sort((a, b) => b.manday - a.manday);
+  }, [memberTasks]);
+
   const filteredTasks = memberTasks.filter(t => {
     if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && calculateDaysLate(t) > 0;
     if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
@@ -332,6 +362,56 @@ export default function MemberDetailModal({
               </div>
             </div>
           </div>
+
+          {/* 3b. PHÂN BỔ THEO SKILL AREA / SKILL — Skill Area/Skill làm nhiều
+              nhất và Manday tổng chia theo từng Skill, trong đúng kỳ đang xem. */}
+          {(skillAreaBreakdown.length > 0 || skillBreakdown.length > 0) && (
+            <div>
+              <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Phân bổ theo Skill Area / Skill</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-500 uppercase">Skill Area</span>
+                    {skillAreaBreakdown[0] && (
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">Nhiều nhất: {skillAreaBreakdown[0].name}</span>
+                    )}
+                  </div>
+                  <div className="max-h-[160px] overflow-y-auto custom-scrollbar">
+                    {skillAreaBreakdown.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 font-semibold text-center py-3">Không có task nào gán Skill Area trong kỳ.</p>
+                    ) : (
+                      skillAreaBreakdown.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between px-3 py-1.5 text-[11px] border-t border-slate-100 first:border-t-0">
+                          <span className="font-bold text-slate-700 truncate">{s.name}</span>
+                          <span className="text-slate-400 font-semibold shrink-0 ml-2">{s.count} task · <span className="text-amber-600">{s.manday.toFixed(1)} MD</span></span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="border border-slate-200 rounded-xl overflow-hidden">
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                    <span className="text-[10px] font-black text-slate-500 uppercase">Skill</span>
+                    {skillBreakdown[0] && (
+                      <span className="text-[9px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">Nhiều nhất: {skillBreakdown[0].name}</span>
+                    )}
+                  </div>
+                  <div className="max-h-[160px] overflow-y-auto custom-scrollbar">
+                    {skillBreakdown.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 font-semibold text-center py-3">Không có task nào gán Skill trong kỳ.</p>
+                    ) : (
+                      skillBreakdown.map((s, idx) => (
+                        <div key={idx} className="flex items-center justify-between px-3 py-1.5 text-[11px] border-t border-slate-100 first:border-t-0">
+                          <span className="font-bold text-slate-700 truncate">{s.name}</span>
+                          <span className="text-slate-400 font-semibold shrink-0 ml-2">{s.count} task · <span className="text-amber-600">{s.manday.toFixed(1)} MD</span></span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 4. DỰ ÁN ĐANG THAM GIA */}
           <div>
