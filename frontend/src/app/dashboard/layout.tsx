@@ -45,9 +45,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     // Member/Leader performance breakdowns that have no meaning for a
     // regular Member or a read-only Viewer account.
     const canKpiMatrix = isSuperAdmin() || isLeader();
-    // Team Load is Super Admin only — the multi-team project comparison is
-    // an ops/oversight view that has no meaning for Leader/Member/Viewer.
-    const canTeamLoad = isSuperAdmin();
+    // Team Load is now available to BOTH Super Admin and Leader. Super
+    // Admin sees every Workspace; Leader sees only the Workspaces they're
+    // granted (enforced server-side by `_aggregate_team_comparison` step
+    // 3b in `backend/app/routers/system_audit.py`, which restricts the
+    // eligible Leader set to those whose data_scope is in the caller's
+    // `user_allowed_scopes`). Member / Viewer stay excluded; the
+    // multi-team project comparison is a governance / cross-team view
+    // with no meaning for them.
+    const canTeamLoad = isSuperAdmin() || isLeader();
 
     const filtered = ALL_TABS.filter(t => {
       if (t.id === 'system-audit') return canAudit;
@@ -80,7 +86,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     if (pathname.includes('/kpi-matrix') && !canKpiMatrix) {
       router.replace('/dashboard/report');
     }
-    // Team Load — only Super Admin; everyone else gets bounced to Report.
+    // Team Load — Super Admin or Leader; Member/Viewer get bounced to
+    // Report. Workspace scope (for Leader) is enforced server-side.
     if (pathname.includes('/team-load') && !canTeamLoad) {
       router.replace('/dashboard/report');
     }
@@ -107,7 +114,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     calendar:       'Lịch làm việc cá nhân — chỉ hiện Task bạn Assigned hoặc Support',
     'system-audit': 'Dashboard kiểm toán hệ thống dành cho Super Admin & Leader (giới hạn theo Workspace được giao)',
     'kpi-matrix':   'Ma trận KPI thành viên theo tháng dành cho Super Admin & Leader',
-    'team-load':    'So sánh Project theo nhiều Team — chỉ dành cho Super Admin',
+    'team-load':    'So sánh Project theo nhiều Team — Super Admin & Leader (giới hạn theo Workspace được giao)',
   };
 
   const currentDateStr = new Date().toLocaleDateString('vi-VN', { month: 'numeric', year: 'numeric' });
