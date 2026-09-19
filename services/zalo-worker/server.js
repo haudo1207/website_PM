@@ -311,6 +311,11 @@ function attachListener(session, zaloApi) {
     // pulls in from before a fresh manual reconnect gets filtered out in
     // forwardMessage() (session.freshReconnectAtMs), not here.
     setTimeout(() => requestGroupBackfill(session), 2000);
+    // Also run the per-group catch-up (pollGroupHistory, see startPolling())
+    // right away instead of waiting up to POLL_INTERVAL_MS for its next
+    // tick — mirrors SMB_Deployment's triggerSync()-on-connect pattern, and
+    // is the one catch-up path immune to requestGroupBackfill's crowding.
+    setTimeout(() => pollGroupHistory(session).catch((err) => console.error(`[poll:${session.accountId}] on-connect catch-up failed:`, err.message)), 2000);
   });
 
   zaloApi.listener.on("old_messages", withTimeout(async (messages, threadType) => {
