@@ -473,6 +473,16 @@ export default function OverviewTab() {
   // Workspace/Leader Filter
   const [selectedLeader, setSelectedLeader] = useState<string>('all');
   const [projectFilterMode, setProjectFilterMode] = useState<'all' | 'owned' | 'external'>('all');
+  // "Dự án đang triển khai" card order — Tiến độ (default, unchanged) or
+  // KPI/Manday cao nhất/thấp nhất. Purely a display-order preference (the
+  // period-scoped numbers themselves are computed once in the big memo
+  // above regardless of how the cards get sorted here).
+  const [projectSortBy, setProjectSortBy] = useState<'progress' | 'kpi' | 'manday'>('progress');
+  const [projectSortDir, setProjectSortDir] = useState<'desc' | 'asc'>('desc');
+  const sortProjectCards = (list: any[]) => {
+    const dir = projectSortDir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => dir * ((a[projectSortBy] || 0) - (b[projectSortBy] || 0)));
+  };
   // Which of the selected Leader/Member's Workspaces the dashboard is
   // currently scoped to — null means their Chính (whole-person) view. Set
   // by clicking one of their "Phụ" pills (rendered alongside their main
@@ -693,6 +703,21 @@ export default function OverviewTab() {
   const currentUserRole = currentUser?.role || getRole() || '';
   const showsMemberCards = String(currentUserRole).toLowerCase() === 'leader';
   const showsLeaderCards = !showsMemberCards;
+
+  // Carries the currently-selected Tuần/Tháng/Năm period into project/detail
+  // (its Overview tab reads these same param names — see project/detail's
+  // overviewYear/Month/Week/QuickFilter init) so opening a project from a
+  // specific week here lands on that same week there, instead of resetting
+  // to "all" and showing different Task/Manday/KPI numbers than the card
+  // the user just clicked.
+  const projectOverviewUrl = (projectId: any) => {
+    const params = new URLSearchParams({ id: String(projectId) });
+    if (selectedYear !== 'all') params.set('year', String(selectedYear));
+    if (selectedMonth !== 'all') params.set('month', String(selectedMonth));
+    if (selectedWeek !== 'all') params.set('week', String(selectedWeek));
+    if (activeQuickFilter && activeQuickFilter !== 'all') params.set('quick', activeQuickFilter);
+    return `/project/detail/overview?${params.toString()}`;
+  };
 
   const applyQuickFilter = (type: string) => {
     setActiveQuickFilter(type);
@@ -2287,7 +2312,7 @@ export default function OverviewTab() {
               <p className="text-[10px] text-slate-400 mt-0.5 truncate">Phân biệt rõ dự án thuộc workspace chính và dự án ngoài workspace chỉ tham gia đóng góp</p>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 flex-wrap">
             <div className="flex items-center gap-1 p-1 bg-slate-100 border border-slate-200 rounded-xl">
               {([
                 ['all', 'Tất cả'],
@@ -2303,6 +2328,23 @@ export default function OverviewTab() {
                 </button>
               ))}
             </div>
+            <select
+              value={projectSortBy}
+              onChange={(e) => setProjectSortBy(e.target.value as any)}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 focus:outline-none focus:border-[#0058be]"
+              title="Sắp xếp theo"
+            >
+              <option value="progress">Sắp xếp: Tiến độ</option>
+              <option value="kpi">Sắp xếp: KPI</option>
+              <option value="manday">Sắp xếp: Manday</option>
+            </select>
+            <button
+              onClick={() => setProjectSortDir(d => d === 'desc' ? 'asc' : 'desc')}
+              className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-[11px] font-bold text-slate-600 hover:bg-slate-50 whitespace-nowrap"
+              title={projectSortDir === 'desc' ? 'Cao nhất trước' : 'Thấp nhất trước'}
+            >
+              {projectSortDir === 'desc' ? '↓ Cao nhất' : '↑ Thấp nhất'}
+            </button>
             <button
               onClick={handleAiCheck}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg shadow-sm text-[11px] font-bold transition-all cursor-pointer active:scale-95"
@@ -2426,7 +2468,7 @@ export default function OverviewTab() {
                     <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn hiện không phụ trách dự án nào trong kỳ này.</p>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {responsibleProjects.map((p: any) => renderCard(p, p.isOwned))}
+                      {sortProjectCards(responsibleProjects).map((p: any) => renderCard(p, p.isOwned))}
                     </div>
                   )}
                 </div>
@@ -2449,7 +2491,7 @@ export default function OverviewTab() {
                     <p className="text-xs text-slate-400 font-semibold py-6 text-center">Bạn không tham gia dự án ngoài workspace nào trong kỳ này.</p>
                   ) : !externalProjectsCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {externalProjects.map((p: any) => renderCard(p, false))}
+                      {sortProjectCards(externalProjects).map((p: any) => renderCard(p, false))}
                     </div>
                   )}
                 </div>
@@ -2468,7 +2510,7 @@ export default function OverviewTab() {
                     <p className="text-[10px] text-slate-400">Mọi dự án thuộc workspace chính — Leader có quyền xem mà không cần là thành viên dự án.</p>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                    {ownedProjects.map((p: any) => renderCard(p, true))}
+                    {sortProjectCards(ownedProjects).map((p: any) => renderCard(p, true))}
                   </div>
                 </div>
               )}
@@ -2486,7 +2528,7 @@ export default function OverviewTab() {
                   </div>
                   {!externalProjectsCollapsed && (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {externalProjects.map((p: any) => renderCard(p, false))}
+                      {sortProjectCards(externalProjects).map((p: any) => renderCard(p, false))}
                     </div>
                   )}
                 </div>
@@ -2743,7 +2785,7 @@ export default function OverviewTab() {
                         : 'Bạn đang được gán trực tiếp vào dự án này (không phải chỉ xem qua số liệu tổng hợp) nên vẫn mở được task/phần việc của mình bên trong.'}
                     </p>
                     <button
-                      onClick={() => { setContributionModalProject(null); router.push(`/project/detail/overview?id=${p.id}`); }}
+                      onClick={() => { setContributionModalProject(null); router.push(projectOverviewUrl(p.id)); }}
                       className="shrink-0 px-4 py-2 rounded-lg bg-[#0058be] hover:bg-[#004a9e] text-white text-xs font-bold"
                     >
                       Mở dự án →
@@ -2764,10 +2806,16 @@ export default function OverviewTab() {
       {selectedMemberModal && (
         <MemberDetailModal
           member={selectedMemberModal}
-          tasks={rawTasks}
-          projects={rawProjects}
+          // Unscoped by the Workspace switcher (same fix as the ranking
+          // table's myTasks) — rawTasks/rawProjects only cover the switcher's
+          // current Workspace, so a member's tasks in a DIFFERENT Workspace's
+          // project silently disappeared here, and any that DID show up
+          // couldn't resolve their own project (activeProjects/onNavigate
+          // both look it up in `projects`, which never contained it).
+          tasks={rawTasksAll}
+          projects={rawProjectsAll}
           onClose={() => setSelectedMemberModal(null)}
-          onNavigate={(projectId) => router.push(`/project/detail/overview?id=${projectId}`)}
+          onNavigate={(projectId) => router.push(projectOverviewUrl(projectId))}
           selectedYear={selectedYear}
           selectedMonth={selectedMonth}
           selectedWeek={selectedWeek}

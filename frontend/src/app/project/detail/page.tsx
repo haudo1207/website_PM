@@ -1652,11 +1652,25 @@ function ProjectDetailContent() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
 
-  // Overview Time Filter States
-  const [overviewYear, setOverviewYear] = useState<number | 'all'>('all');
-  const [overviewMonth, setOverviewMonth] = useState<number | 'all'>('all');
-  const [overviewWeek, setOverviewWeek] = useState<number | 'all'>('all');
-  const [overviewQuickFilter, setOverviewQuickFilter] = useState<string | null>('all');
+  // Overview Time Filter States — seeded from the URL's year/month/week/quick
+  // params (see the "?" link on Dashboard Overview's project cards/modal,
+  // which passes the SAME Tuần/Tháng/Năm it was just showing) so opening a
+  // project from a specific week there lands on that same week here instead
+  // of silently resetting to "all" and showing different numbers than the
+  // card the user just clicked.
+  const [overviewYear, setOverviewYear] = useState<number | 'all'>(() => {
+    const v = searchParams.get('year');
+    return v && v !== 'all' && !Number.isNaN(Number(v)) ? Number(v) : 'all';
+  });
+  const [overviewMonth, setOverviewMonth] = useState<number | 'all'>(() => {
+    const v = searchParams.get('month');
+    return v && v !== 'all' && !Number.isNaN(Number(v)) ? Number(v) : 'all';
+  });
+  const [overviewWeek, setOverviewWeek] = useState<number | 'all'>(() => {
+    const v = searchParams.get('week');
+    return v && v !== 'all' && !Number.isNaN(Number(v)) ? Number(v) : 'all';
+  });
+  const [overviewQuickFilter, setOverviewQuickFilter] = useState<string | null>(() => searchParams.get('quick') || 'all');
 
   // Overview sub-tab: "Tổng quan" (fast dashboard) vs "Chi tiết" (báo cáo sâu,
   // các block cũ dời qua nguyên vẹn). Local state, không route, không reset
