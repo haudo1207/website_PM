@@ -171,7 +171,15 @@ export default function MultiTeamProjectComparison() {
   const allProjects: any[] = allProjectsData || [];
 
   // ── Section 4 → Member Detail modal state ────────────────────────
-  const [selectedMemberModal, setSelectedMemberModal] = useState<TeamComparisonMember | null>(null);
+  // Type is `any` (matching the Overview implementation at
+  // `frontend/src/app/dashboard/overview/page.tsx:539`) so the same
+  // modal can be opened for BOTH a Member card AND a Leader card —
+  // the Leader shape is a small `{member_id, name, team, department,
+  // email}` projection from `TeamComparisonTeam` (Leader's personal
+  // data only). MemberDetailModal consumes only `member.id` (for the
+  // task filter) and `member.rawMember.team/department/leader_name`
+  // (for the header subtitle), so the Leader projection is sufficient.
+  const [selectedMemberModal, setSelectedMemberModal] = useState<any | null>(null);
   const closeMemberModal = useCallback(() => setSelectedMemberModal(null), []);
 
   // ── Multi-Leader selection state (relocated from System Audit) ─────────
@@ -229,6 +237,13 @@ export default function MultiTeamProjectComparison() {
     return m.kpi_pct ?? 0;
   };
 
+  // Leader's personal KPI% (own tasks only, NOT team aggregate). Mirrors
+  // `memberKpiPct` so the Leader card's progress bar uses the same data
+  // shape as the Member cards.
+  const leaderKpiPct = (t: TeamComparisonTeam): number => {
+    return t.leader_kpi_pct ?? 0;
+  };
+
   // Classify using workload_settings from backend, with hardcoded fallback
   const classifyKpiPct = (pct: number): 'overload' | 'normal' | 'capacity' | 'not_working' => {
     if (workloadSettings.length === 4) {
@@ -277,7 +292,7 @@ export default function MultiTeamProjectComparison() {
           the Super Admin sees the same vocabulary and shortcut chips). */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Load · Super Admin</h3>
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">Team Load · So sánh Project theo nhiều Team</h3>
           {teamComparisonLoading && <span className="text-[10px] text-blue-600 font-semibold animate-pulse">Đang cập nhật dữ liệu…</span>}
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -773,6 +788,9 @@ export default function MultiTeamProjectComparison() {
                 const capacityMembers = teamMembers.filter(m => memberStatus(m) === 'capacity').length;
                 const notWorkingMembers = teamMembers.filter(m => memberStatus(m) === 'not_working').length;
                 const sortedMembers = [...teamMembers].sort(memberSortComparator);
+                // Leader's personal KPI% (own tasks only) — drives the Leader
+                // card's personal progress bar (TASK 1). Mirrors `kpiPct` below.
+                const leaderPct = leaderKpiPct(t);
                 return (
                   <div key={t.leader_user_id} className="border border-slate-200 rounded-xl overflow-hidden bg-slate-50/30">
                     <div className="px-4 py-3 border-b border-slate-200 bg-blue-100">
@@ -806,7 +824,48 @@ export default function MultiTeamProjectComparison() {
                     </div>
 
                     <div className="p-3 space-y-2 max-h-[420px] overflow-y-auto custom-scrollbar">
-                      <div className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100">
+                      {/*
+                        Leader card — clickable (mirrors the Member card below).
+                        Opens the same `MemberDetailModal` used by Member cards,
+                        passing a Leader-shaped projection so the modal filters
+                        tasks by the Leader's `member_id` (PERSONAL data, NOT
+                        team aggregate). The Modal already contains the "Phân bổ
+                        theo Skill Area / Skill" section reused from Overview.
+                      */}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (!t.leader_member_id) return;
+                          // Leader → modal projection: same shape as a Member
+                          // card click (`member_id`, `name`, `team`,
+                          // `department`). The Modal invocation below reads
+                          // `selectedMemberModal.member_id` for the task filter
+                          // and `team/department` for the header subtitle —
+                          // both satisfied here.
+                          setSelectedMemberModal({
+                            member_id: t.leader_member_id,
+                            name: t.leader_name,
+                            team: t.team_name || undefined,
+                            department: undefined,
+                            position: undefined,
+                          });
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            if (!t.leader_member_id) return;
+                            setSelectedMemberModal({
+                              member_id: t.leader_member_id,
+                              name: t.leader_name,
+                              team: t.team_name || undefined,
+                              department: undefined,
+                              position: undefined,
+                            });
+                          }
+                        }}
+                        className="p-3 bg-white border border-blue-200 rounded-lg ring-1 ring-blue-100 cursor-pointer hover:border-[#0058be]/70 hover:shadow-md hover:bg-blue-50/40 transition-all focus:outline-none focus:ring-2 focus:ring-[#0058be]/40"
+                      >
                         <div className="flex items-center justify-between gap-2 flex-wrap">
                           <div className="min-w-0">
                             <p className="text-xs font-bold text-[#0b1c30] truncate" title={t.leader_name}>
@@ -846,6 +905,22 @@ export default function MultiTeamProjectComparison() {
                               <p className="text-white/40 mt-1 text-[9px]">⚠️ Khác với KPI TRUNG BÌNH: KPI% chỉ tính task Done có end_date_actual trong kỳ, KPI TRUNG BÌNH tính tổng KPI tất cả task trong kỳ.</p>
                             </>}
                           />
+                        </div>
+                        {/* KPI Average progress bar — Leader personal view. Mirrors the
+                            Member card's bar: reuses the existing `KpiAverageProgressBar`
+                            component and the Leader's existing `leader_kpi_pct` value
+                            (already computed server-side from Leader's OWN tasks only —
+                            `backend/app/routers/system_audit.py` `leader_kpi_pct` field).
+                            Pure UI: no KPI/workload formula change. Team aggregate KPI
+                            is NOT used here. */}
+                        <div className="mt-2.5 pt-2 border-t border-blue-100">
+                          <div className="flex items-center justify-between text-[9px] font-bold mb-1">
+                            <span className="text-slate-500 uppercase tracking-wider">KPI Average (Leader)</span>
+                            <span className={`tabular-nums ${leaderPct > 120 ? 'text-rose-600' : leaderPct >= 90 ? 'text-emerald-600' : 'text-[#0058be]'}`}>
+                              {leaderPct.toFixed(1)}%{leaderPct > 100 ? ` (+${leaderPct.toFixed(1)}%)` : ''}
+                            </span>
+                          </div>
+                          <KpiAverageProgressBar pct={leaderPct} />
                         </div>
                       </div>
 
@@ -1060,12 +1135,19 @@ export default function MultiTeamProjectComparison() {
         </div>
       )}
 
-      {/* SECTION 4 → Member Detail modal. Reuses the Overview Member
-          Detail drill-down so the same Task list, KPI Average, priority
-          pills and project cards open from a Section 4 member click. The
-          underlying TeamComparisonMember is reshaped into the modal's
-          expected `{id, name, rawMember}` payload — `rawMember.team` /
-          `rawMember.leader_name` drive the modal header subtitle. */}
+      {/* SECTION 4 → Member / Leader Detail modal. Reuses the Overview
+          Member Detail drill-down so the same Task list, KPI Average,
+          priority pills, Skill Area / Skill breakdown and project
+          cards open from a Section 4 Member OR Leader card click. The
+          underlying state object is reshaped into the modal's expected
+          `{id, name, rawMember}` payload — `rawMember.team` /
+          `rawMember.department` / `rawMember.leader_name` drive the
+          modal header subtitle. For a Leader click the projection is
+          a small `{member_id, name, team, department}` projection of
+          `TeamComparisonTeam` (Leader PERSONAL data only — no team
+          aggregate). MemberDetailModal filters tasks by `member.id`
+          (client-side), so passing the Leader's `member_id` yields the
+          Leader's personal task list. */}
       {selectedMemberModal && (
         <MemberDetailModal
           member={{
