@@ -195,31 +195,20 @@ function setStoredPosition(x, y) {
 
 function applyPositions() {
   const container = getOrCreateContainer();
-  const widget = document.getElementById("markee-widget");
   const { x, y } = getStoredPosition();
 
-  const isOpen = widget && widget.style && (widget.style.display === "flex" || widget.style.display === "block");
+  // The widget popup is now anchored to a fixed viewport corner
+  // (position:fixed; right/bottom — see injectWidget), completely
+  // independent of wherever this toggle button gets dragged to, so no
+  // extra "leave room for the widget" drag boundary is needed anymore
+  // regardless of open/closed state (a prior version constrained dragging
+  // near the top while open, which stopped mattering once the widget
+  // stopped being positioned relative to this container's transform).
 
   let minX = 0;
   let maxX = window.innerWidth - 38;
   let minY = 0;
   let maxY = window.innerHeight - 38;
-
-  if (isOpen) {
-    // Kept roughly in sync with the widget's own left/top offsets above
-    // (-445px / calc(-10px - min(800px, 100vh-24px))) — these are the
-    // drag-boundary minimums so the toggle button can't be dragged
-    // somewhere that leaves no room to open the widget at all. The actual
-    // "don't render off the top of a short screen" fix lives in the CSS
-    // top expression itself now (self-adjusts with the viewport), so this
-    // pair matters less than it used to, but keeping the numbers close
-    // avoids a confusing dead zone where dragging "succeeds" per this
-    // clamp yet still visually crowds the widget against the screen edge.
-    minX = 480;
-    minY = 810;
-    if (minX > maxX) minX = 0;
-    if (minY > maxY) minY = 0;
-  }
 
   const clampedX = Math.max(minX, Math.min(x, maxX));
   const clampedY = Math.max(minY, Math.min(y, maxY));
@@ -682,22 +671,21 @@ function injectWidget(toolName) {
   }
 
   Object.assign(widget.style, {
-    position: "absolute",
-    // Widget grew 280x560 -> 400x720 -> 440x800 (still felt small/cramped
-    // per follow-up feedback) to match the mockup's real proportions (its
-    // own screenshots render at ~420-440 wide x ~780-800 tall). left/top
-    // offset the widget above-and-left of the floating toggle button
-    // (roughly -(width+5) / -(height+10)).
-    // `top` used to be a flat "-810px" — correct on a tall screen, but on a
-    // shorter one (reported: fine on a 24" monitor, overflows off the top
-    // on a <15" laptop) the widget's actual rendered height already shrinks
-    // via the `height` clamp below, while this offset stayed a fixed 810px
-    // regardless — the anchor point and the box size drifted out of sync,
-    // so it kept overshooting upward past the (now shorter) box's own top.
-    // Deriving `top` from the SAME min(800px, 100vh-24px) expression keeps
-    // the two permanently in lockstep on every screen size.
-    left: "-445px",
-    top: "calc(-10px - min(800px, 100vh - 24px))",
+    // Was `position:absolute` with a negative left/top offset relative to
+    // the small draggable toggle button — that math only ever works if the
+    // toggle happens to sit near the BOTTOM of the screen. The toggle can
+    // be dragged anywhere (applyPositions() only bounds it within the
+    // viewport, it doesn't pin it to a corner), so subtracting an ~800px
+    // height from an arbitrary Y position can go negative regardless of how
+    // that offset is computed — confirmed: even the viewport-relative calc()
+    // fix still clipped the header off the top on a short/positioned
+    // screen, because the toggle's Y position itself wasn't guaranteed to
+    // leave room. Anchoring the OPEN widget to a fixed viewport corner
+    // instead — independent of wherever the toggle currently is — guarantees
+    // the whole box (header through footer) is always on-screen.
+    position: "fixed",
+    right: "24px",
+    bottom: "24px",
     margin: "0px",
     pointerEvents: "auto",
     // Dark/violet theme aligned with the Markee AI Workspace mockup palette
@@ -715,14 +703,14 @@ function injectWidget(toolName) {
     flexDirection: "column",
     gap: "8px",
     width: "440px",
-    // Capped relative to the viewport (not just a flat 800px) — on a
-    // smaller screen/browser window a fixed 800px pushed the widget past
-    // the top of the visible area entirely ("tràn màn hình" reported after
-    // the previous size bump). .body's own overflow-y:auto below absorbs
-    // whatever height this clamp takes away, so content still scrolls
-    // instead of getting cut off.
-    height: "min(800px, calc(100vh - 24px))",
-    maxWidth: "calc(100vw - 24px)",
+    // Capped relative to the viewport (not just a flat 800px) — matches the
+    // 24px top/bottom the fixed bottom:24px placement above already reserves,
+    // so the box can never exceed the space actually available between the
+    // bottom anchor and the top of the screen. .body's own overflow-y:auto
+    // below absorbs whatever height this clamp takes away, so content still
+    // scrolls instead of getting cut off.
+    height: "min(800px, calc(100vh - 48px))",
+    maxWidth: "calc(100vw - 48px)",
     boxSizing: "border-box",
     overflow: "hidden",
     touchAction: "none",
@@ -1550,8 +1538,16 @@ function injectWidget(toolName) {
     </div>
     <datalist id="markee-featureList"></datalist>
   `;
-  const container = getOrCreateContainer();
-  container.appendChild(widget);
+  // Appended directly to <body> — NOT into #markee-container, which has a
+  // CSS `transform` (used for its own drag-to-reposition). A `transform` on
+  // an ancestor becomes the containing block for position:fixed
+  // descendants, so a widget nested inside that container could never
+  // actually anchor to the real viewport corner no matter what right/bottom
+  // values it used — confirmed by a live report: even dragging the toggle
+  // to the very bottom of a 15" screen, the popup still clipped its own
+  // header off the top. The toggle button itself stays inside the
+  // draggable container; only this popup needs true viewport anchoring.
+  appendToBodySafe(widget);
 
   // KPI Prototype: dự án hiện tại là 1 lựa chọn thật, đổi được bất cứ lúc
   // nào — không còn bị khoá cứng theo lần tải extension nữa.
