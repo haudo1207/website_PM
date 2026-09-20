@@ -887,7 +887,19 @@ export default function MultiTeamProjectComparison() {
                           <SmallStat label="Done" value={t.leader_done ?? t.done} color="text-emerald-600" />
                           <SmallStat label="Doing" value={t.leader_doing ?? t.in_progress} color="text-blue-600" />
                           <SmallStat label="Trễ" value={t.leader_overdue ?? t.overdue} color={(t.leader_overdue ?? t.overdue) > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                          <SmallStat label="KPI" value={(t.leader_kpi ?? t.kpi).toFixed(1)} color="text-[#0058be]" />
+                          <SmallStat label="Total KPI" value={(t.leader_kpi ?? t.kpi).toFixed(1)} color="text-[#0058be]"
+                            tooltipContent={<>
+                              <p className="font-bold text-white/90 mb-1">Total KPI</p>
+                              <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                              <p className="text-white font-mono">Total KPI = Σ kpi_assigned + Σ kpi_support</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>kpi_assigned / kpi_support:</b> Đã được tính bởi <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> (và Cancel = 0). Các task chưa hoàn thành không có giá trị kpi_assigned/kpi_support, nên tổng này thực tế là KPI của task Done trong kỳ lọc.</li>
+                                <li><b>Phạm vi:</b> Chỉ các task của Leader này (không bao gồm task của toàn bộ team), lọc theo Workspace và kỳ đang chọn (Tuần/Tháng/Năm).</li>
+                              </ul>
+                              <p className="text-white/50 mt-1.5">Đây là cùng giá trị được dùng trong Section 4; không có phép tính thứ hai ở UI.</p>
+                            </>}
+                          />
                           <SmallStat label="Manday" value={`${(t.leader_manday_actual ?? t.actual_md).toFixed(1)}/${(t.leader_manday_est ?? t.plan_md).toFixed(1)}`} />
                           <SmallStat label="KPI%"
                             value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`}
@@ -959,7 +971,19 @@ export default function MultiTeamProjectComparison() {
                                 <SmallStat label="Done" value={m.done} color="text-emerald-600" />
                                 <SmallStat label="Doing" value={m.in_progress} color="text-blue-600" />
                                 <SmallStat label="Trễ" value={m.overdue} color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
-                                <SmallStat label="KPI" value={m.kpi.toFixed(1)} color="text-[#0058be]" />
+                                <SmallStat label="Total KPI" value={m.kpi.toFixed(1)} color="text-[#0058be]"
+                                  tooltipContent={<>
+                                    <p className="font-bold text-white/90 mb-1">Total KPI</p>
+                                    <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                                    <p className="text-white font-mono">Total KPI = Σ kpi_assigned + Σ kpi_support</p>
+                                    <p className="text-white/60 mt-1.5">Trong đó:</p>
+                                    <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                      <li><b>kpi_assigned / kpi_support:</b> Tính từ <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> (Cancel = 0). Task chưa hoàn thành không mang giá trị nên tổng này thực tế là KPI của task Done trong kỳ lọc.</li>
+                                      <li><b>Phạm vi:</b> Các task của Member này trong Workspace + kỳ lọc (Tuần/Tháng/Năm) hiện tại. Loại trừ Member đã nghỉ việc trong kỳ (xem <code>employment_status / off_effective_at</code>).</li>
+                                    </ul>
+                                    <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4; không có phép tính thứ hai ở UI.</p>
+                                  </>}
+                                />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
                                 <SmallStat label="KPI%"
                                   value={`${kpiPct.toFixed(1)}%`}
@@ -1049,7 +1073,19 @@ export default function MultiTeamProjectComparison() {
                       <SummaryStat label="On-time" value={detailTeam.on_time} color="text-emerald-600" />
                       <SummaryStat label="Plan MD" value={detailTeam.plan_md.toFixed(1)} />
                       <SummaryStat label="Actual MD" value={detailTeam.actual_md.toFixed(1)} />
-                      <SummaryStat label="KPI" value={detailTeam.kpi.toFixed(1)} color="text-[#0058be]" />
+                      <SummaryStat label="Total KPI" value={detailTeam.kpi.toFixed(1)} color="text-[#0058be]"
+                        tooltipContent={<>
+                          <p className="font-bold text-white/90 mb-1">Total KPI (Team)</p>
+                          <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                          <p className="text-white font-mono">Total KPI = Σ kpi_assigned + Σ kpi_support</p>
+                          <p className="text-white/60 mt-1.5">Trong đó:</p>
+                          <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                            <li><b>kpi_assigned / kpi_support:</b> Tính từ <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> của team trong kỳ lọc (Cancel = 0).</li>
+                            <li><b>Phạm vi:</b> Tất cả thành viên còn active trong kỳ của team (loại trừ Member đã nghỉ việc trong kỳ qua <code>employment_status / off_effective_at</code>).</li>
+                          </ul>
+                          <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4; không có phép tính thứ hai ở UI.</p>
+                        </>}
+                      />
                       <SummaryStat label="Efficiency" value={`${detailTeam.efficiency.toFixed(1)}%`} />
                       <SummaryStat label="Utilization" value={`${detailTeam.util.toFixed(1)}%`} />
                       <SummaryStat label="Health" value={healthLabel(detailTeam.health)} />
@@ -1179,10 +1215,17 @@ export default function MultiTeamProjectComparison() {
   );
 }
 
-function SummaryStat({ label, value, color }: { label: string; value: any; color?: string }) {
+function SummaryStat({ label, value, color, tooltipContent }: { label: string; value: any; color?: string; tooltipContent?: React.ReactNode }) {
   return (
     <div>
-      <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">{label}</span>
+      <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider flex items-center gap-0.5">
+        {label}
+        {tooltipContent && (
+          <FormulaTooltip align="left">
+            {tooltipContent}
+          </FormulaTooltip>
+        )}
+      </span>
       <span className={`text-base font-black ${color || 'text-slate-700'}`}>{value}</span>
     </div>
   );

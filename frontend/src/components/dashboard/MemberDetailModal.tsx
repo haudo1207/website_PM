@@ -96,6 +96,16 @@ export default function MemberDetailModal({
 
   // Recompute KPI from memberTasks (workspace-scoped + period-filtered)
   // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  // This is the SAME Total KPI calculation as Section 4 of Team Load
+  // (backend `system_audit.py:_aggregate_team_comparison`):
+  //   Total KPI = Σ kpi_assigned + Σ kpi_support over the member's tasks
+  //   inside the selected period. Tasks without kpi_assigned/kpi_support
+  //   (i.e. not Done) contribute 0, so the sum is effectively Done-only.
+  // We recompute here instead of pulling m.kpi from the Section 4 payload
+  // because the Modal is also opened from Dashboard → Overview (KPI Member
+  // Ranking), where the parent doesn't have a backend-side m.kpi to pass.
+  // Same `getTaskKpiForMember` helper is used everywhere to guarantee
+  // identical numbers between the two surfaces.
   const localKpi = useMemo(() => {
     let k = 0;
     for (const t of memberTasks) {
@@ -252,7 +262,20 @@ export default function MemberDetailModal({
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
               <span className="text-lg font-black text-[#0058be] leading-none">{localKpi.toFixed(1)}</span>
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                Total KPI
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">Total KPI</p>
+                  <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                  <p className="text-white font-mono">Total KPI = Σ kpi_assigned + Σ kpi_support</p>
+                  <p className="text-white/60 mt-1.5">Trong đó:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>kpi_assigned / kpi_support:</b> Tính từ <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> (Cancel = 0). Task chưa hoàn thành không mang giá trị, nên tổng này thực tế là KPI của task Done trong kỳ lọc.</li>
+                    <li><b>Phạm vi:</b> Task của Member trong Workspace + kỳ lọc (Tuần/Tháng/Năm) hiện tại.</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4 của Team Load; không có phép tính thứ hai ở UI.</p>
+                </FormulaTooltip>
+              </span>
             </div>
           </div>
 
