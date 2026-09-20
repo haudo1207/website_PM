@@ -267,6 +267,16 @@ export function checkTaskInPeriod(
     }
 
     if (range) {
+      // Task "touches" the period if its planned window overlaps it — this
+      // stays true regardless of Done status, because this broad check is
+      // also what powers Giao (task/KPI ASSIGNED for a period, which by
+      // definition must NOT depend on if/when the task was completed —
+      // see `getTaskKpiPotentialForMember` / `kpiPotential.ts`). A Done
+      // task's HT (completed KPI) contribution is period-gated separately,
+      // by `isTaskDoneInPeriod` below, at the point HT actually gets
+      // summed — NOT here, since gating a Done task's presence in the
+      // candidate list itself also silently drops it out of the SAME
+      // period's Giao total.
       const inRange = (taskDate >= range.monday && taskDate <= range.sunday) ||
         Boolean(tStart && tEnd && tStart <= range.sunday && tEnd >= range.monday);
       return Boolean(inRange);
@@ -279,6 +289,62 @@ export function checkTaskInPeriod(
   }
 
   // 3. Month Filter (KPI cycle or standard month)
+  if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+    const cycle = CYCLE_TEMPLATE[selectedMonth];
+    if (cycle) {
+      const yr = typeof selectedYear === 'number' ? selectedYear : taskDate.getFullYear();
+      const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+      const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+      if (taskDate < startDt || taskDate > endDt) return false;
+    } else {
+      if ((taskDate.getMonth() + 1) !== selectedMonth) return false;
+    }
+  }
+
+  return true;
+}
+
+// Strict HT-only companion to `checkTaskInPeriod`. Returns true only for a
+// DONE task whose end_date_actual falls EXACTLY inside the selected
+// period — used to gate the HT (completed KPI) sum specifically, so a
+// task's completed KPI counts ONCE, into the single period it actually
+// finished in (never both the period it was started/due AND the period
+// it finished). `checkTaskInPeriod` itself stays lenient (planned-window
+// overlap) for ALL tasks because that broader check also selects the
+// candidate set for Giao (assigned KPI/Manday), which must NOT depend on
+// completion status or date — see the comment on its week-filter branch.
+export function isTaskDoneInPeriod(
+  task: any,
+  selectedYear: number | 'all',
+  selectedMonth: number | 'all',
+  selectedWeek: number | 'all',
+  activeQuickFilter: string | null = null
+): boolean {
+  if (!task) return false;
+  const isDone = task.status === 'Done' || task.status === 'done';
+  if (!isDone || !task.end_date_actual) return false;
+
+  const taskDate = parseDateString(task.end_date_actual);
+  if (!taskDate) return false;
+
+  if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) {
+    let range: { monday: Date; sunday: Date } | null = null;
+    if (activeQuickFilter === 'Tuần này') {
+      range = getMondayToSundayRange(new Date());
+    } else if (activeQuickFilter === 'Tuần trước') {
+      range = getPrevWeekRange(new Date());
+    } else if (activeQuickFilter === 'Tuần tới') {
+      range = getNextWeekRange(new Date());
+    } else if (typeof selectedWeek === 'number') {
+      range = getWeekDateRange(selectedWeek, selectedMonth, selectedYear);
+    }
+    if (range) return taskDate >= range.monday && taskDate <= range.sunday;
+  }
+
+  if (selectedYear !== 'all' && typeof selectedYear === 'number' && taskDate.getFullYear() !== selectedYear) {
+    return false;
+  }
+
   if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
     const cycle = CYCLE_TEMPLATE[selectedMonth];
     if (cycle) {

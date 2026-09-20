@@ -13,8 +13,10 @@ import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import {
   MONTH_WEEKS_COUNT,
   checkTaskInPeriod,
+  isTaskDoneInPeriod,
   calculateDaysLate,
 } from '@/app/dashboard/constants';
+import { getKpiGiaoForMember } from '@/lib/kpiPotential';
 
 const getTaskKpiForMember = (t: any, memberId: any) => {
   const isDone = t.status === 'Done' || t.status === 'done';
@@ -94,24 +96,46 @@ export default function MemberDetailModal({
   const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
   const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
-  // Recompute KPI from memberTasks (workspace-scoped + period-filtered)
-  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  // Recompute KPI from the member's own tasks (workspace-scoped) to avoid
+  // data-scope mismatch when parent uses rawTasksAll for drilled-in members.
   // This is the SAME Total KPI calculation as Section 4 of Team Load
-  // (backend `system_audit.py:_aggregate_team_comparison`):
-  //   Total KPI = Σ kpi_assigned + Σ kpi_support over the member's tasks
-  //   inside the selected period. Tasks without kpi_assigned/kpi_support
-  //   (i.e. not Done) contribute 0, so the sum is effectively Done-only.
-  // We recompute here instead of pulling m.kpi from the Section 4 payload
-  // because the Modal is also opened from Dashboard → Overview (KPI Member
-  // Ranking), where the parent doesn't have a backend-side m.kpi to pass.
-  // Same `getTaskKpiForMember` helper is used everywhere to guarantee
-  // identical numbers between the two surfaces.
+  // (backend `system_audit.py:_aggregate_team_comparison`'s
+  // `per_member_period_kpi`): Σ kpi_assigned + Σ kpi_support over the
+  // member's tasks whose end_date_actual falls INSIDE the selected period.
+  //
+  // Deliberately uses `isTaskDoneInPeriod` here instead of `memberTasks`
+  // (which is filtered by the lenient `checkTaskInPeriod` — a task whose
+  // planned window merely overlaps the period, kept lenient on purpose so
+  // Giao/task-count figures don't depend on completion status/date). A
+  // Done task can appear in `memberTasks` via that overlap even though it
+  // was actually finished in a DIFFERENT period; summing HT over
+  // `memberTasks` directly would double it into every such period instead
+  // of the one it actually finished in. `isTaskDoneInPeriod` re-checks
+  // end_date_actual strictly against the period, matching the backend
+  // exactly, so this number can't drift from Team Load's Total KPI again.
   const localKpi = useMemo(() => {
     let k = 0;
-    for (const t of memberTasks) {
-      k += getTaskKpiForMember(t, member.id);
+    for (const t of memberAllTasks) {
+      if (isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)) {
+        k += getTaskKpiForMember(t, member.id);
+      }
     }
     return Math.round(k * 10) / 10;
+  }, [memberAllTasks, member.id, selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
+
+  // KPI Giao — assigned KPI regardless of completion status (same
+  // status-agnostic priority_kpi_base × manday_est formula as the
+  // ranking table's "Giao" column, `@/lib/kpiPotential`). Summed over
+  // `memberTasks` (the LENIENT, planned-window candidate set) on purpose:
+  // unlike HT above, Giao must reflect everything assigned/due this
+  // period even if it's still open, so a Leader can see how much is
+  // actually on this person's plate — not just what's already finished.
+  const localKpiGiao = useMemo(() => {
+    let g = 0;
+    for (const t of memberTasks) {
+      g += getKpiGiaoForMember(t, member.id);
+    }
+    return Math.round(g * 10) / 10;
   }, [memberTasks, member.id]);
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
@@ -149,6 +173,21 @@ export default function MemberDetailModal({
     const divisor = filterDuration > 0 ? filterDuration : 1;
     return `${(kpi / divisor).toFixed(1)}%`;
   }, [localKpi, filterDuration]);
+
+  // GIAO TRUNG BÌNH = KPI GIAO / THỜI GIAN BỘ LỌC — same divisor as KPI
+  // TRUNG BÌNH above, but based on Giao (assigned, status-agnostic)
+  // instead of HT (completed-only). This is the figure that should drive
+  // "quá tải" (overload) judgment: KPI TRUNG BÌNH stays at 0% until
+  // something is actually marked Done, so a person already holding 3
+  // tasks worth well over 100%'s worth of assigned work would still look
+  // "not overloaded" by that metric alone. Mirrors the same >120%/>=90%
+  // thresholds Team Load's Leader card already uses for `leader_giao_pct`.
+  const giaoPct = useMemo(() => {
+    const divisor = filterDuration > 0 ? filterDuration : 1;
+    return localKpiGiao / divisor;
+  }, [localKpiGiao, filterDuration]);
+  const giaoTrungBinhText = `${giaoPct.toFixed(1)}%`;
+  const giaoOverloadColor = giaoPct > 120 ? 'text-rose-600' : giaoPct >= 90 ? 'text-emerald-600' : 'text-[#0058be]';
 
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
@@ -274,6 +313,39 @@ export default function MemberDetailModal({
                     <li><b>Phạm vi:</b> Task của Member trong Workspace + kỳ lọc (Tuần/Tháng/Năm) hiện tại.</li>
                   </ul>
                   <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4 của Team Load; không có phép tính thứ hai ở UI.</p>
+                </FormulaTooltip>
+              </span>
+            </div>
+          </div>
+
+          {/* 1a. KPI GIAO (assigned, status-agnostic) — separate from HT
+              above on purpose. Powers workload/overload judgment: unlike
+              KPI TRUNG BÌNH (0% until something is Done), Giao reflects
+              everything currently assigned regardless of status, so it
+              can flag a person as loaded/overloaded even before they've
+              finished anything this period. */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className={`text-lg font-black leading-none ${giaoOverloadColor}`}>{giaoTrungBinhText}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                GIAO TRUNG BÌNH
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">Giao trung bình</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">GIAO TRUNG BÌNH = KPI GIAO ÷ THỜI GIAN BỘ LỌC</p>
+                  <p className="text-white/60 mt-1.5">Khác với KPI TRUNG BÌNH (chỉ tính task Done), chỉ số này tính TOÀN BỘ task được giao — kể cả đang làm/chưa Done — nên phản ánh đúng khối lượng đang ôm, dùng để đánh giá quá tải. Ngưỡng: <b className="text-rose-300">&gt;120% = quá tải</b>, <b className="text-emerald-300">&ge;90% = tốt</b>.</p>
+                </FormulaTooltip>
+              </span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0058be] leading-none">{localKpiGiao.toFixed(1)}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                KPI Giao
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">KPI Giao</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">KPI Giao = Σ (priority_kpi_base × manday_est)</p>
+                  <p className="text-white/60 mt-1.5">Tính cho MỌI task được giao trong kỳ, bất kể trạng thái (Done/Doing/chưa làm) — không giống Total KPI (chỉ tính task Done).</p>
                 </FormulaTooltip>
               </span>
             </div>
