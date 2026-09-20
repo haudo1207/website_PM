@@ -435,11 +435,131 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : data.items || [];
-        sendResponse({ projects: list.map((p) => ({ id: p.id, name: p.name })) });
+        let projects = list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          customer_id: p.customer_id ?? null,
+          customer_name: p.customer_name ?? null,
+        }));
+        // customer_id, when provided, narrows to that Customer — filtered
+        // HERE (not via /api/projects?customer_id=) because only 1 project
+        // in a real check of this DB actually had the relational
+        // customer_id FK populated; customer_name (free text, ~6x more
+        // populated) is the field real data actually carries, and that's
+        // exactly the identity GET_CUSTOMERS below hands back as "id".
+        if (message.customer_id) {
+          const wanted = String(message.customer_id);
+          projects = projects.filter((p) => String(p.customer_name || "") === wanted);
+        }
+        sendResponse({ projects });
       })
       .catch((err) => {
         console.log("🔴 [ERROR] GET_PROJECTS:", err.message);
         sendResponse({ projects: [] });
+      });
+    return true;
+  }
+
+  if (message.action === "GET_PROJECTS_BY_CUSTOMER") {
+    // Same real handler as GET_PROJECTS above, keyed by the request shape
+    // the customer->project cascade UI actually sends (customerId, not
+    // customer_id) — was entirely unhandled before this fix (every
+    // "Khách hàng" -> "Dự án" cascade in the widget silently returned
+    // nothing once a customer was picked).
+    apiFetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data.items || [];
+        let projects = list.map((p) => ({
+          id: p.id,
+          name: p.name,
+          customer_id: p.customer_id ?? null,
+          customer_name: p.customer_name ?? null,
+        }));
+        if (message.customerId) {
+          const wanted = String(message.customerId);
+          projects = projects.filter((p) => String(p.customer_name || "") === wanted);
+        }
+        sendResponse({ projects });
+      })
+      .catch((err) => {
+        console.log("🔴 [ERROR] GET_PROJECTS_BY_CUSTOMER:", err.message);
+        sendResponse({ projects: [] });
+      });
+    return true;
+  }
+
+  if (message.action === "GET_FAVORITE_PROJECTS") {
+    // "⭐ Ưu thích" project list — no backend concept of a favorited project
+    // exists in pm-new, and this action had no handler at all before this
+    // fix (the widget's project quick-picker DEFAULTS to this filter tab,
+    // so with an empty/undefined response it looked like the widget
+    // couldn't see ANY real projects, even though "📁 Tất cả" worked fine).
+    // Real per-browser favorite list, stored locally, same mechanism the
+    // "🕒 Gần đây" tab already uses for markee_recent_project_ids.
+    chrome.storage.local.get(["markee_favorite_project_ids"], (stored) => {
+      const favIds = new Set((stored.markee_favorite_project_ids || []).map(Number));
+      if (favIds.size === 0) {
+        sendResponse({ projects: [] });
+        return;
+      }
+      apiFetch("/api/projects")
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.items || [];
+          sendResponse({
+            projects: list
+              .filter((p) => favIds.has(Number(p.id)))
+              .map((p) => ({ id: p.id, name: p.name, customer_id: p.customer_id ?? null, customer_name: p.customer_name ?? null })),
+          });
+        })
+        .catch((err) => {
+          console.log("🔴 [ERROR] GET_FAVORITE_PROJECTS:", err.message);
+          sendResponse({ projects: [] });
+        });
+    });
+    return true;
+  }
+
+  if (message.action === "TOGGLE_FAVORITE_PROJECT") {
+    chrome.storage.local.get(["markee_favorite_project_ids"], (stored) => {
+      const ids = new Set((stored.markee_favorite_project_ids || []).map(Number));
+      const id = Number(message.projectId);
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
+      chrome.storage.local.set({ markee_favorite_project_ids: Array.from(ids) }, () => {
+        sendResponse({ success: true, isFavorite: ids.has(id) });
+      });
+    });
+    return true;
+  }
+
+  if (message.action === "GET_CUSTOMERS") {
+    // Was previously not wired up at all (no handler existed for this
+    // action), so every "Khách hàng" dropdown fed by it could never
+    // populate. Deliberately NOT the relational Customer entity
+    // (/api/system-categories/customers, backend/app/models/system_category.py)
+    // — a real check of this DB found only 1 of 11 projects actually has
+    // that FK (Project.customer_id) populated, so filtering by it would
+    // leave almost every real Customer's "Dự án" step empty. Project's own
+    // free-text customer_name is ~6x more populated and is what the rest of
+    // pm-new's UI already treats as the real "customer" a project belongs
+    // to — deriving the list from that (distinct values already on real
+    // projects) guarantees every Customer shown here actually has ≥1
+    // project behind it. The name doubles as its own "id" (GET_PROJECTS'
+    // customer_id filter above matches on this same string).
+    apiFetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : data.items || [];
+        const names = Array.from(
+          new Set(list.map((p) => (p.customer_name || "").trim()).filter(Boolean))
+        ).sort((a, b) => a.localeCompare(b));
+        sendResponse({ customers: names.map((n) => ({ id: n, name: n })) });
+      })
+      .catch((err) => {
+        console.log("🔴 [ERROR] GET_CUSTOMERS:", err.message);
+        sendResponse({ customers: [] });
       });
     return true;
   }

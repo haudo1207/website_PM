@@ -669,14 +669,14 @@ function injectWidget(toolName) {
 
   Object.assign(widget.style, {
     position: "absolute",
-    // Widget grew from 280x560 to 400x720 to match the mockup's real
-    // proportions (its own screenshots render at ~420x780) — was cramped
-    // and, per user feedback, looked broken/too small. left/top are the
-    // offset that places the widget above-and-left of the floating toggle
-    // button (roughly -(width+5) / -(height+10)); kept in the same
-    // relationship, just scaled to the new size.
-    left: "-405px",
-    top: "-730px",
+    // Widget grew 280x560 -> 400x720 -> 440x800 (still felt small/cramped
+    // per follow-up feedback) to match the mockup's real proportions (its
+    // own screenshots render at ~420-440 wide x ~780-800 tall). left/top
+    // offset the widget above-and-left of the floating toggle button
+    // (roughly -(width+5) / -(height+10)); kept in the same relationship,
+    // just scaled to the new size.
+    left: "-445px",
+    top: "-810px",
     margin: "0px",
     pointerEvents: "auto",
     // Dark/violet theme aligned with the Markee AI Workspace mockup palette
@@ -693,8 +693,8 @@ function injectWidget(toolName) {
     display: "none",
     flexDirection: "column",
     gap: "8px",
-    width: "400px",
-    height: "720px",
+    width: "440px",
+    height: "800px",
     boxSizing: "border-box",
     overflow: "hidden",
     touchAction: "none",
@@ -960,8 +960,8 @@ function injectWidget(toolName) {
                 <div class="count" id="markee-projectCount">0 dự án</div>
               </div>
               <div class="project-control-row">
-                <button class="filter fav active" data-filter="favorite" type="button">⭐ Ưu thích</button>
-                <button class="filter all" data-filter="all" type="button">📁 Tất cả</button>
+                <button class="filter fav" data-filter="favorite" type="button">⭐ Ưu thích</button>
+                <button class="filter all active" data-filter="all" type="button">📁 Tất cả</button>
                 <button class="filter recent" data-filter="recent" type="button">🕒 Gần đây</button>
 
                 <div class="search-wrap">
@@ -1838,7 +1838,10 @@ function injectWidget(toolName) {
   //    markup. Selecting a project drives the exact same summary-card
   //    cascade above (via the legacy customer/project selects), so opening
   //    the summary's expanded detail always reflects the last pick here. --
-  let skinProjectFilter = "favorite";
+  // Defaults to "all" — "favorite" starts empty for every user (no favorites
+  // saved yet), and defaulting to it made the widget look like it couldn't
+  // see any real projects at all on first load.
+  let skinProjectFilter = "all";
   let skinProjectFilterInitDone = false;
   function refreshSkinProjectList() {
     const listEl = document.getElementById("markee-projectList");
