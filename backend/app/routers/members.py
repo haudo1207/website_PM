@@ -1209,7 +1209,18 @@ def sync_from_recruitment(
                 # Update employment status
                 old_status = member.employment_status
                 member.employment_status = employment_status
-                
+
+                # Stamp the OFF effective date so the Dashboard period
+                # filters can answer "was this Member active during the
+                # selected period?" without reconstructing from current
+                # status. Idempotent: only set when transitioning ON→OFF
+                # (not on every OFF sync). OFF→ON rehires clear the stamp
+                # so the Member becomes active in every period again.
+                if employment_status == "OFF" and old_status != "OFF":
+                    member.off_effective_at = datetime.datetime.utcnow()
+                elif employment_status == "ON" and old_status == "OFF":
+                    member.off_effective_at = None
+
                 # Handle account locking/unlocking based on status change
                 if member.user:
                     if employment_status == "OFF" and member.user.is_active:
@@ -1236,6 +1247,11 @@ def sync_from_recruitment(
                     leader_email=leader_email,
                     is_recruitment_synced=True,
                     employment_status=employment_status,
+                    # First-time sync of an OFF application (no prior Member
+                    # row): stamp OFF effective date as the sync moment.
+                    # ON members stay NULL so the time-aware filter treats
+                    # them as always-active.
+                    off_effective_at=datetime.datetime.utcnow() if employment_status == "OFF" else None,
                 )
                 db.add(member)
                 

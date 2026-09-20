@@ -116,6 +116,80 @@ const getTaskKpiForMember = (t: any, memberId: any) => {
   return 0;
 };
 
+// Period-aware Member OFF filter — mirrors the backend
+// `_member_active_in_window` rule so a Member turned OFF by the
+// Recruitment/CV sync disappears from the dataset used for the selected
+// period without retroactively invalidating historical periods:
+//   - ON   → always active
+//   - OFF + off_effective_at NULL → treated as active (legacy rows — never
+//     guess; preserve prior behaviour so KPI history isn't destroyed)
+//   - OFF + off_effective_at set → active iff off_effective_at > periodEnd
+//     (i.e. the OFF cut-off is AFTER the period's end). Mirrors the
+//     backend `_member_active_in_window` exactly.
+const isMemberActiveInPeriod = (m: any, periodEnd: Date | null): boolean => {
+  if (!m) return false;
+  const status = String(m.employment_status || 'ON').toUpperCase();
+  if (status !== 'OFF') return true;
+  const cutoff = m.off_effective_at ? new Date(m.off_effective_at) : null;
+  if (!cutoff || isNaN(cutoff.getTime())) return true;
+  if (!periodEnd || isNaN(periodEnd.getTime())) return true;
+  return cutoff.getTime() > periodEnd.getTime();
+};
+
+// Helper to resolve the period-end for the currently-selected Dashboard
+// filters (year / month / week / quick filter). Reuses the same helpers
+// used by the Frontend period system (`getMondayToSundayRange`,
+// `getPrevWeekRange`, `getNextWeekRange`, `CYCLE_TEMPLATE`) so Section A
+// stays consistent with the rest of the Dashboard.
+const resolveOverviewPeriodEnd = (params: {
+  selectedYear: number | 'all';
+  selectedMonth: number | 'all';
+  selectedWeek: number | 'all';
+  activeQuickFilter: string | null;
+}): Date => {
+  const { activeQuickFilter, selectedMonth, selectedYear } = params;
+  if (activeQuickFilter === 'Tuần trước') {
+    // End of previous week = this week's Monday at 00:00:00 minus 1ms.
+    const thisWeekMonday = getMondayToSundayRange(new Date()).monday;
+    return new Date(thisWeekMonday.getTime() - 1);
+  }
+  if (activeQuickFilter === 'Tuần này') return getMondayToSundayRange(new Date()).sunday;
+  if (activeQuickFilter === 'Tuần tới') {
+    // Next week's Sunday = this week's Sunday + 7 days.
+    const thisSunday = getMondayToSundayRange(new Date()).sunday;
+    return new Date(thisSunday.getTime() + 7 * 24 * 60 * 60 * 1000);
+  }
+  if (activeQuickFilter === 'Tháng trước' || activeQuickFilter === 'Tháng này' || activeQuickFilter === 'Tháng tới') {
+    // Map "Tháng X" to the corresponding CYCLE_TEMPLATE month so the
+    // filter matches `checkTaskInPeriod`'s month-end boundary exactly.
+    const now = new Date();
+    const monthMap: Record<string, number> = {
+      'Tháng trước': now.getMonth() === 0 ? 12 : now.getMonth(), // JS 0-based → CYCLE 1-based
+      'Tháng này': now.getMonth() + 1,
+      'Tháng tới': now.getMonth() === 11 ? 1 : now.getMonth() + 2,
+    };
+    const cm = monthMap[activeQuickFilter];
+    const yr = typeof selectedYear === 'number' ? selectedYear : now.getFullYear();
+    const cycle = CYCLE_TEMPLATE[cm];
+    if (cycle) return new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+  }
+  // For month/quarter/week selectors derive the period end from CYCLE_TEMPLATE
+  // (mirrors `checkTaskInPeriod`'s logic) so Dashboard A/B/C stay in sync.
+  if (typeof selectedMonth === 'number') {
+    const cycle = CYCLE_TEMPLATE[selectedMonth];
+    if (cycle) {
+      const yr = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+      return new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+    }
+    const y = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+    return new Date(y, selectedMonth, 0, 23, 59, 59, 999);
+  }
+  if (typeof selectedYear === 'number') {
+    return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
+  }
+  return new Date();
+};
+
 // Same role-split as getTaskKpiForMember, but ignores the "Done" gate — the
 // KPI a task is WORTH for a member regardless of completion, i.e. their
 // "Giao" (target) side of the KPI HT/Giao ratio in the ranking table.
@@ -966,6 +1040,18 @@ export default function OverviewTab() {
       const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
       return selLeader?.member_id != null ? Number(selLeader.member_id) : null;
     })();
+
+    // Period-aware OFF filter for Section A (KPI Member Ranking) and the
+    // member-cards bar above it. Computed once per render and reused for
+    // both the member-card list and the KPI ranking roster so the two stay
+    // in sync (counted members always match the visible cards).
+    const periodEndForActiveFilter = resolveOverviewPeriodEnd({
+      selectedYear,
+      selectedMonth,
+      selectedWeek,
+      activeQuickFilter,
+    });
+
     const memberCardSource = (() => {
       if (!showsMemberCards || !leaderDisplayName) return [];
       const selTrim = leaderDisplayName.trim().toLowerCase();
@@ -974,6 +1060,8 @@ export default function OverviewTab() {
       if (selMid) {
         return rawMembers.filter((m: any) => {
           if (String(m.id) === selMid) return false; // the Leader themself is never their own "member" card
+          // Period-aware OFF filter (see isMemberActiveInPeriod above).
+          if (!isMemberActiveInPeriod(m, periodEndForActiveFilter)) return false;
           const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
           if (lmId) return lmId === selMid;
           const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
@@ -984,7 +1072,8 @@ export default function OverviewTab() {
           return false;
         });
       }
-      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim);
+      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim
+        && isMemberActiveInPeriod(m, periodEndForActiveFilter));
     })();
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
@@ -1169,7 +1258,16 @@ export default function OverviewTab() {
     // deliberate exception: it already narrows fTasks down to just the
     // external-Workspace subset on purpose, so it keeps using that.
     const myTasksBroadSource = rawTasksAll.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
-    const initialRanking = activeTeamList.map(m => {
+
+    // Apply the period-aware OFF filter to the ranking roster (Section A).
+    // Filtering here keeps `activeTeamList` itself untouched so other
+    // consumers (project rollups, leader cards) continue to behave as
+    // before; only the KPI Member Ranking rosters — which represent the
+    // "team members active in this period" set — get the cut.
+    const activeRankingMembers = activeTeamList.filter((m: any) =>
+      isMemberActiveInPeriod(m, periodEndForActiveFilter)
+    );
+    const initialRanking = activeRankingMembers.map(m => {
       const myTasks = (selectedWorkspaceScope === 'external' ? fTasks : myTasksBroadSource).filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
       // Per-Workspace Manday allocation — powers the split-allocation bar in

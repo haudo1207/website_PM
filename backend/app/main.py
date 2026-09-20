@@ -872,6 +872,16 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS employment_status VARCHAR(20) DEFAULT 'ON'"
         ))
+        # Capture the moment a Recruitment/CV sync flips a Member to OFF so
+        # Dashboard period filters can answer "was this member active during
+        # the selected period?" without using current status to reconstruct
+        # historical periods. NULL = unknown cutoff (legacy rows before this
+        # column landed) — system_audit treats those as active for all
+        # historical periods to preserve existing KPI history; new OFF
+        # transitions from Recruitment sync stamp this column at sync time.
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS off_effective_at TIMESTAMP NULL"
+        ))
 
 def init_db_defaults():
     from .database import SessionLocal

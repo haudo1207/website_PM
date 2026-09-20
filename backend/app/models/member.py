@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Table, Boolean
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Table, Boolean, DateTime
 from sqlalchemy.orm import relationship
 from ..database import Base
 import datetime
@@ -43,6 +43,14 @@ class Member(Base):
     # where existing manual Members are misclassified.
     is_recruitment_synced = Column(Boolean, nullable=False, default=False, server_default="false")
     employment_status = Column(String(20), nullable=True, server_default="ON")
+    # Captured at the exact moment the Recruitment/CV sync turned this Member
+    # OFF. Powers time-aware Dashboard period filters so an OFF member who
+    # worked through (say) Week N is still counted for Week N, but not for
+    # subsequent periods. Legacy rows (OFF members synced before this column
+    # landed) keep off_effective_at=NULL — the system-audit helper treats
+    # those as "active for all historical periods" to avoid destroying
+    # existing KPI history.
+    off_effective_at = Column(DateTime, nullable=True)
     leader_name     = Column(String(100), nullable=True)
     leader_email    = Column(String(255), nullable=True)
     leader_member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True)
