@@ -756,19 +756,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "GET_PROJECT_SHARE_LINK") {
+    // "Mở Link" after saving must land the (already logged-in) user straight
+    // on THIS project's Prototype tab in the real app — not the public
+    // /share/project/{token} page (that's for people without an account;
+    // confirmed wrong for this flow via direct user feedback). Uses the
+    // real next.config.js rewrite (/project/detail/:tab -> /project/detail
+    // ?tab=:tab), same URL shape project/detail/page.tsx's own tab links
+    // produce. Also passes projectId explicitly (message.projectId, set by
+    // the SET_SELECTED_PROJECT fix) instead of re-reading
+    // getSelectedProject() — the two could disagree mid-flow otherwise.
     (async () => {
       try {
         const current = await getSelectedProject();
-        if (!current.id) throw new Error("Chưa chọn dự án");
-        const res = await apiFetch(`/api/projects/${current.id}/share-link`, { method: "POST" });
-        if (!res.ok) throw new Error(`share-link failed (${res.status})`);
-        const data = await res.json();
-        let shareUrl = data.share_url;
-        const queryParts = [];
+        const projectId = message.projectId || current.id;
+        if (!projectId) throw new Error("Chưa chọn dự án");
+        let shareUrl = `${API_BASE}/project/detail/prototype?id=${encodeURIComponent(projectId)}`;
         if (message.featureName && String(message.featureName).trim()) {
-          queryParts.push("feature=" + encodeURIComponent(String(message.featureName).trim()));
+          shareUrl += "&feature=" + encodeURIComponent(String(message.featureName).trim());
         }
-        if (queryParts.length > 0) shareUrl += "?" + queryParts.join("&");
         sendResponse({ success: true, shareUrl });
       } catch (err) {
         console.log("🔴 [ERROR] share-link:", err.message);

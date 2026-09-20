@@ -694,7 +694,14 @@ function injectWidget(toolName) {
     flexDirection: "column",
     gap: "8px",
     width: "440px",
-    height: "800px",
+    // Capped relative to the viewport (not just a flat 800px) — on a
+    // smaller screen/browser window a fixed 800px pushed the widget past
+    // the top of the visible area entirely ("tràn màn hình" reported after
+    // the previous size bump). .body's own overflow-y:auto below absorbs
+    // whatever height this clamp takes away, so content still scrolls
+    // instead of getting cut off.
+    height: "min(800px, calc(100vh - 24px))",
+    maxWidth: "calc(100vw - 24px)",
     boxSizing: "border-box",
     overflow: "hidden",
     touchAction: "none",
