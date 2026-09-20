@@ -9,6 +9,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import PieChartCard from '@/components/dashboard/PieChartCard';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
+import { getKpiGiaoForMember } from '@/lib/kpiPotential';
 import {
   priorityDot,
   statusStyle,
@@ -191,46 +192,42 @@ export default function ReportTab() {
     return (t.manday_actual || t.manday_est || 0);
   }, []);
 
+  // Returns the status-agnostic KPI Giao share for the current user on `t`.
+  // Replaces the previous Done-only implementation so in-progress / overdue /
+  // waiting tasks are included on the "KPI được giao" side of the report.
+  //
+  // Display-name fallback is preserved for legacy rows that arrive without
+  // `assigned_id` / `support_id` set (the task serializer falls back to
+  // matching by name in those cases). The HT side is unaffected — see
+  // `getMyTaskKpi` below which still gates on Done.
   const getTaskKpiWeighted = useCallback((t: any) => {
     const memberId = realMemberData?.id;
+    if (memberId == null) return 0;
+
+    const matchesById =
+      (t.assigned_id != null && String(t.assigned_id) === String(memberId)) ||
+      (t.support_id != null && String(t.support_id) === String(memberId));
+    if (matchesById) return getKpiGiaoForMember(t, memberId);
+
+    // Display-name fallback for legacy rows where `assigned_id`/`support_id`
+    // are not populated on the task payload but the assignee name is.
     const memberDisplayName = (realMemberData?.display_name || '').toLowerCase().trim();
     const memberFullName = (realMemberData?.full_name || '').toLowerCase().trim();
+    const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
+    const suppNameLow = (t.support_name || '').toLowerCase().trim();
+    const nameIsAssigned =
+      (memberDisplayName && assignNameLow === memberDisplayName) ||
+      (memberFullName && assignNameLow === memberFullName);
+    const nameIsSupport =
+      (memberDisplayName && suppNameLow === memberDisplayName) ||
+      (memberFullName && suppNameLow === memberFullName);
+    if (!nameIsAssigned && !nameIsSupport) return 0;
 
-    let isAssigned = false;
-    let isSupport = false;
-
-    if (memberId != null) {
-      if (t.assigned_id != null && String(t.assigned_id) === String(memberId)) isAssigned = true;
-      if (t.support_id != null && String(t.support_id) === String(memberId)) isSupport = true;
-    }
-    if (!isAssigned && !isSupport) {
-      const assignNameLow = (t.assigned_name || '').toLowerCase().trim();
-      const suppNameLow = (t.support_name || '').toLowerCase().trim();
-      if (memberDisplayName && assignNameLow === memberDisplayName) isAssigned = true;
-      if (memberDisplayName && suppNameLow === memberDisplayName) isSupport = true;
-      if (memberFullName && assignNameLow === memberFullName) isAssigned = true;
-      if (memberFullName && suppNameLow === memberFullName) isSupport = true;
-    }
-
-    if (isAssigned && isSupport) {
-      if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
-        return t.kpi_assigned + t.kpi_support;
-      }
-      return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-    }
-    if (isAssigned) {
-      if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
-      const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-      const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
-      return kpiVal * (ratio / 100);
-    }
-    if (isSupport) {
-      if (typeof t.kpi_support === 'number') return t.kpi_support;
-      const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-      const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
-      return kpiVal * (ratio / 100);
-    }
-    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    // Synthesize a memberId-style view that the helper can consume: copy the
+    // task and override the id fields with the real member's id so the
+    // helper's Assignee/Support split applies correctly.
+    const fake = { ...t, assigned_id: nameIsAssigned ? memberId : t.assigned_id, support_id: nameIsSupport ? memberId : t.support_id };
+    return getKpiGiaoForMember(fake, memberId);
   }, [realMemberData]);
 
   const getMyTaskKpi = useCallback((t: any) => {

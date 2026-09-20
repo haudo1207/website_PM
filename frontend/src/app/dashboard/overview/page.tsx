@@ -15,6 +15,7 @@ import BarChartCard from '@/components/dashboard/BarChartCard';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
 import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { getKpiGiaoForMember, getProjectKpiGiao } from '@/lib/kpiPotential';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -190,32 +191,19 @@ const resolveOverviewPeriodEnd = (params: {
   return new Date();
 };
 
-// Same role-split as getTaskKpiForMember, but ignores the "Done" gate — the
-// KPI a task is WORTH for a member regardless of completion, i.e. their
-// "Giao" (target) side of the KPI HT/Giao ratio in the ranking table.
+// Same role-split as getTaskKpiForMember, but ignores the "Done" gate —
+// returns the "Giao" (target) share a Member WOULD earn once the task is
+// completed, regardless of the current status. This is the value that
+// belongs on the right side of the KPI HT/Giao pair in the ranking table.
+//
+// Reuses the priority_kpi_base × manday_est formula (see
+// `frontend/src/lib/kpiPotential.ts`) split Assignee/Support via the same
+// `kpi_ratio_assign`/`kpi_ratio_support` columns used by the backend
+// `kpi_engine.calc_kpi_split()`. Status-agnostic because `manday_est` and
+// the ratio columns are always populated, while `kpi_base`/`kpi_assigned`/
+// `kpi_support` are only set when a task reaches `Done`.
 const getTaskKpiPotentialForMember = (t: any, memberId: any) => {
-  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
-  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
-
-  if (isAssigned && isSupport) {
-    if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
-      return t.kpi_assigned + t.kpi_support;
-    }
-    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-  }
-  if (isAssigned) {
-    if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
-    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-    const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
-    return kpiVal * (ratio / 100);
-  }
-  if (isSupport) {
-    if (typeof t.kpi_support === 'number') return t.kpi_support;
-    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-    const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
-    return kpiVal * (ratio / 100);
-  }
-  return 0;
+  return getKpiGiaoForMember(t, memberId);
 };
 
 const PriorityDetailModal = ({
@@ -1211,7 +1199,10 @@ export default function OverviewTab() {
     fTasks.forEach(t => {
       pmManday += (t.manday_actual || t.manday_est || 0);
       pmMandayPlanned += (t.manday_est || 0);
-      pmKpiPlanned += (t.kpi_base || 0); // "Giao" side of the KPI ratio — counted regardless of completion
+      // "Giao" side of the KPI ratio — counted regardless of completion.
+      // Uses `priority_kpi_base × manday_est` (see @/lib/kpiPotential) so it
+      // includes in-progress / overdue / not-yet-Done tasks as well.
+      pmKpiPlanned += getProjectKpiGiao(t);
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
@@ -1465,7 +1456,9 @@ export default function OverviewTab() {
       pTasksForStats.forEach(t => {
         pManday += (t.manday_actual || t.manday_est || 0);
         pMandayPlanned += (t.manday_est || 0);
-        pKpiPlanned += (t.kpi_base || 0);
+        // "Giao" side — uses priority_kpi_base × manday_est (status-agnostic,
+        // counts in-progress / overdue tasks too). See @/lib/kpiPotential.
+        pKpiPlanned += getProjectKpiGiao(t);
         if (t.status === 'Done' || t.status === 'done') {
           pKpi += getTaskKpiForMember(t, t.assigned_id);
           if (t.support_id != null && String(t.support_id) !== String(t.assigned_id)) {
@@ -2369,10 +2362,14 @@ export default function OverviewTab() {
                       <FormulaTooltip>
                         <p className="font-bold text-white/90 mb-1">KPI HT / Giao</p>
                         <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">HT = Σ kpi của task Done (có end_date_actual) trong kỳ</p>
-                        <p className="text-white font-mono">Giao = Σ kpi_potential của toàn bộ task trong kỳ (mọi trạng thái)</p>
-                        <p className="text-white/60 mt-1.5">KPI tính theo vai trò: assigned hoặc support, với tỷ lệ phân bổ (kpi_ratio_assign/support).</p>
-                        <p className="text-white/60 mt-1">Nếu task có cả assigned và support: kpi_assigned + kpi_support.</p>
+                        <p className="text-white font-mono">HT = Σ kpi_assigned + Σ kpi_support của task Done (có end_date_actual) trong kỳ</p>
+                        <p className="text-white font-mono">Giao = Σ (priority_kpi_base × manday_est) của task trong kỳ (mọi trạng thái)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>HT (kpi_assigned/kpi_support):</b> tính từ <code>utils/kpi_engine.py</code>; chỉ tồn tại trên task Done.</li>
+                          <li><b>Giao (priority_kpi_base × manday_est):</b> lấy từ <code>frontend/src/lib/kpiPotential.ts</code>; manday_est và priority luôn có sẵn nên Giao đếm mọi task được giao.</li>
+                        </ul>
+                        <p className="text-white/60 mt-1">Phân bổ theo vai trò (assigned/support) dùng chung <code>kpi_ratio_assign/support</code> cho cả hai phía.</p>
                       </FormulaTooltip>
                     </span>
                   </th>
