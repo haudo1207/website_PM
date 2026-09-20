@@ -729,6 +729,16 @@ function injectWidget(toolName) {
       #markee-widget .quickbar{display:grid;grid-template-columns:1fr 1fr auto;gap:5px;margin-top:7px;padding:3px;border-radius:10px;background:rgba(11,15,29,.32);border:1px solid rgba(255,255,255,.04);align-items:center;}
       #markee-widget .select-wrap{min-width:0;}
       #markee-widget .select-wrap select{width:100%;height:28px;border-radius:7px;appearance:none;border:1px solid rgba(88,95,255,.38);background:#12172a;color:#eef2ff;padding:0 8px;outline:none;font-size:10.6px;font-weight:800;cursor:pointer;}
+      /* The <select> itself can be themed dark, but its dropdown POPUP is
+         drawn by the OS/browser using a plain white background that CSS
+         can't override — only each <option>'s own color/background apply
+         inside that popup. Every select in this widget inherited the
+         widget's light text color, so once opened the options rendered as
+         near-white text on that white popup: invisible. Force dark option
+         text + white option background everywhere so every select's
+         dropdown list stays readable regardless of the closed control's
+         own (dark) styling. */
+      #markee-widget select option{color:#0b1220;background:#fff;}
       #markee-widget .select-wrap.primary select{border-color:transparent;background:linear-gradient(135deg,#5b53f5,#4e46dc);color:#fff;}
       #markee-widget .go{width:26px;height:28px;border-radius:7px;border:0;background:linear-gradient(135deg,#5b53f5,#4e46dc);color:#fff;font-weight:900;cursor:pointer;flex-shrink:0;}
       #markee-widget .action-download .go{background:linear-gradient(135deg,#19c58f,#0f9f74);}
@@ -741,6 +751,12 @@ function injectWidget(toolName) {
       #markee-widget .panel.active{display:flex;}
       #markee-widget .stack{display:flex;flex-direction:column;gap:8px;min-height:0;}
       #markee-widget .card{border:1px solid #2c3356;background:linear-gradient(180deg,#1a2038,#161a2f);border-radius:12px;overflow:hidden;flex-shrink:0;}
+      /* The project quick-picker card stretches to fill whatever room the
+         widget's fixed height leaves after the summary card above it —
+         without this, a big empty gap opened up at the bottom of the
+         widget (400x720+ tall) since every card/list here was
+         content-sized only, never grow-to-fill. */
+      #markee-widget .card-grow{flex:1;min-height:0;display:flex;flex-direction:column;}
       #markee-widget .summary-line{min-height:34px;display:flex;align-items:center;gap:6px;padding:6px 9px;cursor:pointer;}
       #markee-widget .summary-line+.summary-line{border-top:1px solid rgba(255,255,255,.045);}
       #markee-widget .summary-line-label{display:flex;align-items:center;gap:4px;color:#cbd2eb;font-size:10px;font-weight:900;white-space:nowrap;min-width:58px;}
@@ -784,7 +800,7 @@ function injectWidget(toolName) {
       #markee-widget .pf-title{font-size:9.5px;font-weight:900;color:#8f99ff;letter-spacing:.04em;}
       #markee-widget .pf-project{font-size:9.5px;font-weight:800;color:#fff;}
       #markee-widget .pf-select{width:100%;}
-      #markee-widget .project-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;max-height:180px;}
+      #markee-widget .project-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;flex:1;min-height:120px;}
       #markee-widget .item{min-height:36px;border-radius:9px;background:#111629;border:1px solid rgba(255,255,255,.055);display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;}
       #markee-widget .item:hover{border-color:rgba(91,99,255,.42);}
       #markee-widget .item.selected{border-color:#5f66ff;background:#23294b;}
@@ -954,7 +970,7 @@ function injectWidget(toolName) {
               </div>
             </div>
 
-            <div class="card">
+            <div class="card card-grow">
               <div class="card-head">
                 <div class="card-title">📁 Chọn nhanh dự án</div>
                 <div class="count" id="markee-projectCount">0 dự án</div>
@@ -1743,6 +1759,18 @@ function injectWidget(toolName) {
       projSelect.addEventListener("change", () => {
         const label = projSelect.options[projSelect.selectedIndex]?.textContent || "-- Chọn Dự án --";
         if (projectToken) projectToken.textContent = projSelect.value ? label : "-- Chọn Dự án --";
+        // THE actual "which project am I saving/sharing to" answer lives in
+        // chrome.storage (read via getSelectedProjectAsync/GET_SELECTED_PROJECT
+        // — see the real "Lưu Tóm tắt" save handler and the share-link Mở
+        // Link flow) — NOT in legacyProj's value below, which only feeds the
+        // feature list/display. Without this, picking a project here never
+        // actually changed what got saved to or shared — it silently kept
+        // using whatever project was last selected through the OLD popup,
+        // which is exactly the reported "chọn dự án khác mà nó lưu qua dự
+        // án cũ" bug.
+        if (projSelect.value) {
+          chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: Number(projSelect.value), projectName: label });
+        }
         if (legacyProj) {
           if (Array.from(legacyProj.options).every((o) => o.value !== projSelect.value)) {
             const opt = document.createElement("option");
@@ -1770,6 +1798,12 @@ function injectWidget(toolName) {
           const dl = document.getElementById("markee-featureList");
           if (dl) dl.innerHTML = features.map((f) => `<option value="${f}"></option>`).join("");
         });
+        // Keep the "Chọn nhanh dự án" list's highlighted/selected row in
+        // sync with whatever was just picked up here in the summary card —
+        // it reads its selected id from legacyProj.value at render time
+        // only, so without an explicit refresh here the two pickers drifted
+        // out of sync the moment you changed the project from this side.
+        if (typeof refreshSkinProjectList === "function") refreshSkinProjectList();
       });
     }
 
@@ -1912,9 +1946,17 @@ function injectWidget(toolName) {
             row.onclick = () => {
               const newRecent = [p.id, ...recentIds.filter((id) => Number(id) !== Number(p.id))].slice(0, 10);
               chrome.storage.local.set({ markee_recent_project_ids: newRecent });
+              // Same fix as the summary card's own project-select change
+              // handler above — this is the ACTUAL "selected project" the
+              // save/share-link logic reads (getSelectedProjectAsync), not
+              // just a display update.
+              chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: p.id, projectName: p.name });
               const custSelect = document.getElementById("markee-summaryCustomerSelect");
               const projSelect = document.getElementById("markee-summaryProjectSelect");
-              const custId = String(p.customer_id || (p.customer && p.customer.id) || "");
+              // Customer "id" is really its customer_name (see GET_CUSTOMERS
+              // in background.js — the relational customer_id FK is almost
+              // never populated on real projects, customer_name is).
+              const custId = String(p.customer_name || (p.customer && p.customer.name) || "");
               if (custSelect && custId) {
                 if (Array.from(custSelect.options).every((o) => o.value !== custId)) {
                   const opt = document.createElement("option");
