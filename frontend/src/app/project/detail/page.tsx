@@ -4243,11 +4243,39 @@ function ProjectDetailContent() {
       if (!taskId) return;
       const task = items.find((t: any) => t.id === taskId);
       if (task) {
+        // Same as handleOpenAttentionTask: switch to the task's own Phase and
+        // un-collapse its Task Group first, otherwise the row simply isn't in
+        // the DOM yet (e.g. a previously-collapsed group) and the scroll below
+        // silently finds nothing to scroll to.
+        if (task.phase_name && task.phase_name !== activePhase) setActivePhase(task.phase_name);
+        if (task.task_group_id) {
+          setCollapsedGroups(prev => {
+            if (!prev.has(task.task_group_id)) return prev;
+            const next = new Set(prev);
+            next.delete(task.task_group_id);
+            return next;
+          });
+        }
         setHighlightTaskId(taskId);
-        setTimeout(() => {
+        // taskTableCardRef's scroll container only becomes truly scrollable
+        // once its own useLayoutEffect/ResizeObserver has stamped an explicit
+        // pixel height on it (see that effect's comments) - a single fixed
+        // 300ms scrollIntoView could fire before that has happened (slower
+        // project/task loads, phase switch above re-triggering layout) and
+        // land on nothing to scroll, with no retry. Poll instead so it keeps
+        // trying until the row actually exists and settles.
+        let attempts = 0;
+        const tryScroll = () => {
+          attempts += 1;
           const el = document.getElementById(`task-row-${taskId}`);
-          if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        }, 300);
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            if (attempts < 3) setTimeout(tryScroll, 400);
+          } else if (attempts < 10) {
+            setTimeout(tryScroll, 300);
+          }
+        };
+        setTimeout(tryScroll, 300);
         setTimeout(() => setHighlightTaskId(prev => prev === taskId ? null : prev), 4000);
       }
     }
