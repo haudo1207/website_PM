@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState } from 'react';
+import { createContext, useContext, useState } from 'react';
 
 interface WorkspaceFilterContextValue {
   /** Selected Workspace code, or null for "All workspaces". Shared across
@@ -18,12 +18,15 @@ const WorkspaceFilterContext = createContext<WorkspaceFilterContextValue>({
 const STORAGE_KEY = 'selected_workspace_code';
 
 export function WorkspaceFilterProvider({ children }: { children: React.ReactNode }) {
-  const [workspaceCode, setWorkspaceCodeState] = useState<string | null>(null);
-
-  useEffect(() => {
-    const stored = typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null;
-    if (stored) setWorkspaceCodeState(stored);
-  }, []);
+  // Lazy-initialized from localStorage instead of via a useEffect — every
+  // page sharing this context (Dashboard, KPI, Navbar) otherwise rendered
+  // its first pass with workspaceCode=null (unscoped/wrong), then corrected
+  // itself a tick later once the effect read the real stored value. Reading
+  // it synchronously on first render removes that "loads wrong, then fixes
+  // itself" flash across all of them at once.
+  const [workspaceCode, setWorkspaceCodeState] = useState<string | null>(
+    () => (typeof window !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null)
+  );
 
   const setWorkspaceCode = (code: string | null) => {
     setWorkspaceCodeState(code);
