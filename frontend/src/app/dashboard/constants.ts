@@ -267,24 +267,6 @@ export function checkTaskInPeriod(
     }
 
     if (range) {
-      // A DONE task with a real completion date belongs to EXACTLY the week
-      // it was completed in — a strict single-date check, matching the
-      // backend's per_member_period_kpi window in
-      // `system_audit.py::_aggregate_team_comparison` exactly. The
-      // interval-overlap fallback below (task's [start, end] span touching
-      // the week) stays for tasks that aren't Done yet / have no
-      // end_date_actual, since an open task can legitimately still be "in
-      // progress during" every week it spans. Without this split, a task
-      // that started weeks ago and only finished THIS week would also
-      // match every earlier week it overlapped (tStart <= that week's
-      // Sunday is trivially true once the task is old enough), so a
-      // long-running Done task got silently counted into several
-      // different weeks' KPI totals instead of just the one it actually
-      // finished in — inflating Section 4's Member Detail modal KPI above
-      // the backend's exact-week total for the same Leader/period.
-      if (isDone && task.end_date_actual) {
-        return taskDate >= range.monday && taskDate <= range.sunday;
-      }
       const inRange = (taskDate >= range.monday && taskDate <= range.sunday) ||
         Boolean(tStart && tEnd && tStart <= range.sunday && tEnd >= range.monday);
       return Boolean(inRange);
