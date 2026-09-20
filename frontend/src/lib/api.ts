@@ -351,6 +351,10 @@ export const createPlatform = (data: { name: string; icon?: string; color?: stri
 // TASK GROUPS (v5)
 // ═══════════════════════════════════════════════════════════
 export const getTaskGroups = (phaseId: number) => api.get(`/phases/${phaseId}/task-groups`).then(r => r.data);
+// One request for every Task Group across every Phase of a project — replaces
+// firing getTaskGroups() once per phase in parallel (Promise.all), which let
+// a project with many phases alone burst past the app's shared DB pool.
+export const getProjectTaskGroups = (projectId: number) => api.get(`/projects/${projectId}/task-groups`).then(r => r.data);
 export const createTaskGroup = (phaseId: number, data: { name: string; description?: string; manday_est?: number }) =>
   api.post(`/phases/${phaseId}/task-groups`, data).then(r => r.data);
 export const updateTaskGroup = (phaseId: number, gid: number, data: object) =>

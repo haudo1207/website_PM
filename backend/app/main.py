@@ -1847,15 +1847,17 @@ async def start_meeting_reminder_loop():
             # (each up to zalo.DEFAULT_TIMEOUT=15s, once per linked
             # conversation, run serially) could silently push the NEXT
             # cycle's claim minutes late with nothing in the logs to explain
-            # it. Log any cycle taking noticeably longer than the 20s sleep
-            # below so a repeat is diagnosable instead of guessed at.
+            # it. Log any cycle taking noticeably longer than the poll
+            # interval so a repeat is diagnosable instead of guessed at.
             elapsed = time.monotonic() - cycle_started
             if elapsed > 20:
                 logger.warning("Meeting reminder cycle took %.1fs (longer than the 20s poll interval) — a Zalo/Telegram send is likely running slow.", elapsed)
-            # Was 60s — halved worst-case poll slack (previously up to ~60s
-            # baseline before any actual send time on top; see the cycle-time
-            # warning above for what to check if delays are still minutes,
-            # not seconds).
+            # Was briefly reverted to 60s over a suspicion this loop's DB use
+            # competes with regular request handling for connections — ruled
+            # out on inspection: this loop uses BackgroundSessionLocal, a
+            # SEPARATE Postgres engine with its own tiny pool_size=1 pool
+            # (see database.py), specifically isolated from the main app's
+            # pool for exactly this reason. Kept at 20s.
             await asyncio.sleep(20)
 
     asyncio.create_task(_loop())

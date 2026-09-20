@@ -491,7 +491,16 @@ export default function OverviewTab() {
   const [selectedWorkspaceScope, setSelectedWorkspaceScope] = useState<string | null>(null);
   const [externalProjectsCollapsed, setExternalProjectsCollapsed] = useState(false);
   const [contributionModalProject, setContributionModalProject] = useState<any>(null);
-  const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>('');
+  // Lazy-initialized from localStorage instead of via a useEffect — this
+  // value feeds the ['dashboard-overview', ...] React Query key below
+  // (fetchOverview also reads it directly for the API request URLs), so
+  // starting from '' and correcting it a tick later on every fresh page
+  // load meant the FIRST fetch always ran unscoped/wrong, then a second
+  // (correct) one replaced it — visible as "loads wrong, then fixes itself"
+  // on every load, not just an occasional flake.
+  const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>(
+    () => (typeof window !== 'undefined' ? localStorage.getItem('active_workspace_code') || '' : '')
+  );
   const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
   useEffect(() => {
