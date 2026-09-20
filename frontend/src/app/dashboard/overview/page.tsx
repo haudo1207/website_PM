@@ -14,7 +14,7 @@ import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, isTaskDoneInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 import { getKpiGiaoForMember, getProjectKpiGiao } from '@/lib/kpiPotential';
 
 const getShortName = (name: string) => {
@@ -1272,9 +1272,21 @@ export default function OverviewTab() {
         kpiPlanned += getTaskKpiPotentialForMember(t, m.id);
         const wsCode = (t.projectDataScope || '').toLowerCase();
         if (wsCode) mandayByWs[wsCode] = (mandayByWs[wsCode] || 0) + taskManday;
-        const done = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
-        if (done) { d++; k += getTaskKpiForMember(t, m.id); }
-        else {
+        // HT (Done count + KPI) is gated by isTaskDoneInPeriod — strictly
+        // "did this task's end_date_actual fall in THIS period" — not just
+        // "is it Done at all". myTasks itself (checkTaskInPeriod, lenient
+        // planned-window overlap) can include a Done task whose DEADLINE
+        // touched this period even though it was actually finished in a
+        // different one (kept there on purpose, for Giao/mdPlanned above);
+        // such a task is neither "done in this period" nor genuinely still
+        // open, so it's excluded from the Done/In-progress/Overdue
+        // breakdown entirely rather than being miscounted as either.
+        const isDone = t.status === 'Done' || t.status === 'done';
+        const doneInPeriod = isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter);
+        if (doneInPeriod) {
+          d++;
+          k += getTaskKpiForMember(t, m.id);
+        } else if (!isDone) {
           i++;
           if (calculateDaysLate(t) > 0) o++;
         }

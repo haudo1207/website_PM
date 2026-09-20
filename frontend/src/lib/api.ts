@@ -974,10 +974,15 @@ export interface TeamComparisonMember {
   manday_est: number;
   manday_actual: number;
   kpi: number;
+  // Giao — KPI assigned regardless of completion status (status-agnostic).
+  // Used for workload/overload classification instead of kpi_pct, since
+  // kpi_pct stays at 0 until something is actually marked Done.
+  giao: number;
   progress_pct: number;
   // KPI% for workload classification (from Done tasks in selected period)
   period_kpi: number;
   kpi_pct: number;
+  giao_pct: number;
 }
 export interface TeamComparisonProject {
   project_id: number;
@@ -1013,6 +1018,10 @@ export interface TeamComparisonTeam {
   member_count: number;
   members: TeamComparisonMember[];
   kpi: number;
+  // Giao — team's total assigned KPI, status-agnostic (see
+  // TeamComparisonMember.giao).
+  giao: number;
+  giao_pct: number;
   plan_md: number;
   actual_md: number;
   util: number;
@@ -1027,6 +1036,9 @@ export interface TeamComparisonTeam {
   // Leader's individual workload KPI (own tasks only, NOT team aggregate)
   leader_period_kpi: number;
   leader_kpi_pct: number;
+  // Leader's individual Giao (own tasks only) — see TeamComparisonMember.giao.
+  leader_giao: number;
+  leader_giao_pct: number;
   // Leader's personal task aggregates (own tasks only, NOT team)
   leader_done: number;
   leader_doing: number;

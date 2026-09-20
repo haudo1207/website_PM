@@ -1220,10 +1220,19 @@ def sync_from_recruitment(
                 # Stamp the OFF effective date so the Dashboard period
                 # filters can answer "was this Member active during the
                 # selected period?" without reconstructing from current
-                # status. Idempotent: only set when transitioning ON→OFF
-                # (not on every OFF sync). OFF→ON rehires clear the stamp
-                # so the Member becomes active in every period again.
-                if employment_status == "OFF" and old_status != "OFF":
+                # status. Set on a fresh ON→OFF transition, AND backfilled
+                # whenever a sync confirms OFF but the cutoff is still
+                # missing — a Member who went OFF before this column
+                # existed stays `old_status == "OFF"` on every later sync
+                # (no "transition" ever happens again), so a transition-only
+                # check left it NULL forever and the Dashboard's period
+                # filter kept treating them as active for every period
+                # (its own documented "legacy row, no cutoff" safety net) —
+                # re-running the sync could never fix it. Re-syncing an
+                # already-stamped OFF Member is still a no-op (does not
+                # reset the timestamp). OFF→ON rehires clear the stamp so
+                # the Member becomes active in every period again.
+                if employment_status == "OFF" and (old_status != "OFF" or member.off_effective_at is None):
                     member.off_effective_at = datetime.datetime.utcnow()
                 elif employment_status == "ON" and old_status == "OFF":
                     member.off_effective_at = None

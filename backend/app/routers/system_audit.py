@@ -1047,6 +1047,76 @@ def _aggregate_team_comparison(
         if or_conditions:
             time_filters.append(or_(*or_conditions))
 
+    # Separate, LENIENT window for Giao (KPI assigned) — a task's planned
+    # window (start/deadline) touching the period is enough, regardless of
+    # status or completion date. Reuses conditions 1/2/3 from `time_filters`
+    # above but WITHOUT the `not_done` restriction (and without condition 0,
+    # which only exists to anchor a DONE task's HT to its exact completion
+    # week) — Giao must NOT depend on if/when a task was completed, only on
+    # whether it was assigned/due during the period. Using the strict
+    # `time_filters` for Giao too would silently drop a task's Giao out of
+    # the period it was actually due in whenever it finished in a
+    # different one, which is exactly the HT-only rule Giao must avoid.
+    giao_time_filters = []
+    if parsed_start is not None or parsed_end is not None:
+        giao_or_conditions = []
+        if parsed_start is not None and parsed_end is not None:
+            giao_or_conditions.append(
+                (Task.start_date.between(parsed_start, parsed_end)) |
+                (Task.created_at.between(parsed_start, parsed_end))
+            )
+        elif parsed_start is not None:
+            giao_or_conditions.append(
+                (Task.start_date >= parsed_start) |
+                (Task.created_at >= parsed_start)
+            )
+        elif parsed_end is not None:
+            giao_or_conditions.append(
+                (Task.start_date <= parsed_end) |
+                (Task.created_at <= parsed_end)
+            )
+        if parsed_start is not None and parsed_end is not None:
+            giao_or_conditions.append(Task.end_date_est.between(parsed_start, parsed_end))
+        elif parsed_start is not None:
+            giao_or_conditions.append(Task.end_date_est >= parsed_start)
+        elif parsed_end is not None:
+            giao_or_conditions.append(Task.end_date_est <= parsed_end)
+        if parsed_end is not None:
+            giao_or_conditions.append(
+                (Task.end_date_est < parsed_end) &
+                (Task.end_date_est.isnot(None)) &
+                (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+            )
+        if giao_or_conditions:
+            giao_time_filters.append(or_(*giao_or_conditions))
+
+    # DB-driven priority -> kpi_base lookup (mirrors `get_priority_kpi_base`
+    # in kpi_engine.py, aliases included) built as a SQL CASE so Giao stays
+    # correct if priorities are ever edited via Settings, instead of a
+    # hardcoded map that could silently drift from the real table.
+    from ..models.system_category import TaskPriority
+    _priority_map = {
+        (name or "").strip().lower(): kpi_base
+        for name, kpi_base in db.query(TaskPriority.name, TaskPriority.kpi_base).all()
+    }
+    _priority_aliases = {
+        "normal": ["normal", "medium"],
+        "high": ["high"],
+        "critical": ["critical", "urgent"],
+        "interrupt": ["interrupt"],
+    }
+    _priority_whens = [
+        (sql_func.lower(Task.priority) == alias, _priority_map[canonical])
+        for canonical, aliases in _priority_aliases.items()
+        if canonical in _priority_map
+        for alias in aliases
+    ]
+    _default_priority_kpi = _priority_map.get("normal", 6)
+    priority_kpi_case = case(*_priority_whens, else_=_default_priority_kpi) if _priority_whens else _default_priority_kpi
+    giao_base_expr = priority_kpi_case * sql_func.coalesce(Task.manday_est, 0)
+    assigned_giao_ratio = sql_func.coalesce(Task.kpi_ratio_assign, case((Task.support_id.isnot(None), 90), else_=100))
+    support_giao_ratio = sql_func.coalesce(Task.kpi_ratio_support, 10)
+
     member_rows = (
         db.query(
             Task.assigned_id.label("member_id"),
@@ -1088,6 +1158,40 @@ def _aggregate_team_comparison(
     if time_filters:
         support_rows = support_rows.filter(*time_filters)
     support_rows = support_rows.all()
+
+    # Giao (assigned KPI, status-agnostic) — separate query using the
+    # LENIENT `giao_time_filters` window (see above), NOT `time_filters`,
+    # so a task's Giao stays attributed to the period it was actually
+    # assigned/due in even if it's completed in a different one.
+    assigned_giao_rows = (
+        db.query(
+            Task.assigned_id.label("member_id"),
+            sql_func.sum(giao_base_expr * assigned_giao_ratio / 100.0).label("giao"),
+        )
+        .filter(Task.assigned_id.in_(team_member_ids))
+        .group_by(Task.assigned_id)
+    )
+    if giao_time_filters:
+        assigned_giao_rows = assigned_giao_rows.filter(*giao_time_filters)
+    assigned_giao_rows = assigned_giao_rows.all()
+
+    support_giao_rows = (
+        db.query(
+            Task.support_id.label("member_id"),
+            sql_func.sum(giao_base_expr * support_giao_ratio / 100.0).label("giao"),
+        )
+        .filter(Task.support_id.in_(team_member_ids), Task.support_id != Task.assigned_id)
+        .group_by(Task.support_id)
+    )
+    if giao_time_filters:
+        support_giao_rows = support_giao_rows.filter(*giao_time_filters)
+    support_giao_rows = support_giao_rows.all()
+
+    per_member_giao: dict[int, float] = {}
+    for mid, giao in assigned_giao_rows:
+        per_member_giao[mid] = per_member_giao.get(mid, 0.0) + float(giao or 0)
+    for mid, giao in support_giao_rows:
+        per_member_giao[mid] = per_member_giao.get(mid, 0.0) + float(giao or 0)
 
     # 8b. Period KPI aggregation — Done tasks whose end_date_actual falls
     #     inside the selected period (or, when no period is selected, every
@@ -1321,6 +1425,7 @@ def _aggregate_team_comparison(
         agg_md_est = 0.0
         agg_md_actual = 0.0
         agg_kpi = 0.0
+        agg_giao = 0.0
         for m in team_members:
             mm = per_member.get(m.id, {})
             a_total = mm.get("assigned_total", 0)
@@ -1354,11 +1459,22 @@ def _aggregate_team_comparison(
                 "manday_est": round(a_md_est + s_md_est, 2),
                 "manday_actual": round(a_md_actual + s_md_actual, 2),
                 "kpi": round(per_member_period_kpi.get(m.id, 0.0), 2),
+                # Giao — KPI assigned regardless of completion status
+                # (priority_kpi_base × manday_est, same formula as the
+                # frontend's kpiPotential.ts), scoped to the SAME period via
+                # the lenient `giao_time_filters` window. Powers "how much
+                # work is this person carrying this period" independently
+                # of "kpi" (HT, completed-only) above.
+                "giao": round(per_member_giao.get(m.id, 0.0), 2),
                 "progress_pct": round((dn / tot) * 100, 1) if tot > 0 else 0,
                 # Period KPI: KPI from Done tasks whose end_date_actual falls
                 # inside the selected period. Used for workload KPI% classification.
                 "period_kpi": round(per_member_period_kpi.get(m.id, 0.0), 2),
                 "kpi_pct": round(per_member_period_kpi.get(m.id, 0.0) / weeks_divisor, 2) if weeks_divisor > 0 else 0.0,
+                # Giao% — workload classification figure (see leader_giao_pct
+                # comment above): based on assigned KPI, not completed-only,
+                # so it can flag overload before anything is marked Done.
+                "giao_pct": round(per_member_giao.get(m.id, 0.0) / weeks_divisor, 2) if weeks_divisor > 0 else 0.0,
             })
 
             agg_total += tot
@@ -1368,6 +1484,7 @@ def _aggregate_team_comparison(
             agg_md_est += a_md_est + s_md_est
             agg_md_actual += a_md_actual + s_md_actual
             agg_kpi += per_member_period_kpi.get(m.id, 0.0)
+            agg_giao += per_member_giao.get(m.id, 0.0)
 
         agg_plan_md = round(agg_md_est, 2)
         agg_actual_md = round(agg_md_actual, 2)
@@ -1406,6 +1523,14 @@ def _aggregate_team_comparison(
         # Leader's individual KPI (from their own tasks, NOT team aggregate)
         leader_period_kpi = per_member_period_kpi.get(leader_member_id, 0.0)
         leader_kpi_pct = round(leader_period_kpi / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
+        # Leader's individual Giao (assigned KPI, status-agnostic — see
+        # `per_member_giao` above). `giao_pct` is the workload-classification
+        # figure: unlike `kpi_pct` (completed-only, blind to work that's
+        # been assigned but not finished yet), this reflects how much is
+        # actually ON the Leader's plate for the period, so it can flag
+        # overload even when nothing has been marked Done yet.
+        leader_giao = per_member_giao.get(leader_member_id, 0.0)
+        leader_giao_pct = round(leader_giao / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
 
         # Leader's personal task aggregates (NOT team aggregate).
         # These fields allow the frontend Leader card to display the
@@ -1437,6 +1562,10 @@ def _aggregate_team_comparison(
             "member_count": len(team_members),
             "members": sorted(member_breakdown, key=lambda x: -x["kpi"]),
             "kpi": round(agg_kpi, 2),
+            # Team's total Giao (assigned KPI, status-agnostic) — see
+            # `per_member_giao` / `giao_pct` comments above.
+            "giao": round(agg_giao, 2),
+            "giao_pct": round(agg_giao / weeks_divisor, 2) if weeks_divisor > 0 else 0.0,
             "plan_md": agg_plan_md,
             "actual_md": agg_actual_md,
             "util": util,
@@ -1451,6 +1580,8 @@ def _aggregate_team_comparison(
             # Leader's individual workload KPI (own tasks only)
             "leader_period_kpi": round(leader_period_kpi, 2),
             "leader_kpi_pct": leader_kpi_pct,
+            "leader_giao": round(leader_giao, 2),
+            "leader_giao_pct": leader_giao_pct,
             # Leader's personal task aggregates (own tasks only, NOT team)
             "leader_done": lm_dn,
             "leader_doing": lm_inprog,
