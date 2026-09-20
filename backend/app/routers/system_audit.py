@@ -682,9 +682,16 @@ def _aggregate_team_comparison(
     Optional time-range filter (Requirement 2 — System Audit global sync):
       When `start_date` / `end_date` are provided, every per-task aggregate
       below (assigned, support, project rollup) is restricted to tasks
-      whose `end_date_est` falls inside the window (falling back to
-      `start_date` / `created_at` when no deadline is set). Omitting the
-      parameters preserves the original behaviour.
+      that belong to the window: a DONE task belongs to the window its
+      `end_date_actual` (real completion date) falls inside; a task that
+      is not yet Done belongs to the window its `end_date_est` / `start_date`
+      / `created_at` falls inside, or that it is overdue relative to.
+      This matches the same "which period does this task belong to" rule
+      already used by Dashboard Overview / the Member Detail modal
+      (`checkTaskInPeriod`), so Team Load's Done/Manday counts and its KPI
+      figures (`kpi` / `kpi_pct`, sourced from `per_member_period_kpi`)
+      agree with each other and with Overview. Omitting the parameters
+      preserves the original (unfiltered) behaviour.
 
     Returns a flat team list with team identity, KPI / Manday / Efficiency
     / On-time / Health, plus a per-member breakdown and the projects that
@@ -960,46 +967,74 @@ def _aggregate_team_comparison(
 
     # Time-range window clause: a task belongs to the window if ANY of
     # these conditions are true:
-    #   1. Task assigned during the selected period (start_date or created_at
-    #      falls within [parsed_start, parsed_end])
-    #   2. Task deadline falls within the selected period (end_date_est
-    #      falls within [parsed_start, parsed_end])
+    #   0. Task is DONE and its end_date_actual (real completion date)
+    #      falls within [parsed_start, parsed_end] — a Done task belongs to
+    #      the period it was ACTUALLY finished in, matching the same rule
+    #      Overview / the Member Detail modal already use
+    #      (`checkTaskInPeriod`) and `per_member_period_kpi` below. This is
+    #      the ONLY way a Done task can match now — conditions 1/2 are
+    #      restricted to non-Done tasks (see `not_done`) — otherwise a task
+    #      whose PLANNED dates touch this period but was actually finished
+    #      in a different period would still count toward this period's
+    #      Done/Manday totals while its KPI (per_member_period_kpi) does
+    #      not, reproducing the exact "Total KPI vs KPI Trung Bình" mismatch
+    #      this rule was introduced to eliminate.
+    #   1. Task (not yet Done) assigned during the selected period
+    #      (start_date or created_at falls within [parsed_start, parsed_end])
+    #   2. Task (not yet Done) deadline falls within the selected period
+    #      (end_date_est falls within [parsed_start, parsed_end])
     #   3. Task is overdue relative to the selected period (end_date_est
     #      < parsed_end AND status not Done/Cancel)
     # When no window is provided we skip the clause entirely (preserves
     # existing behaviour).
     time_filters = []
     if parsed_start is not None or parsed_end is not None:
-        # Build OR conditions for task inclusion
+        from sqlalchemy import or_
+
         or_conditions = []
-        
-        # Condition 1: Task assigned during the period
+        not_done = Task.status.notin_(["Done", "done"])
+
+        # Condition 0: Done task, real completion date in window.
+        done_condition = Task.status.in_(["Done", "done"]) & Task.end_date_actual.isnot(None)
+        if parsed_start is not None and parsed_end is not None:
+            done_condition = done_condition & Task.end_date_actual.between(parsed_start.date(), parsed_end.date())
+        elif parsed_start is not None:
+            done_condition = done_condition & (Task.end_date_actual >= parsed_start.date())
+        elif parsed_end is not None:
+            done_condition = done_condition & (Task.end_date_actual <= parsed_end.date())
+        or_conditions.append(done_condition)
+
+        # Condition 1: Task (not yet Done) assigned during the period
         if parsed_start is not None and parsed_end is not None:
             or_conditions.append(
-                (Task.start_date.between(parsed_start, parsed_end)) |
-                (Task.created_at.between(parsed_start, parsed_end))
+                not_done & (
+                    (Task.start_date.between(parsed_start, parsed_end)) |
+                    (Task.created_at.between(parsed_start, parsed_end))
+                )
             )
         elif parsed_start is not None:
             or_conditions.append(
-                (Task.start_date >= parsed_start) |
-                (Task.created_at >= parsed_start)
+                not_done & (
+                    (Task.start_date >= parsed_start) |
+                    (Task.created_at >= parsed_start)
+                )
             )
         elif parsed_end is not None:
             or_conditions.append(
-                (Task.start_date <= parsed_end) |
-                (Task.created_at <= parsed_end)
+                not_done & (
+                    (Task.start_date <= parsed_end) |
+                    (Task.created_at <= parsed_end)
+                )
             )
-        
-        # Condition 2: Task deadline falls within the period
+
+        # Condition 2: Task (not yet Done) deadline falls within the period
         if parsed_start is not None and parsed_end is not None:
-            or_conditions.append(
-                Task.end_date_est.between(parsed_start, parsed_end)
-            )
+            or_conditions.append(not_done & Task.end_date_est.between(parsed_start, parsed_end))
         elif parsed_start is not None:
-            or_conditions.append(Task.end_date_est >= parsed_start)
+            or_conditions.append(not_done & (Task.end_date_est >= parsed_start))
         elif parsed_end is not None:
-            or_conditions.append(Task.end_date_est <= parsed_end)
-        
+            or_conditions.append(not_done & (Task.end_date_est <= parsed_end))
+
         # Condition 3: Task is overdue relative to the period
         if parsed_end is not None:
             or_conditions.append(
@@ -1007,10 +1042,9 @@ def _aggregate_team_comparison(
                 (Task.end_date_est.isnot(None)) &
                 (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
             )
-        
+
         # Combine with OR - task matches if ANY condition is true
         if or_conditions:
-            from sqlalchemy import or_
             time_filters.append(or_(*or_conditions))
 
     member_rows = (
@@ -1055,44 +1089,52 @@ def _aggregate_team_comparison(
         support_rows = support_rows.filter(*time_filters)
     support_rows = support_rows.all()
 
-    # 8b. Period KPI aggregation — ONLY Done tasks whose end_date_actual
-    #     falls inside the selected period. This is the source of truth for
-    #     workload KPI% classification (separate from the OR-based task
-    #     visibility filter above).
+    # 8b. Period KPI aggregation — Done tasks whose end_date_actual falls
+    #     inside the selected period (or, when no period is selected, every
+    #     Done task). This is the single source of truth for every
+    #     "Total KPI" / "KPI%" figure Section 4 displays (member breakdown,
+    #     team aggregate, Leader's own row). Previously those "kpi" fields
+    #     used a DIFFERENT, broader window instead (a task's PLANNED dates,
+    #     via `time_filters` above) while this end_date_actual-based
+    #     aggregate fed only the separate `kpi_pct`/`period_kpi` fields —
+    #     so "Total KPI" and "KPI Trung Bình" disagreed for the same
+    #     Member/period, and neither matched the frontend Member Detail
+    #     modal (which has always used end_date_actual). Unifying on this
+    #     definition everywhere fixes that mismatch.
     per_member_period_kpi: dict[int, float] = {}
-    if parsed_start and parsed_end:
-        kpi_period_filter = [
-            Task.status.in_(["Done", "done"]),
-            Task.end_date_actual.isnot(None),
-            Task.end_date_actual >= parsed_start.date(),
-            Task.end_date_actual <= parsed_end.date(),
-        ]
-        assigned_period_kpi = (
-            db.query(
-                Task.assigned_id.label("member_id"),
-                sql_func.sum(Task.kpi_assigned).label("period_kpi"),
-            )
-            .filter(Task.assigned_id.in_(team_member_ids), *kpi_period_filter)
-            .group_by(Task.assigned_id)
-            .all()
+    kpi_period_filter = [Task.status.in_(["Done", "done"])]
+    if parsed_start is not None or parsed_end is not None:
+        kpi_period_filter.append(Task.end_date_actual.isnot(None))
+        if parsed_start is not None:
+            kpi_period_filter.append(Task.end_date_actual >= parsed_start.date())
+        if parsed_end is not None:
+            kpi_period_filter.append(Task.end_date_actual <= parsed_end.date())
+    assigned_period_kpi = (
+        db.query(
+            Task.assigned_id.label("member_id"),
+            sql_func.sum(Task.kpi_assigned).label("period_kpi"),
         )
-        support_period_kpi = (
-            db.query(
-                Task.support_id.label("member_id"),
-                sql_func.sum(Task.kpi_support).label("period_kpi"),
-            )
-            .filter(
-                Task.support_id.in_(team_member_ids),
-                Task.support_id != Task.assigned_id,
-                *kpi_period_filter,
-            )
-            .group_by(Task.support_id)
-            .all()
+        .filter(Task.assigned_id.in_(team_member_ids), *kpi_period_filter)
+        .group_by(Task.assigned_id)
+        .all()
+    )
+    support_period_kpi = (
+        db.query(
+            Task.support_id.label("member_id"),
+            sql_func.sum(Task.kpi_support).label("period_kpi"),
         )
-        for mid, kpi in assigned_period_kpi:
-            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
-        for mid, kpi in support_period_kpi:
-            per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
+        .filter(
+            Task.support_id.in_(team_member_ids),
+            Task.support_id != Task.assigned_id,
+            *kpi_period_filter,
+        )
+        .group_by(Task.support_id)
+        .all()
+    )
+    for mid, kpi in assigned_period_kpi:
+        per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
+    for mid, kpi in support_period_kpi:
+        per_member_period_kpi[mid] = per_member_period_kpi.get(mid, 0.0) + float(kpi or 0)
 
     # 9. Project rollup: which projects touch this team? We need this both
     #    for the team-level KPI/manday context AND for Section 3's
@@ -1286,13 +1328,11 @@ def _aggregate_team_comparison(
             a_over = mm.get("assigned_overdue", 0)
             a_md_est = mm.get("assigned_manday_est", 0.0)
             a_md_actual = mm.get("assigned_manday_actual", 0.0)
-            a_kpi = mm.get("assigned_kpi", 0.0)
             s_total = mm.get("support_total", 0)
             s_done = mm.get("support_done", 0)
             s_over = mm.get("support_overdue", 0)
             s_md_est = mm.get("support_manday_est", 0.0)
             s_md_actual = mm.get("support_manday_actual", 0.0)
-            s_kpi = mm.get("support_kpi", 0.0)
 
             tot = a_total + s_total
             dn = a_done + s_done
@@ -1313,7 +1353,7 @@ def _aggregate_team_comparison(
                 "overdue": ov,
                 "manday_est": round(a_md_est + s_md_est, 2),
                 "manday_actual": round(a_md_actual + s_md_actual, 2),
-                "kpi": round(a_kpi + s_kpi, 2),
+                "kpi": round(per_member_period_kpi.get(m.id, 0.0), 2),
                 "progress_pct": round((dn / tot) * 100, 1) if tot > 0 else 0,
                 # Period KPI: KPI from Done tasks whose end_date_actual falls
                 # inside the selected period. Used for workload KPI% classification.
@@ -1327,7 +1367,7 @@ def _aggregate_team_comparison(
             agg_overdue += ov
             agg_md_est += a_md_est + s_md_est
             agg_md_actual += a_md_actual + s_md_actual
-            agg_kpi += a_kpi + s_kpi
+            agg_kpi += per_member_period_kpi.get(m.id, 0.0)
 
         agg_plan_md = round(agg_md_est, 2)
         agg_actual_md = round(agg_md_actual, 2)
@@ -1376,13 +1416,11 @@ def _aggregate_team_comparison(
         lm_a_over  = lm.get("assigned_overdue", 0)
         lm_a_md_est  = lm.get("assigned_manday_est", 0.0)
         lm_a_md_act  = lm.get("assigned_manday_actual", 0.0)
-        lm_a_kpi   = lm.get("assigned_kpi", 0.0)
         lm_s_total = lm.get("support_total", 0)
         lm_s_done  = lm.get("support_done", 0)
         lm_s_over  = lm.get("support_overdue", 0)
         lm_s_md_est  = lm.get("support_manday_est", 0.0)
         lm_s_md_act  = lm.get("support_manday_actual", 0.0)
-        lm_s_kpi   = lm.get("support_kpi", 0.0)
         lm_tot = lm_a_total + lm_s_total
         lm_dn  = lm_a_done + lm_s_done
         lm_ov  = lm_a_over + lm_s_over
@@ -1417,7 +1455,7 @@ def _aggregate_team_comparison(
             "leader_done": lm_dn,
             "leader_doing": lm_inprog,
             "leader_overdue": lm_ov,
-            "leader_kpi": round(lm_a_kpi + lm_s_kpi, 2),
+            "leader_kpi": round(leader_period_kpi, 2),
             "leader_manday_est": round(lm_a_md_est + lm_s_md_est, 2),
             "leader_manday_actual": round(lm_a_md_act + lm_s_md_act, 2),
         })
