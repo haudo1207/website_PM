@@ -23,7 +23,7 @@ import {
   getAITaskInbox, analyzeChatLogs, updateAITaskInbox, rejectAITaskInbox, importAITaskToProjectPlan, bulkImportAITasks, getChatSyncLogs, syncAITasksFromChat,
   getProjectTemplates, applyProjectTemplate,
   getPhases, createPhase, updatePhase, deletePhase, reorderPhases, movePhaseToProject,
-  getTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
+  getProjectTaskGroups, createTaskGroup, updateTaskGroup, deleteTaskGroup,
   getAllProjectTasks, createTask, updateTask, deleteTask,
   getProjectMembers, addProjectMember, removeProjectMember,
   getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
@@ -1553,24 +1553,26 @@ function ProjectDetailContent() {
         flash('Lỗi tải danh sách Phase: ' + getApiErrorMessage(err), true);
       }
 
-      // Every phase's task groups + the project's full task list are independent
-      // of each other — fetch them all concurrently instead of one phase at a
-      // time (was serial, so reloadAll() got slower the more phases a project
-      // had; every write anywhere on this page calls reloadAll() afterward).
-      const [groupResults, tsks] = await Promise.all([
-        Promise.all((phs || []).map(p =>
-          getTaskGroups(p.id).catch(e => {
-            console.error(`Lỗi khi tải Task Group của Phase ${p.id}:`, e);
-            return [];
-          })
-        )),
+      // Task groups (every phase, one request) + the project's full task
+      // list are independent of each other — fetch concurrently. Used to
+      // fire getTaskGroups() once PER PHASE in parallel (Promise.all over
+      // phs.map), which made opening a many-phase project alone burst past
+      // the app's shared DB connection pool (small on purpose — production
+      // shares one Postgres across 2 brands) and could 502 at the proxy
+      // before the backend even logged anything. One request for all
+      // groups now, regardless of phase count.
+      const [grps, tsks] = await Promise.all([
+        getProjectTaskGroups(Number(id)).catch(e => {
+          console.error('Lỗi khi tải Task Group của dự án:', e);
+          return [];
+        }),
         getAllProjectTasks(Number(id)).catch(err => {
           console.error('Lỗi khi tải danh sách Task dự án:', err);
           flash('Lỗi tải danh sách Task: ' + getApiErrorMessage(err), true);
           return [];
         }),
       ]);
-      allGroups = groupResults.flat();
+      allGroups = grps || [];
       loadedTasks = tsks || [];
 
       return { phases: loadedPhases, groups: allGroups, tasks: loadedTasks };

@@ -628,6 +628,50 @@ def serialize_task_group(tg, db, group_index=None, members_map=None):
     }
 
 
+@router.get("/projects/{pid}/task-groups")
+def list_task_groups_for_project(pid: int, db: Session = Depends(get_db)):
+    """Every Task Group across every Phase of a project, in one call.
+
+    Opening the Project Detail page used to fire one GET /phases/{id}/task-
+    groups request PER PHASE, all in parallel (see project/detail/page.tsx's
+    Promise.all) — fine for a single user, but each parallel request holds
+    its own DB connection, and a project with many phases could alone burst
+    past the app's whole connection pool (DB_POOL_SIZE+DB_MAX_OVERFLOW,
+    deliberately small since production shares one Postgres instance across
+    2 brands — see database.py). One request here replaces N, cutting the
+    peak concurrent-connection burst from opening a project down to size
+    regardless of how many phases it has. Output is the same flat, already-
+    serialized shape list_task_groups produces per phase, just concatenated,
+    so the frontend only needs to swap which endpoint it calls.
+    """
+    try:
+        phase_ids = [p.id for p in db.query(Phase.id).filter(Phase.project_id == pid).all()]
+        if not phase_ids:
+            return []
+        groups = (
+            db.query(TaskGroup)
+            .filter(TaskGroup.phase_id.in_(phase_ids))
+            .order_by(TaskGroup.phase_id, TaskGroup.sort_order, TaskGroup.id)
+            .all()
+        )
+        members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+        out = []
+        # group_index is per-PHASE (matches what N separate list_task_groups
+        # calls would have produced), not a running count across the whole
+        # project.
+        index_by_phase: dict[int, int] = {}
+        for g in groups:
+            index_by_phase[g.phase_id] = index_by_phase.get(g.phase_id, 0) + 1
+            try:
+                out.append(serialize_task_group(g, db, index_by_phase[g.phase_id], members_map))
+            except Exception as e:
+                print(f"Error serializing task group {getattr(g, 'id', None)}: {e}")
+        return out
+    except Exception as exc:
+        print(f"Error in list_task_groups_for_project for pid {pid}: {exc}")
+        return []
+
+
 @router.get("/phases/{phid}/task-groups")
 def list_task_groups(phid: int, db: Session = Depends(get_db)):
     try:
