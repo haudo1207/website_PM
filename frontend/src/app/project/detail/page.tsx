@@ -318,6 +318,11 @@ function ProjectDetailContent() {
   // carries their display name for string-based table filtering.
   const memberIdParam = searchParams.get('member_id') || '';
   const highlightTaskParam = searchParams.get('highlightTask') || '';
+  // Deep-link straight to one Feature in the Prototype tab — set by the
+  // extension's "Mở Link" after saving a WIP entry (background.js's
+  // GET_PROJECT_SHARE_LINK handler), so the just-saved feature is what's
+  // selected on landing instead of "Tất cả tính năng".
+  const prototypeFeatureParam = searchParams.get('feature') || '';
   // The tab lives in the URL PATH (/project/detail/tasks), not a query string —
   // next.config.js rewrites that path server-side to /project/detail?tab=tasks
   // purely to pick which page component to render; it does NOT change what the
@@ -9320,7 +9325,7 @@ function ProjectDetailContent() {
 
               {/* TAB: PROTOTYPE — Tính năng & WIP Log, ported from markee-dashboard's concept */}
               {activeMainTab === 'prototype' && id && (
-                <ProjectPrototypeTab projectId={Number(id)} projectName={project?.name} />
+                <ProjectPrototypeTab projectId={Number(id)} projectName={project?.name} initialFeatureName={prototypeFeatureParam} />
               )}
             </div>
 

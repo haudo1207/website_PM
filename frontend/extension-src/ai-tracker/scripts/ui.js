@@ -195,22 +195,20 @@ function setStoredPosition(x, y) {
 
 function applyPositions() {
   const container = getOrCreateContainer();
-  const widget = document.getElementById("markee-widget");
   const { x, y } = getStoredPosition();
 
-  const isOpen = widget && widget.style && (widget.style.display === "flex" || widget.style.display === "block");
+  // The widget popup is now anchored to a fixed viewport corner
+  // (position:fixed; right/bottom — see injectWidget), completely
+  // independent of wherever this toggle button gets dragged to, so no
+  // extra "leave room for the widget" drag boundary is needed anymore
+  // regardless of open/closed state (a prior version constrained dragging
+  // near the top while open, which stopped mattering once the widget
+  // stopped being positioned relative to this container's transform).
 
   let minX = 0;
   let maxX = window.innerWidth - 38;
   let minY = 0;
   let maxY = window.innerHeight - 38;
-
-  if (isOpen) {
-    minX = 320;
-    minY = 570;
-    if (minX > maxX) minX = 0;
-    if (minY > maxY) minY = 0;
-  }
 
   const clampedX = Math.max(minX, Math.min(x, maxX));
   const clampedY = Math.max(minY, Math.min(y, maxY));
@@ -268,7 +266,12 @@ function injectFloatingToggleButton() {
     "text-align: center",
     "box-shadow: 0 6px 20px rgba(91, 83, 245, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
     "cursor: grab",
-    "z-index: 999998",
+    // Was 999998 — ONE LOWER than the widget's own 999999, so once the
+    // popup opened it always rendered on top of the very icon that opens/
+    // closes it (reported: "the icon that opens the big popup" is covered
+    // once it's open). Must stay above the widget so it's always reachable
+    // to toggle closed again.
+    "z-index: 1000000",
     "padding: 0",
     "display: flex",
     "align-items: center",
@@ -668,9 +671,21 @@ function injectWidget(toolName) {
   }
 
   Object.assign(widget.style, {
-    position: "absolute",
-    left: "-285px",
-    top: "-570px",
+    // Was `position:absolute` with a negative left/top offset relative to
+    // the small draggable toggle button — that math only ever works if the
+    // toggle happens to sit near the BOTTOM of the screen. The toggle can
+    // be dragged anywhere (applyPositions() only bounds it within the
+    // viewport, it doesn't pin it to a corner), so subtracting an ~800px
+    // height from an arbitrary Y position can go negative regardless of how
+    // that offset is computed — confirmed: even the viewport-relative calc()
+    // fix still clipped the header off the top on a short/positioned
+    // screen, because the toggle's Y position itself wasn't guaranteed to
+    // leave room. Anchoring the OPEN widget to a fixed viewport corner
+    // instead — independent of wherever the toggle currently is — guarantees
+    // the whole box (header through footer) is always on-screen.
+    position: "fixed",
+    right: "24px",
+    bottom: "24px",
     margin: "0px",
     pointerEvents: "auto",
     // Dark/violet theme aligned with the Markee AI Workspace mockup palette
@@ -687,8 +702,15 @@ function injectWidget(toolName) {
     display: "none",
     flexDirection: "column",
     gap: "8px",
-    width: "280px",
-    height: "560px",
+    width: "440px",
+    // Capped relative to the viewport (not just a flat 800px) — matches the
+    // 24px top/bottom the fixed bottom:24px placement above already reserves,
+    // so the box can never exceed the space actually available between the
+    // bottom anchor and the top of the screen. .body's own overflow-y:auto
+    // below absorbs whatever height this clamp takes away, so content still
+    // scrolls instead of getting cut off.
+    height: "min(800px, calc(100vh - 48px))",
+    maxWidth: "calc(100vw - 48px)",
     boxSizing: "border-box",
     overflow: "hidden",
     touchAction: "none",
@@ -723,6 +745,16 @@ function injectWidget(toolName) {
       #markee-widget .quickbar{display:grid;grid-template-columns:1fr 1fr auto;gap:5px;margin-top:7px;padding:3px;border-radius:10px;background:rgba(11,15,29,.32);border:1px solid rgba(255,255,255,.04);align-items:center;}
       #markee-widget .select-wrap{min-width:0;}
       #markee-widget .select-wrap select{width:100%;height:28px;border-radius:7px;appearance:none;border:1px solid rgba(88,95,255,.38);background:#12172a;color:#eef2ff;padding:0 8px;outline:none;font-size:10.6px;font-weight:800;cursor:pointer;}
+      /* The <select> itself can be themed dark, but its dropdown POPUP is
+         drawn by the OS/browser using a plain white background that CSS
+         can't override — only each <option>'s own color/background apply
+         inside that popup. Every select in this widget inherited the
+         widget's light text color, so once opened the options rendered as
+         near-white text on that white popup: invisible. Force dark option
+         text + white option background everywhere so every select's
+         dropdown list stays readable regardless of the closed control's
+         own (dark) styling. */
+      #markee-widget select option{color:#0b1220;background:#fff;}
       #markee-widget .select-wrap.primary select{border-color:transparent;background:linear-gradient(135deg,#5b53f5,#4e46dc);color:#fff;}
       #markee-widget .go{width:26px;height:28px;border-radius:7px;border:0;background:linear-gradient(135deg,#5b53f5,#4e46dc);color:#fff;font-weight:900;cursor:pointer;flex-shrink:0;}
       #markee-widget .action-download .go{background:linear-gradient(135deg,#19c58f,#0f9f74);}
@@ -735,6 +767,12 @@ function injectWidget(toolName) {
       #markee-widget .panel.active{display:flex;}
       #markee-widget .stack{display:flex;flex-direction:column;gap:8px;min-height:0;}
       #markee-widget .card{border:1px solid #2c3356;background:linear-gradient(180deg,#1a2038,#161a2f);border-radius:12px;overflow:hidden;flex-shrink:0;}
+      /* The project quick-picker card stretches to fill whatever room the
+         widget's fixed height leaves after the summary card above it —
+         without this, a big empty gap opened up at the bottom of the
+         widget (400x720+ tall) since every card/list here was
+         content-sized only, never grow-to-fill. */
+      #markee-widget .card-grow{flex:1;min-height:0;display:flex;flex-direction:column;}
       #markee-widget .summary-line{min-height:34px;display:flex;align-items:center;gap:6px;padding:6px 9px;cursor:pointer;}
       #markee-widget .summary-line+.summary-line{border-top:1px solid rgba(255,255,255,.045);}
       #markee-widget .summary-line-label{display:flex;align-items:center;gap:4px;color:#cbd2eb;font-size:10px;font-weight:900;white-space:nowrap;min-width:58px;}
@@ -778,7 +816,7 @@ function injectWidget(toolName) {
       #markee-widget .pf-title{font-size:9.5px;font-weight:900;color:#8f99ff;letter-spacing:.04em;}
       #markee-widget .pf-project{font-size:9.5px;font-weight:800;color:#fff;}
       #markee-widget .pf-select{width:100%;}
-      #markee-widget .project-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;max-height:180px;}
+      #markee-widget .project-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;flex:1;min-height:120px;}
       #markee-widget .item{min-height:36px;border-radius:9px;background:#111629;border:1px solid rgba(255,255,255,.055);display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;}
       #markee-widget .item:hover{border-color:rgba(91,99,255,.42);}
       #markee-widget .item.selected{border-color:#5f66ff;background:#23294b;}
@@ -948,14 +986,14 @@ function injectWidget(toolName) {
               </div>
             </div>
 
-            <div class="card">
+            <div class="card card-grow">
               <div class="card-head">
                 <div class="card-title">📁 Chọn nhanh dự án</div>
                 <div class="count" id="markee-projectCount">0 dự án</div>
               </div>
               <div class="project-control-row">
-                <button class="filter fav active" data-filter="favorite" type="button">⭐ Ưu thích</button>
-                <button class="filter all" data-filter="all" type="button">📁 Tất cả</button>
+                <button class="filter fav" data-filter="favorite" type="button">⭐ Ưu thích</button>
+                <button class="filter all active" data-filter="all" type="button">📁 Tất cả</button>
                 <button class="filter recent" data-filter="recent" type="button">🕒 Gần đây</button>
 
                 <div class="search-wrap">
@@ -1500,8 +1538,16 @@ function injectWidget(toolName) {
     </div>
     <datalist id="markee-featureList"></datalist>
   `;
-  const container = getOrCreateContainer();
-  container.appendChild(widget);
+  // Appended directly to <body> — NOT into #markee-container, which has a
+  // CSS `transform` (used for its own drag-to-reposition). A `transform` on
+  // an ancestor becomes the containing block for position:fixed
+  // descendants, so a widget nested inside that container could never
+  // actually anchor to the real viewport corner no matter what right/bottom
+  // values it used — confirmed by a live report: even dragging the toggle
+  // to the very bottom of a 15" screen, the popup still clipped its own
+  // header off the top. The toggle button itself stays inside the
+  // draggable container; only this popup needs true viewport anchoring.
+  appendToBodySafe(widget);
 
   // KPI Prototype: dự án hiện tại là 1 lựa chọn thật, đổi được bất cứ lúc
   // nào — không còn bị khoá cứng theo lần tải extension nữa.
@@ -1737,6 +1783,18 @@ function injectWidget(toolName) {
       projSelect.addEventListener("change", () => {
         const label = projSelect.options[projSelect.selectedIndex]?.textContent || "-- Chọn Dự án --";
         if (projectToken) projectToken.textContent = projSelect.value ? label : "-- Chọn Dự án --";
+        // THE actual "which project am I saving/sharing to" answer lives in
+        // chrome.storage (read via getSelectedProjectAsync/GET_SELECTED_PROJECT
+        // — see the real "Lưu Tóm tắt" save handler and the share-link Mở
+        // Link flow) — NOT in legacyProj's value below, which only feeds the
+        // feature list/display. Without this, picking a project here never
+        // actually changed what got saved to or shared — it silently kept
+        // using whatever project was last selected through the OLD popup,
+        // which is exactly the reported "chọn dự án khác mà nó lưu qua dự
+        // án cũ" bug.
+        if (projSelect.value) {
+          chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: Number(projSelect.value), projectName: label });
+        }
         if (legacyProj) {
           if (Array.from(legacyProj.options).every((o) => o.value !== projSelect.value)) {
             const opt = document.createElement("option");
@@ -1764,6 +1822,12 @@ function injectWidget(toolName) {
           const dl = document.getElementById("markee-featureList");
           if (dl) dl.innerHTML = features.map((f) => `<option value="${f}"></option>`).join("");
         });
+        // Keep the "Chọn nhanh dự án" list's highlighted/selected row in
+        // sync with whatever was just picked up here in the summary card —
+        // it reads its selected id from legacyProj.value at render time
+        // only, so without an explicit refresh here the two pickers drifted
+        // out of sync the moment you changed the project from this side.
+        if (typeof refreshSkinProjectList === "function") refreshSkinProjectList();
       });
     }
 
@@ -1832,7 +1896,10 @@ function injectWidget(toolName) {
   //    markup. Selecting a project drives the exact same summary-card
   //    cascade above (via the legacy customer/project selects), so opening
   //    the summary's expanded detail always reflects the last pick here. --
-  let skinProjectFilter = "favorite";
+  // Defaults to "all" — "favorite" starts empty for every user (no favorites
+  // saved yet), and defaulting to it made the widget look like it couldn't
+  // see any real projects at all on first load.
+  let skinProjectFilter = "all";
   let skinProjectFilterInitDone = false;
   function refreshSkinProjectList() {
     const listEl = document.getElementById("markee-projectList");
@@ -1903,9 +1970,17 @@ function injectWidget(toolName) {
             row.onclick = () => {
               const newRecent = [p.id, ...recentIds.filter((id) => Number(id) !== Number(p.id))].slice(0, 10);
               chrome.storage.local.set({ markee_recent_project_ids: newRecent });
+              // Same fix as the summary card's own project-select change
+              // handler above — this is the ACTUAL "selected project" the
+              // save/share-link logic reads (getSelectedProjectAsync), not
+              // just a display update.
+              chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: p.id, projectName: p.name });
               const custSelect = document.getElementById("markee-summaryCustomerSelect");
               const projSelect = document.getElementById("markee-summaryProjectSelect");
-              const custId = String(p.customer_id || (p.customer && p.customer.id) || "");
+              // Customer "id" is really its customer_name (see GET_CUSTOMERS
+              // in background.js — the relational customer_id FK is almost
+              // never populated on real projects, customer_name is).
+              const custId = String(p.customer_name || (p.customer && p.customer.name) || "");
               if (custSelect && custId) {
                 if (Array.from(custSelect.options).every((o) => o.value !== custId)) {
                   const opt = document.createElement("option");

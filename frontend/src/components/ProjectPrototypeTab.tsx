@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import {
   Target, Paperclip, Plus, Clock, Brain, Info, Trash2, Loader2, Download, Pencil, Check, X, Eye, FileText, Sparkles, Upload,
   Share2, Users, ChevronDown, ChevronUp, BookOpen,
@@ -105,10 +105,14 @@ function formatDate(iso: string | null) {
   return d.toLocaleString('vi-VN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
-export default function ProjectPrototypeTab({ projectId, projectName }: { projectId: number; projectName?: string }) {
+export default function ProjectPrototypeTab({ projectId, projectName, initialFeatureName }: { projectId: number; projectName?: string; initialFeatureName?: string }) {
   const [features, setFeatures] = useState<Feature[]>([]);
   const [logs, setLogs] = useState<FeatureLog[]>([]);
   const [selectedFeatureId, setSelectedFeatureId] = useState<number | 'all'>('all');
+  // Deep-link support (?feature=<name> from the extension's "Mở Link") —
+  // once the real Feature list loads, select the one matching this name so
+  // the just-saved WIP entry is what's showing instead of "Tất cả tính năng".
+  const featureDeepLinkAppliedRef = useRef(false);
   const [loading, setLoading] = useState(true);
   const [newFeatureName, setNewFeatureName] = useState('');
   const [showNewFeatureInput, setShowNewFeatureInput] = useState(false);
@@ -166,6 +170,16 @@ export default function ProjectPrototypeTab({ projectId, projectName }: { projec
   }, [projectId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  useEffect(() => {
+    if (!initialFeatureName || featureDeepLinkAppliedRef.current || features.length === 0) return;
+    const match = features.find((f) => f.name.trim().toLowerCase() === initialFeatureName.trim().toLowerCase());
+    if (match) {
+      setSelectedFeatureId(match.id);
+      setMainSubTab('timeline');
+    }
+    featureDeepLinkAppliedRef.current = true;
+  }, [initialFeatureName, features]);
 
   const loadKnowledge = useCallback(async () => {
     setKnowledgeLoading(true);
