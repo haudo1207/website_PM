@@ -231,17 +231,22 @@ export default function MultiTeamProjectComparison() {
   }, [timeWindow.start_date, timeWindow.end_date]);
   const closeTeamDetail = useCallback(() => setDetailTeam(null), []);
 
-  // Section 4 helpers — member workload classification (KPI%-based)
-  // KPI% = period_kpi / weeks_divisor. 100 KPI points per fiscal week = 100%.
+  // Section 4 helpers — member workload classification, based on Giao%
+  // (assigned KPI ÷ weeks_divisor), NOT KPI% (completed-only). KPI% stays
+  // at 0 until a task is actually marked Done, so someone already holding
+  // 3 tasks' worth of assigned work would still look "not overloaded" by
+  // that metric alone — Giao% reflects what's actually on their plate
+  // regardless of completion, so overload can be flagged before anything
+  // is finished. 100 Giao points per fiscal week = 100%.
   const memberKpiPct = (m: TeamComparisonMember): number => {
-    return m.kpi_pct ?? 0;
+    return m.giao_pct ?? 0;
   };
 
-  // Leader's personal KPI% (own tasks only, NOT team aggregate). Mirrors
+  // Leader's personal Giao% (own tasks only, NOT team aggregate). Mirrors
   // `memberKpiPct` so the Leader card's progress bar uses the same data
   // shape as the Member cards.
   const leaderKpiPct = (t: TeamComparisonTeam): number => {
-    return t.leader_kpi_pct ?? 0;
+    return t.leader_giao_pct ?? 0;
   };
 
   // Classify using workload_settings from backend, with hardcoded fallback
@@ -270,7 +275,7 @@ export default function MultiTeamProjectComparison() {
 
   // Leader's individual workload status (from own tasks, NOT team aggregate)
   const leaderStatus = (t: TeamComparisonTeam): 'overload' | 'normal' | 'capacity' | 'not_working' => {
-    return classifyKpiPct(t.leader_kpi_pct ?? 0);
+    return classifyKpiPct(t.leader_giao_pct ?? 0);
   };
 
   const STATUS_RANK: Record<string, number> = {
@@ -883,7 +888,7 @@ export default function MultiTeamProjectComparison() {
                             </span>
                           </div>
                         </div>
-                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
+                        <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 mt-2.5 text-[10px]">
                           <SmallStat label="Done" value={t.leader_done ?? t.done} color="text-emerald-600" />
                           <SmallStat label="Doing" value={t.leader_doing ?? t.in_progress} color="text-blue-600" />
                           <SmallStat label="Trễ" value={t.leader_overdue ?? t.overdue} color={(t.leader_overdue ?? t.overdue) > 0 ? 'text-rose-600' : 'text-slate-400'} />
@@ -900,21 +905,29 @@ export default function MultiTeamProjectComparison() {
                               <p className="text-white/50 mt-1.5">Đây là cùng giá trị được dùng trong Section 4; không có phép tính thứ hai ở UI.</p>
                             </>}
                           />
-                          <SmallStat label="Manday" value={`${(t.leader_manday_actual ?? t.actual_md).toFixed(1)}/${(t.leader_manday_est ?? t.plan_md).toFixed(1)}`} />
-                          <SmallStat label="KPI%"
-                            value={`${(t.leader_kpi_pct ?? 0).toFixed(1)}%`}
-                            color={(t.leader_kpi_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_kpi_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                          <SmallStat label="Giao" value={(t.leader_giao ?? t.giao ?? 0).toFixed(1)} color="text-violet-600"
                             tooltipContent={<>
-                              <p className="font-bold text-white/90 mb-1">KPI% (Leader)</p>
+                              <p className="font-bold text-white/90 mb-1">Giao</p>
                               <p className="text-white/80 mb-1">Công thức:</p>
-                              <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                              <p className="text-white font-mono">Giao = Σ (priority_kpi_base × manday_est)</p>
+                              <p className="text-white/60 mt-1.5">Tính cho MỌI task được giao trong kỳ, bất kể trạng thái (Done/Doing/chưa làm) — không giống Total KPI (chỉ tính task Done). Chỉ tính task của Leader này (không bao gồm toàn bộ team).</p>
+                            </>}
+                          />
+                          <SmallStat label="Manday" value={`${(t.leader_manday_actual ?? t.actual_md).toFixed(1)}/${(t.leader_manday_est ?? t.plan_md).toFixed(1)}`} />
+                          <SmallStat label="Giao%"
+                            value={`${(t.leader_giao_pct ?? 0).toFixed(1)}%`}
+                            color={(t.leader_giao_pct ?? 0) > 120 ? 'text-rose-600' : (t.leader_giao_pct ?? 0) >= 90 ? 'text-emerald-600' : 'text-slate-600'}
+                            tooltipContent={<>
+                              <p className="font-bold text-white/90 mb-1">Giao% (Leader)</p>
+                              <p className="text-white/80 mb-1">Công thức:</p>
+                              <p className="text-white font-mono">Giao% = Giao ÷ Weeks Divisor</p>
                               <p className="text-white/60 mt-1.5">Trong đó:</p>
                               <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
-                                <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc. Chỉ tính riêng task của Leader (không bao gồm toàn bộ team).</li>
+                                <li><b>Giao:</b> Tổng KPI được giao (mọi trạng thái) của Leader này trong kỳ — không chỉ task Done.</li>
                                 <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
                               </ul>
-                              <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
-                              <p className="text-white/40 mt-1 text-[9px]">⚠️ Khác với KPI TRUNG BÌNH: KPI% chỉ tính task Done có end_date_actual trong kỳ, KPI TRUNG BÌNH tính tổng KPI tất cả task trong kỳ.</p>
+                              <p className="text-white/50 mt-1.5">100% = trung bình 100 điểm Giao/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                              <p className="text-white/40 mt-1 text-[9px]">⚠️ Dùng Giao% (không phải KPI%) để đánh giá quá tải, vì Giao tính cả task chưa Done — không bị "chưa xong nên chưa tính" như KPI%.</p>
                             </>}
                           />
                         </div>
@@ -967,7 +980,7 @@ export default function MultiTeamProjectComparison() {
                                   <span className="text-[10px] font-bold text-slate-400 hover:text-[#0058be]">🔍</span>
                                 </div>
                               </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 mt-2.5 text-[10px]">
+                              <div className="grid grid-cols-3 sm:grid-cols-7 gap-2 mt-2.5 text-[10px]">
                                 <SmallStat label="Done" value={m.done} color="text-emerald-600" />
                                 <SmallStat label="Doing" value={m.in_progress} color="text-blue-600" />
                                 <SmallStat label="Trễ" value={m.overdue} color={m.overdue > 0 ? 'text-rose-600' : 'text-slate-400'} />
@@ -984,20 +997,29 @@ export default function MultiTeamProjectComparison() {
                                     <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4; không có phép tính thứ hai ở UI.</p>
                                   </>}
                                 />
+                                <SmallStat label="Giao" value={(m.giao ?? 0).toFixed(1)} color="text-violet-600"
+                                  tooltipContent={<>
+                                    <p className="font-bold text-white/90 mb-1">Giao</p>
+                                    <p className="text-white/80 mb-1">Công thức:</p>
+                                    <p className="text-white font-mono">Giao = Σ (priority_kpi_base × manday_est)</p>
+                                    <p className="text-white/60 mt-1.5">Tính cho MỌI task được giao trong kỳ, bất kể trạng thái (Done/Doing/chưa làm) — không giống Total KPI (chỉ tính task Done).</p>
+                                  </>}
+                                />
                                 <SmallStat label="Manday" value={`${m.manday_actual.toFixed(1)}/${m.manday_est.toFixed(1)}`} />
-                                <SmallStat label="KPI%"
+                                <SmallStat label="Giao%"
                                   value={`${kpiPct.toFixed(1)}%`}
                                   color={kpiPct > 120 ? 'text-rose-600' : kpiPct >= 90 ? 'text-emerald-600' : 'text-slate-600'}
                                   tooltipContent={<>
-                                    <p className="font-bold text-white/90 mb-1">KPI% (Thành viên)</p>
+                                    <p className="font-bold text-white/90 mb-1">Giao% (Thành viên)</p>
                                     <p className="text-white/80 mb-1">Công thức:</p>
-                                    <p className="text-white font-mono">KPI% = Period KPI ÷ Weeks Divisor</p>
+                                    <p className="text-white font-mono">Giao% = Giao ÷ Weeks Divisor</p>
                                     <p className="text-white/60 mt-1.5">Trong đó:</p>
                                     <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
-                                      <li><b>Period KPI:</b> Tổng kpi_assigned + kpi_support từ các task <b>đã hoàn thành (Done)</b> có end_date_actual nằm trong kỳ lọc</li>
+                                      <li><b>Giao:</b> Tổng KPI được giao (mọi trạng thái) trong kỳ.</li>
                                       <li><b>Weeks Divisor:</b> Số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (tùy lịch tài chính), Năm = 52</li>
                                     </ul>
-                                    <p className="text-white/50 mt-1.5">100% = trung bình 100 KPI điểm/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                                    <p className="text-white/50 mt-1.5">100% = trung bình 100 điểm Giao/tuần. {"<"}90%: Còn capacity · 90–120%: Bình thường · {">"}120%: Quá tải.</p>
+                                    <p className="text-white/40 mt-1 text-[9px]">⚠️ Dùng Giao% (không phải KPI%) để đánh giá quá tải, vì Giao tính cả task chưa Done.</p>
                                   </>}
                                 />
                               </div>
@@ -1084,6 +1106,14 @@ export default function MultiTeamProjectComparison() {
                             <li><b>Phạm vi:</b> Tất cả thành viên còn active trong kỳ của team (loại trừ Member đã nghỉ việc trong kỳ qua <code>employment_status / off_effective_at</code>).</li>
                           </ul>
                           <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4; không có phép tính thứ hai ở UI.</p>
+                        </>}
+                      />
+                      <SummaryStat label="Giao (Team)" value={(detailTeam.giao ?? 0).toFixed(1)} color="text-violet-600"
+                        tooltipContent={<>
+                          <p className="font-bold text-white/90 mb-1">Giao (Team)</p>
+                          <p className="text-white/80 mb-1">Công thức:</p>
+                          <p className="text-white font-mono">Giao = Σ (priority_kpi_base × manday_est)</p>
+                          <p className="text-white/60 mt-1.5">Tổng KPI được giao cho cả team, mọi trạng thái (Done/Doing/chưa làm) — không giống Total KPI (chỉ tính task Done).</p>
                         </>}
                       />
                       <SummaryStat label="Efficiency" value={`${detailTeam.efficiency.toFixed(1)}%`} />
