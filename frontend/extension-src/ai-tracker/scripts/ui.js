@@ -277,7 +277,12 @@ function injectFloatingToggleButton() {
     "text-align: center",
     "box-shadow: 0 6px 20px rgba(91, 83, 245, 0.5), 0 2px 8px rgba(0, 0, 0, 0.3)",
     "cursor: grab",
-    "z-index: 999998",
+    // Was 999998 — ONE LOWER than the widget's own 999999, so once the
+    // popup opened it always rendered on top of the very icon that opens/
+    // closes it (reported: "the icon that opens the big popup" is covered
+    // once it's open). Must stay above the widget so it's always reachable
+    // to toggle closed again.
+    "z-index: 1000000",
     "padding: 0",
     "display: flex",
     "align-items: center",
