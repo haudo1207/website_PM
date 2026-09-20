@@ -141,34 +141,52 @@ export default function MultiTeamProjectComparison() {
   const workloadSettings: WorkloadSetting[] = teamComparisonData?.workload_settings || [];
 
   // ── Tasks + Projects fetch — required by the Member Detail modal opened
-  //    from Section 4 click. Same endpoints Overview already uses
-  //    (`/api/all-tasks-global`, `/api/projects`), so no new data source.
+  //    from Section 4 click. Tasks come from `/system-audit/team-comparison-tasks`
+  //    (NOT `/api/all-tasks-global`): that endpoint restricts a Leader
+  //    caller to projects in their OWN Workspace scope, which is the wrong
+  //    scope here — Team Load already decides which Teams/Members this
+  //    caller may see via `_aggregate_team_comparison`'s own
+  //    `caller_scopes` filter, so a Member's card can legitimately show
+  //    real data for a project outside the caller's personal scope while
+  //    `/api/all-tasks-global` would silently return zero tasks for them,
+  //    leaving the modal empty despite the card having data.
   const { data: allTasksData } = useQuery<any[]>({
-    queryKey: ['team-load-all-tasks-global', teamWsParam || 'all'],
+    queryKey: ['team-load-comparison-tasks'],
     queryFn: async () => {
       const ts = Date.now();
       const token = getToken();
       const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-      const url = `/api/all-tasks-global?_t=${ts}${teamWsParam ? `&workspace=${encodeURIComponent(teamWsParam)}` : ''}`;
-      const res = await axios.get(url, config).catch(() => ({ data: [] }));
-      return res.data || [];
-    },
-    staleTime: 2 * 60_000,
-  });
-  const { data: allProjectsData } = useQuery<any[]>({
-    queryKey: ['team-load-projects', teamWsParam || 'all'],
-    queryFn: async () => {
-      const ts = Date.now();
-      const token = getToken();
-      const config = token ? { headers: { Authorization: `Bearer ${token}` } } : {};
-      const url = `/api/projects?_t=${ts}${teamWsParam ? `&workspace=${encodeURIComponent(teamWsParam)}` : ''}`;
+      const url = `/api/system-audit/team-comparison-tasks?_t=${ts}`;
       const res = await axios.get(url, config).catch(() => ({ data: [] }));
       return res.data || [];
     },
     staleTime: 2 * 60_000,
   });
   const allTasks: any[] = allTasksData || [];
-  const allProjects: any[] = allProjectsData || [];
+  // Derived directly from allTasks — NOT a separate `/api/projects` fetch.
+  // `/api/projects` uses the STRICT `project_query_for_user` scope
+  // (narrower than even the old `/api/all-tasks-global`, per its own
+  // comment: "always use the strict project_query_for_user so the list
+  // visibility matches the detail access scope"), so a project could be
+  // completely absent from it while `team-comparison-tasks` above still
+  // (correctly) returns a real task for it — the modal's "Dự án đang
+  // tham gia" list/count would then show empty/0 despite the task list
+  // right below it having real rows for that same project. The modal only
+  // ever needs `id`/`name` per project (see `MemberDetailModal.tsx`'s
+  // `activeProjects` — every other stat is derived from the tasks
+  // themselves), so building it from the already-fixed task list
+  // guarantees the two can never disagree again.
+  const allProjects = useMemo(() => {
+    const map = new Map<string, { id: any; name: string }>();
+    for (const t of allTasks) {
+      if (t.project_id == null) continue;
+      const key = String(t.project_id);
+      if (!map.has(key)) {
+        map.set(key, { id: t.project_id, name: t.projectName || `Project #${t.project_id}` });
+      }
+    }
+    return Array.from(map.values());
+  }, [allTasks]);
 
   // ── Section 4 → Member Detail modal state ────────────────────────
   // Type is `any` (matching the Overview implementation at

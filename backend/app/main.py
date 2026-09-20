@@ -1,4 +1,17 @@
 import os
+import logging
+
+# Without this, the root logger has no handler at all, so every
+# `logger.info(...)` call in the app (the Zalo auto-summary loop, meeting
+# reminders, etc.) is silently swallowed by Python's logging "last resort"
+# handler (WARNING+ only) — `docker logs` never shows it, making it
+# impossible to tell whether a background loop is even running, sleeping,
+# or erroring. Configure it once, here, before any module-level logger is
+# created.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 from typing import Optional
 from fastapi import FastAPI, Depends, Header
@@ -1809,20 +1822,36 @@ async def start_zalo_summary_loop():
             finally:
                 db.close()
 
-        daily_at = await asyncio.to_thread(_current_daily_at)
-        if daily_at:
-            logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
-            await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
-        while True:
+        async def _run_tick_once():
             db = BackgroundSessionLocal()
             try:
                 created = await asyncio.to_thread(run_summary_tick, db, interval)
                 if created:
                     logger.info(f"Zalo summary tick: created {created} summaries")
+                else:
+                    logger.info("Zalo summary tick: nothing new to summarize")
             except Exception as e:
                 logger.error(f"Zalo summary tick failed: {e}")
             finally:
                 db.close()
+
+        daily_at = await asyncio.to_thread(_current_daily_at)
+        if daily_at:
+            logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
+            # Catch-up: tick once immediately on startup instead of
+            # unconditionally waiting for the NEXT scheduled slot. Without
+            # this, a backend restart at/after today's daily_at (a deploy,
+            # a crash) silently skipped that day's summary entirely — this
+            # loop only ever fires exactly at the next computed target, with
+            # no memory of whether today's run already happened. Safe to
+            # call speculatively: run_summary_tick windows forward from each
+            # conversation's own last summary and skips ones with nothing
+            # new (see its own docstring), so this is a no-op if today's run
+            # already completed, and a real catch-up otherwise.
+            await _run_tick_once()
+            await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
+        while True:
+            await _run_tick_once()
             daily_at = await asyncio.to_thread(_current_daily_at)
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
 

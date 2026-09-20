@@ -621,6 +621,79 @@ def get_team_comparison(
     )
 
 
+@router.get("/team-comparison-tasks")
+def get_team_comparison_tasks(db: Session = Depends(get_db), current_user=Depends(require_audit_user)):
+    """Raw task list backing Section 4's Member Detail modal — same shape as
+    `/api/all-tasks-global`, but deliberately WITHOUT that endpoint's own
+    per-Leader Workspace-scope restriction.
+
+    `/api/all-tasks-global` restricts a Leader caller to projects in their
+    OWN granted Workspace(s) (`project_query_for_user_broad`) — correct for
+    its purpose (a Leader's personal team-wide picture), but wrong here:
+    `_aggregate_team_comparison` above already decides which Teams/Leaders
+    this caller may see on Team Load via its own `caller_scopes` filter
+    (same `require_audit_user` permission this route requires); a Member's
+    task can legitimately live on a project outside the CALLER's personal
+    scope/project_members rows (e.g. a different Team's project, or a task
+    assigned without a matching project_members row) while that Member's
+    own card is still correctly visible on Team Load. Reusing the
+    Leader-scoped endpoint for the modal's task fetch silently produced an
+    empty task list in exactly that case, even though the card itself
+    (fed by the unrestricted `_aggregate_team_comparison` query) showed
+    real data — this endpoint fixes that by matching the same "no personal
+    Workspace restriction" scope `_aggregate_team_comparison` already uses,
+    gated by the same audit permission.
+
+    Still scoped by the caller's OWN Workspace access (`caller_scopes`) —
+    the same gate `_aggregate_team_comparison` uses to decide which
+    Teams/Leaders are visible at all — so a non-super_admin Leader calling
+    this directly can't pull every task system-wide, only tasks in a
+    Workspace they're actually granted (matching what Team Load itself
+    would ever show them, just without the extra "own project_members row"
+    restriction that broke the modal).
+    """
+    from .task_groups import serialize_task
+    from ..models.skill_master import Group, Skill
+
+    caller_scopes = user_allowed_scopes(db, current_user)
+    is_super_admin = (
+        getattr(current_user, "role", None) == ROLE_SUPER_ADMIN
+        or caller_scopes == ALL_SCOPE
+    )
+
+    query = (
+        db.query(Task, TaskGroup, Phase, Project)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .join(Project, Phase.project_id == Project.id)
+    )
+    if not is_super_admin:
+        query = query.filter(sql_func.lower(Project.data_scope).in_(caller_scopes or set()))
+    results = query.all()
+
+    members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    groups_map = {g.id: g.name for g in db.query(Group).all()}
+    skills_map = {s.id: s.name for s in db.query(Skill).all()}
+
+    output = []
+    for task, tg, phase, project in results:
+        try:
+            t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
+            t_dict["name"] = task.detail or f"Task #{task.id}"
+            t_dict["project_id"] = project.id
+            t_dict["projectName"] = project.name
+            t_dict["projectDataScope"] = project.data_scope
+            t_dict["customerName"] = project.customer_name
+            t_dict["year"] = project.year
+            t_dict["task_group_name"] = tg.name
+            t_dict["phase_name"] = phase.name
+        except Exception as e:
+            print(f"Error serializing task {getattr(task, 'id', None)}: {e}")
+            continue
+        output.append(t_dict)
+    return output
+
+
 @router.get("/team-detail")
 def get_team_detail(
     leader_user_id: int = Query(..., description="Canonical User.id of the Leader"),
@@ -1035,12 +1108,19 @@ def _aggregate_team_comparison(
         elif parsed_end is not None:
             or_conditions.append(not_done & (Task.end_date_est <= parsed_end))
 
-        # Condition 3: Task is overdue relative to the period
+        # Condition 3: Task is overdue relative to the period. Also requires
+        # the task to have EXISTED by the period's end (created_at <=
+        # parsed_end) — without this, a task created THIS week with its
+        # deadline set to any date before an earlier period's end matched
+        # as "overdue" in that earlier period too, retroactively counting
+        # brand-new work into weeks that had already passed before the
+        # task was even created.
         if parsed_end is not None:
             or_conditions.append(
                 (Task.end_date_est < parsed_end) &
                 (Task.end_date_est.isnot(None)) &
-                (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+                (Task.status.notin_(["Done", "done", "Cancel", "cancel"])) &
+                (Task.created_at <= parsed_end)
             )
 
         # Combine with OR - task matches if ANY condition is true
@@ -1082,10 +1162,15 @@ def _aggregate_team_comparison(
         elif parsed_end is not None:
             giao_or_conditions.append(Task.end_date_est <= parsed_end)
         if parsed_end is not None:
+            # Same created_at guard as time_filters' Condition 3 above — a
+            # task can't be "overdue relative to" a period that ended
+            # before the task existed, or its Giao would retroactively
+            # leak into weeks it was never actually assigned/open during.
             giao_or_conditions.append(
                 (Task.end_date_est < parsed_end) &
                 (Task.end_date_est.isnot(None)) &
-                (Task.status.notin_(["Done", "done", "Cancel", "cancel"]))
+                (Task.status.notin_(["Done", "done", "Cancel", "cancel"])) &
+                (Task.created_at <= parsed_end)
             )
         if giao_or_conditions:
             giao_time_filters.append(or_(*giao_or_conditions))
