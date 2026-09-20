@@ -162,6 +162,13 @@ def member_to_dict(m: Member) -> dict:
             for s in m.skills
         ],
         "employment_status": m.employment_status or "ON",
+        # Stored as naive UTC (datetime.utcnow(), see sync_from_recruitment)
+        # — append "Z" explicitly so the frontend's `new Date(...)` parses it
+        # as the correct UTC instant instead of local time (Dashboard's
+        # period-aware OFF filter, isMemberActiveInPeriod, compares this
+        # against period-boundary Date objects and silently always fell back
+        # to "no cutoff" before this field existed in the response at all).
+        "off_effective_at": (m.off_effective_at.isoformat() + "Z") if m.off_effective_at else None,
         "has_account": m.user is not None,
         "account_active": m.user.is_active if m.user else None,
     }
