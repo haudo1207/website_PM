@@ -21,6 +21,7 @@ from ..models.task_group import TaskGroup
 from ..models.phase import Phase
 from ..utils.auth import get_current_user, require_admin, require_audit_user
 from ..utils.access import (
+    _member_active_in_window,
     get_workspaces,
     resolve_workspace,
     audit_log_query_for_user,
@@ -893,6 +894,20 @@ def _aggregate_team_comparison(
         li for li in leader_info
         if li["member_id"] is not None and len(team_by_leader.get(li["member_id"], [])) > 0
     ]
+
+    # Apply the period-aware OFF filter (Member.off_effective_at) to the
+    # team member roster. Leaders whose entire managed team turns out to
+    # be OFF for the requested window are dropped by the re-evaluation of
+    # `len(team_by_leader.get(li["member_id"], [])) > 0` below.
+    for leader_member_id in list(team_by_leader.keys()):
+        team_by_leader[leader_member_id] = [
+            m for m in team_by_leader[leader_member_id]
+            if _member_active_in_window(m, parsed_start, parsed_end)
+        ]
+    leader_info = [
+        li for li in leader_info
+        if li["member_id"] is not None and len(team_by_leader.get(li["member_id"], [])) > 0
+    ]
     if not leader_info:
         return {
             "workspace": workspace_label,
@@ -902,11 +917,21 @@ def _aggregate_team_comparison(
 
     # 7. Build member-id list across all kept leaders, fetch tasks in one go.
     team_member_ids: set[int] = set()
+    # Lookup map for the OFF check below — keyed by leader's Member.id so we
+    # can reuse the same per-window rule for the leader themself.
+    leader_member_active_in_window: dict[int, bool] = {}
     for li in leader_info:
         # Include the leader's own member_id so their personal task data
         # is included in per_member / per_member_period_kpi aggregations.
+        # Skip if the leader themself is OFF for the requested window
+        # (mirrors the same rule used for managed members above).
         if li["member_id"] is not None:
-            team_member_ids.add(li["member_id"])
+            leader_member = db.query(Member).filter(Member.id == li["member_id"]).first()
+            leader_member_active_in_window[li["member_id"]] = _member_active_in_window(
+                leader_member, parsed_start, parsed_end
+            )
+            if leader_member_active_in_window[li["member_id"]]:
+                team_member_ids.add(li["member_id"])
         for m in team_by_leader.get(li["member_id"], []):
             if m.id is not None:
                 team_member_ids.add(m.id)
