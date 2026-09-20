@@ -206,8 +206,17 @@ function applyPositions() {
   let maxY = window.innerHeight - 38;
 
   if (isOpen) {
-    minX = 320;
-    minY = 570;
+    // Kept roughly in sync with the widget's own left/top offsets above
+    // (-445px / calc(-10px - min(800px, 100vh-24px))) — these are the
+    // drag-boundary minimums so the toggle button can't be dragged
+    // somewhere that leaves no room to open the widget at all. The actual
+    // "don't render off the top of a short screen" fix lives in the CSS
+    // top expression itself now (self-adjusts with the viewport), so this
+    // pair matters less than it used to, but keeping the numbers close
+    // avoids a confusing dead zone where dragging "succeeds" per this
+    // clamp yet still visually crowds the widget against the screen edge.
+    minX = 480;
+    minY = 810;
     if (minX > maxX) minX = 0;
     if (minY > maxY) minY = 0;
   }
@@ -673,10 +682,17 @@ function injectWidget(toolName) {
     // per follow-up feedback) to match the mockup's real proportions (its
     // own screenshots render at ~420-440 wide x ~780-800 tall). left/top
     // offset the widget above-and-left of the floating toggle button
-    // (roughly -(width+5) / -(height+10)); kept in the same relationship,
-    // just scaled to the new size.
+    // (roughly -(width+5) / -(height+10)).
+    // `top` used to be a flat "-810px" — correct on a tall screen, but on a
+    // shorter one (reported: fine on a 24" monitor, overflows off the top
+    // on a <15" laptop) the widget's actual rendered height already shrinks
+    // via the `height` clamp below, while this offset stayed a fixed 810px
+    // regardless — the anchor point and the box size drifted out of sync,
+    // so it kept overshooting upward past the (now shorter) box's own top.
+    // Deriving `top` from the SAME min(800px, 100vh-24px) expression keeps
+    // the two permanently in lockstep on every screen size.
     left: "-445px",
-    top: "-810px",
+    top: "calc(-10px - min(800px, 100vh - 24px))",
     margin: "0px",
     pointerEvents: "auto",
     // Dark/violet theme aligned with the Markee AI Workspace mockup palette

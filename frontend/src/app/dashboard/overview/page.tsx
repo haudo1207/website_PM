@@ -1452,14 +1452,19 @@ export default function OverviewTab() {
         || pAllTasks.some((t: any) => isSameId(t.assigned_id, drilledPersonId) || isSameId(t.support_id, drilledPersonId))
         || (Boolean(drilledPersonName) && pmName.includes(drilledPersonName));
 
+      // "Tiến độ" on the "Dự án đang triển khai" cards — per explicit user
+      // request, this must reflect what the currently-viewed team/member
+      // actually did on the project (Done/Tổng of pTasksForStats, already
+      // scoped to teamMemberIds + the active Tuần/Tháng/Năm filter), NOT
+      // the project's Master-Phase stage. phaseProgressPct keeps the old
+      // phase-based number available under its own name in case any other
+      // surface fed by this same object still wants it.
+      const teamTaskProgressPct = pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0;
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
-        // Issue 3 — Project Progress from Settings → Master Phases (single
-        // source of truth). Fall back to 0 only if the backend omitted the
-        // field. Task-completion percentage is preserved as
-        // `taskCompletionPct` for surfaces that intentionally show it.
-        progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
-        taskCompletionPct: pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0,
+        progress: teamTaskProgressPct,
+        phaseProgressPct: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
+        taskCompletionPct: teamTaskProgressPct,
         totalTasks: pTasksForStats.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
@@ -1567,10 +1572,15 @@ export default function OverviewTab() {
       return 52;
     })();
 
-    // Add kpiTrungBinh to each ranking row
+    // Add kpiTrungBinh to each ranking row — m.kpi is already a points value
+    // on a "100 points = 100% of one week's quota" scale (matches the KPI
+    // HT/Giao column right next to it, e.g. "198.9/198.9"), so dividing by
+    // the number of weeks in the filtered period already yields a
+    // percentage-scale number on its own. A stray extra ×100 here used to
+    // turn a correct 198.9% into 19890%.
     const rankedWithKpiAvg = finalRanking.map(m => ({
       ...m,
-      kpiTrungBinh: filterDuration > 0 ? Math.round((m.kpi / filterDuration) * 100) : 0,
+      kpiTrungBinh: filterDuration > 0 ? Math.round(m.kpi / filterDuration) : 0,
     }));
 
     return {
@@ -2265,7 +2275,7 @@ export default function OverviewTab() {
                       <FormulaTooltip>
                         <p className="font-bold text-white/90 mb-1">KPI Trung Bình (%)</p>
                         <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc × 100)</p>
+                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc)</p>
                         <p className="text-white/60 mt-1.5">Trong đó:</p>
                         <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
                           <li><b>KPI Tổng:</b> Σ kpi_base các task Done (có end_date_actual) trong kỳ</li>
@@ -2596,7 +2606,7 @@ export default function OverviewTab() {
                   </span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5 mt-3.5">
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`% task Done/Tổng của team đang xem trong kỳ đang lọc: ${p.doneTasks}/${p.totalTasks}`}>
                     <span className="block text-[7px] uppercase font-black text-slate-400">Tiến độ</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                   </div>
@@ -2868,10 +2878,10 @@ export default function OverviewTab() {
               )}
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
-                <div className="bg-slate-50 rounded-xl p-3 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`% task Done/Tổng của team đang xem trong kỳ đang lọc: ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
-                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">theo giai đoạn dự án</span>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Xong / Tổng task</span>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">Task</span>
