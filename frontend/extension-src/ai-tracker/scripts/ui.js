@@ -669,8 +669,14 @@ function injectWidget(toolName) {
 
   Object.assign(widget.style, {
     position: "absolute",
-    left: "-285px",
-    top: "-570px",
+    // Widget grew from 280x560 to 400x720 to match the mockup's real
+    // proportions (its own screenshots render at ~420x780) — was cramped
+    // and, per user feedback, looked broken/too small. left/top are the
+    // offset that places the widget above-and-left of the floating toggle
+    // button (roughly -(width+5) / -(height+10)); kept in the same
+    // relationship, just scaled to the new size.
+    left: "-405px",
+    top: "-730px",
     margin: "0px",
     pointerEvents: "auto",
     // Dark/violet theme aligned with the Markee AI Workspace mockup palette
@@ -687,8 +693,8 @@ function injectWidget(toolName) {
     display: "none",
     flexDirection: "column",
     gap: "8px",
-    width: "280px",
-    height: "560px",
+    width: "400px",
+    height: "720px",
     boxSizing: "border-box",
     overflow: "hidden",
     touchAction: "none",
