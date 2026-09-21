@@ -19,6 +19,7 @@ import {
   CalendarLeaveBlock,
   getApiErrorMessage,
   getMembers,
+  getLeaders,
   getMe,
 } from '@/lib/api';
 import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
@@ -75,10 +76,10 @@ export default function CalendarPage() {
   // still fetches exactly as before.
   const [searchQuery, setSearchQuery] = useState('');
   // Dashboard Calendar scope: Leaders may view a managed member; Super Admin
-  // may filter by team. These are request params, not presentation filters.
+  // may filter by Leader's team. These are request params, not presentation filters.
   const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState<string | null>('All');
-  const [availableTeams, setAvailableTeams] = useState<string[]>([]);
+  const [selectedLeaderMemberId, setSelectedLeaderMemberId] = useState<number | null>(null);
+  const [availableLeaders, setAvailableLeaders] = useState<{ member_id: number; name: string }[]>([]);
   const [managedMembers, setManagedMembers] = useState<{ id: number; full_name?: string; display_name?: string; team?: string }[]>([]);
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
@@ -138,19 +139,21 @@ export default function CalendarPage() {
         }).catch(() => {});
       }
       if (role === 'super_admin') {
-        getMembers({ light: true }).then((res: any[]) => {
-          const teams = Array.from(new Set((res || []).map((m: any) => m.team).filter(Boolean))).sort();
-          setAvailableTeams(['All', ...teams]);
+        getLeaders().then((res: any[]) => {
+          const leaders = (res || [])
+            .filter((l: any) => l.member_id)
+            .map((l: any) => ({ member_id: l.member_id, name: l.name }));
+          setAvailableLeaders(leaders);
         }).catch(() => {});
       }
     }).catch(() => {});
   }, []);
 
   const { data: dashboardData, isFetching, error, refetch } = useQuery({
-    queryKey: ['calendar-dashboard-events', from, to, selectedMemberId, selectedTeam, currentUserRole],
+    queryKey: ['calendar-dashboard-events', from, to, selectedMemberId, selectedLeaderMemberId, currentUserRole],
     queryFn: () => getDashboardCalendarEvents(from, to, {
       ...(currentUserRole === 'leader' && selectedMemberId ? { member_id: selectedMemberId } : {}),
-      ...(currentUserRole === 'super_admin' && selectedTeam ? { team: selectedTeam } : {}),
+      ...(currentUserRole === 'super_admin' && selectedLeaderMemberId ? { leader_member_id: selectedLeaderMemberId } : {}),
     }),
     staleTime: 30_000,
   });
@@ -444,7 +447,6 @@ export default function CalendarPage() {
                       onChange={e => {
                         const val = e.target.value;
                         setSelectedMemberId(val ? Number(val) : null);
-                        setSelectedTeam(null);
                       }}
                       className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
                     >
@@ -459,17 +461,16 @@ export default function CalendarPage() {
                   <div className="flex items-center gap-1.5">
                     <span className="text-[11px] font-semibold text-slate-500">Team</span>
                     <select
-                      value={selectedTeam ?? 'All'}
+                      value={selectedLeaderMemberId ?? ''}
                       onChange={e => {
                         const val = e.target.value;
-                        setSelectedTeam(val || 'All');
-                        setSelectedMemberId(null);
+                        setSelectedLeaderMemberId(val ? Number(val) : null);
                       }}
                       className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
                     >
-                      <option value="All">Tất cả</option>
-                      {availableTeams.filter(t => t !== 'All').map(t => (
-                        <option key={t} value={t}>{t}</option>
+                      <option value="">Tất cả</option>
+                      {availableLeaders.map(l => (
+                        <option key={l.member_id} value={l.member_id}>{l.name}</option>
                       ))}
                     </select>
                   </div>

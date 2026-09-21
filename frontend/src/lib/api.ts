@@ -561,10 +561,10 @@ export interface DashboardCalendarEvents {
 export const getDashboardCalendarEvents = (
   from: string,
   to: string,
-  options?: { member_id?: number; team?: string }
+  options?: { member_id?: number; leader_member_id?: number }
 ) =>
   api.get<DashboardCalendarEvents>('/calendar/dashboard-events', {
-    params: { from, to, ...(options?.member_id ? { member_id: options.member_id } : {}), ...(options?.team ? { team: options.team } : {}) },
+    params: { from, to, ...(options?.member_id ? { member_id: options.member_id } : {}), ...(options?.leader_member_id ? { leader_member_id: options.leader_member_id } : {}) },
   }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════

@@ -66,11 +66,11 @@ function MonthItemChip({
     const block = item.leave;
     return (
       <div
-        className="flex items-center gap-1 px-1 py-[1px] rounded text-[10px] leading-[15px] bg-rose-50"
-        title={`${block.member_name} — ${block.title}`}
+        className="flex items-center gap-1 px-1 py-[1px] rounded text-[10px] leading-[15px] bg-gray-200"
+        title={block.title}
       >
-        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-rose-400" />
-        <span className="truncate font-medium text-rose-700">{block.member_name || block.title}</span>
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
+        <span className="truncate font-medium text-gray-700">{block.title}</span>
       </div>
     );
   }
