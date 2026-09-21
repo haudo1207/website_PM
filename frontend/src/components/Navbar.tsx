@@ -286,7 +286,7 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
                   className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-70' : 'bg-indigo-50/60'}`}
                 >
                   <span className="text-xl mt-0.5 shrink-0">
-                    {n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'leave_registered' ? '🌴' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
+                    {n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
                   </span>
                   <div className="flex-1 min-w-0">
                     <p className={`text-[13px] leading-snug ${n.is_read ? 'text-slate-600' : 'text-[#0b1c30] font-semibold'}`}>

@@ -13,7 +13,7 @@ const FILTER_OPTIONS: { key: EventTypeFilter; label: string }[] = [
   { key: 'meeting', label: 'Meeting' },
   { key: 'assigned', label: 'Task – Assigned' },
   { key: 'support', label: 'Task – Support' },
-  { key: 'leave', label: 'Nghỉ / Off' },
+  { key: 'leave', label: 'Nghỉ / OFF' },
 ];
 
 function FilterDropdown({

@@ -18,7 +18,6 @@ from ..models.workspace_google_account import WorkspaceGoogleAccount
 from ..utils.auth import get_current_user
 from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
-from ..utils.leave_conflict import meeting_leave_conflicts
 from ..utils.timezone import VN_TZ as _VN_TZ
 
 logger = logging.getLogger("meetings")
@@ -55,16 +54,6 @@ def _now_vn() -> datetime.datetime:
     OS timezone instead (UTC in this deployment, ~7h behind Vietnam), making
     meetings that already started/ended still show as upcoming for hours."""
     return datetime.datetime.now(_VN_TZ).replace(tzinfo=None)
-
-
-def _meeting_datetime_range(meeting_date: datetime.date, start_time: datetime.time, end_time: datetime.time | None):
-    """Return (start_datetime, end_datetime) for a meeting, handling
-    overnight meetings where end_time is on the next calendar day."""
-    start_dt = datetime.datetime.combine(meeting_date, start_time)
-    end_dt = datetime.datetime.combine(meeting_date, end_time) if end_time else None
-    if end_dt and end_dt < start_dt:
-        end_dt += datetime.timedelta(days=1)
-    return start_dt, end_dt
 
 
 def compute_display_status(m: Meeting) -> str:
@@ -1398,25 +1387,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # is scheduled meant it was long buried in the group chat by the time
     # anyone needed it; the reminder is the one message that should carry it.
 
-    # Advisory leave-conflict warning — non-blocking.
-    participant_ids = set()
-    if created_by:
-        participant_ids.add(created_by)
-    for raw in body.get("member_ids") or []:
-        try:
-            participant_ids.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-    start_dt, end_dt = _meeting_datetime_range(meeting_date, start_time, end_time)
-    conflicts = meeting_leave_conflicts(db, list(participant_ids), start_dt, end_dt)
-    response = {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
-    if conflicts:
-        response["warning"] = {
-            "message": "Một số người tham dự cuộc họp đã đăng ký nghỉ trong khoảng thời gian này.",
-            "conflicts": conflicts,
-        }
-
-    return response
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── UPDATE ──────────────────────────────────────────────
 @router.put("/{id}")
@@ -1628,23 +1599,7 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         except Exception as e:
             logger.warning(f"Failed to sync rescheduled time to Google Calendar for meeting {m.id}: {e}")
 
-    # Advisory leave-conflict warning — non-blocking.
-    participant_ids = set()
-    if m.created_by:
-        participant_ids.add(m.created_by)
-    for mm in m.members:
-        if mm.member_id:
-            participant_ids.add(mm.member_id)
-    start_dt, end_dt = _meeting_datetime_range(m.meeting_date, m.start_time, m.end_time)
-    conflicts = meeting_leave_conflicts(db, list(participant_ids), start_dt, end_dt)
-    response = {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
-    if conflicts:
-        response["warning"] = {
-            "message": "Một số người tham dự cuộc họp đã đăng ký nghỉ trong khoảng thời gian này.",
-            "conflicts": conflicts,
-        }
-
-    return response
+    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 # ─── UPDATE TRANSCRIPT (Rule 03) ────────────────────────
 @router.post("/{id}/transcript")
