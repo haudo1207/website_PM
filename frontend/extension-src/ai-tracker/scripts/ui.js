@@ -702,14 +702,33 @@ function injectWidget(toolName) {
     display: "none",
     flexDirection: "column",
     gap: "8px",
-    width: "440px",
-    // Capped relative to the viewport (not just a flat 800px) — matches the
+    // 380x680 — a MODEST shrink (was 440x800), not the reference build's
+    // full 280x560. That size was the widget's own original dimension
+    // before 2 earlier passes grew it (280x560 -> 400x720 -> 440x800)
+    // specifically because content looked cramped/broken at 280x560 once
+    // the current feature set (Customer/Project cascade, summary card,
+    // action drawer) was built against the larger box — going all the way
+    // back down risks reintroducing that exact overlap/cramping complaint.
+    // 380x680 keeps ~85% of the current footprint (visibly smaller,
+    // touchable target for "make it a bit smaller") while staying much
+    // closer to the size everything was actually built/tested at. No
+    // internal element in this file has a fixed width/min-width above
+    // 200px (the couple that exist are `max-width` on ellipsis-truncated
+    // text, which just truncates shorter — not an overlap risk), so
+    // horizontal overflow is unlikely; vertically, .body's own
+    // overflow-y:auto (below) turns "less height" into "more scrolling",
+    // not clipped/overlapping content. Still: this has NOT been visually
+    // verified in a real browser — load it unpacked and check before
+    // shipping, and if anything looks cramped, that's real signal to
+    // revert closer to 440x800 rather than push smaller.
+    width: "380px",
+    // Capped relative to the viewport (not just a flat 680px) — matches the
     // 24px top/bottom the fixed bottom:24px placement above already reserves,
     // so the box can never exceed the space actually available between the
     // bottom anchor and the top of the screen. .body's own overflow-y:auto
     // below absorbs whatever height this clamp takes away, so content still
     // scrolls instead of getting cut off.
-    height: "min(800px, calc(100vh - 48px))",
+    height: "min(680px, calc(100vh - 48px))",
     maxWidth: "calc(100vw - 48px)",
     boxSizing: "border-box",
     overflow: "hidden",
@@ -770,8 +789,10 @@ function injectWidget(toolName) {
       /* The project quick-picker card stretches to fill whatever room the
          widget's fixed height leaves after the summary card above it —
          without this, a big empty gap opened up at the bottom of the
-         widget (400x720+ tall) since every card/list here was
-         content-sized only, never grow-to-fill. */
+         widget since every card/list here was content-sized only, never
+         grow-to-fill. Still correct at the smaller 380x680 size (flex:1
+         is relative to whatever the widget's actual height ends up being,
+         not a fixed number). */
       #markee-widget .card-grow{flex:1;min-height:0;display:flex;flex-direction:column;}
       #markee-widget .summary-line{min-height:34px;display:flex;align-items:center;gap:6px;padding:6px 9px;cursor:pointer;}
       #markee-widget .summary-line+.summary-line{border-top:1px solid rgba(255,255,255,.045);}
@@ -1742,6 +1763,7 @@ function injectWidget(toolName) {
           opt.textContent = c.name;
           custSelect.appendChild(opt);
         });
+        enableSelectSearch(custSelect, "Tìm khách hàng...");
       });
     }
     loadSkinCustomers();
@@ -1774,6 +1796,7 @@ function injectWidget(toolName) {
             opt.textContent = p.name;
             projSelect.appendChild(opt);
           });
+          enableSelectSearch(projSelect, "Tìm dự án...");
           projSelect.disabled = false;
         });
       });
@@ -2078,6 +2101,7 @@ function injectWidget(toolName) {
         chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
           const customers = res && Array.isArray(res.customers) ? res.customers : [];
           custSel.innerHTML = `<option value="">-- Tất cả --</option>` + customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(custSel, "Tìm khách hàng...");
         });
         custSel.addEventListener("change", () => {
           skinSkillCustomerId = custSel.value || null;
@@ -2088,6 +2112,7 @@ function injectWidget(toolName) {
               chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: custSel.value }, (res) => {
                 const projects = res && Array.isArray(res.projects) ? res.projects : [];
                 projSel.innerHTML = `<option value="">-- Tất cả --</option>` + projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+                enableSelectSearch(projSel, "Tìm dự án...");
               });
             }
           }
@@ -2253,6 +2278,7 @@ function injectWidget(toolName) {
         chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
           const customers = res && Array.isArray(res.customers) ? res.customers : [];
           custSelect.innerHTML = customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(custSelect, "Tìm khách hàng...");
           custSelect.dispatchEvent(new Event("change"));
         });
         custSelect.addEventListener("change", () => {
@@ -2273,6 +2299,7 @@ function injectWidget(toolName) {
             const projects = res && Array.isArray(res.projects) ? res.projects : [];
             if (!projSelect) return;
             projSelect.innerHTML = projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+            enableSelectSearch(projSelect, "Tìm dự án...");
             projSelect.dispatchEvent(new Event("change"));
           });
         });
@@ -2382,12 +2409,14 @@ function injectWidget(toolName) {
         chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
           const customers = res && Array.isArray(res.customers) ? res.customers : [];
           suCust.innerHTML = customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(suCust, "Tìm khách hàng...");
         });
         suCust.addEventListener("change", () => {
           if (suProj) {
             chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: suCust.value }, (res) => {
               const projects = res && Array.isArray(res.projects) ? res.projects : [];
               suProj.innerHTML = projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+              enableSelectSearch(suProj, "Tìm dự án...");
               suProj.dispatchEvent(new Event("change"));
             });
           }
@@ -2530,6 +2559,7 @@ function injectWidget(toolName) {
         chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
           const customers = res && Array.isArray(res.customers) ? res.customers : [];
           custSelect.innerHTML = customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(custSelect, "Tìm khách hàng...");
           custSelect.dispatchEvent(new Event("change"));
         });
         custSelect.addEventListener("change", () => {
@@ -2539,6 +2569,7 @@ function injectWidget(toolName) {
           chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: custSelect.value }, (res) => {
             const projects = res && Array.isArray(res.projects) ? res.projects : [];
             projSelect.innerHTML = projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+            enableSelectSearch(projSelect, "Tìm dự án...");
             projSelect.dispatchEvent(new Event("change"));
           });
         });
@@ -2671,6 +2702,69 @@ function injectWidget(toolName) {
       option.value = item.id;
       option.textContent = item.name;
       selectEl.appendChild(option);
+    });
+  }
+
+  // Adds a type-to-filter search box above a native <select> that was JUST
+  // populated (Customer/Project cascades) — a plain <select> can't search
+  // itself. Deliberately DOM-only (inserts a sibling <input>, never touches
+  // the widget's own HTML template strings, of which there are several
+  // separate Customer/Project cascades throughout this file) so this is
+  // safe to call once, right after populating any of them, without editing
+  // their markup. Call again after every repopulate — it reuses the same
+  // input if one is already there (checked via the `mk-select-search`
+  // class) instead of stacking a second one.
+  //
+  // The current selection is NEVER dropped by typing a filter that doesn't
+  // match it — the selected option always stays in the rendered list even
+  // when filtered out of view, so no `change` event needs to (or does)
+  // fire just from searching, and every existing cascade wired off this
+  // select's `change` listener keeps working unmodified.
+  function enableSelectSearch(selectEl, placeholderText) {
+    if (!selectEl) return;
+    const fullOptions = Array.from(selectEl.options).map((o) => ({ value: o.value, text: o.textContent }));
+    selectEl._mkFullOptions = fullOptions;
+
+    const prev = selectEl.previousElementSibling;
+    let input = prev && prev.classList && prev.classList.contains("mk-select-search") ? prev : null;
+    if (input) {
+      input.placeholder = placeholderText || input.placeholder;
+      return;
+    }
+
+    input = document.createElement("input");
+    input.type = "text";
+    input.className = "mk-select-search";
+    input.placeholder = placeholderText || "Tìm kiếm...";
+    input.autocomplete = "off";
+    input.style.cssText = "width:100%;height:26px;border:1px solid rgba(88,95,255,.38);border-radius:7px;background:#12172a;color:#eef2ff;padding:0 8px;outline:none;font-size:10.6px;font-weight:700;margin-bottom:4px;box-sizing:border-box;";
+    if (selectEl.parentNode) selectEl.parentNode.insertBefore(input, selectEl);
+
+    input.addEventListener("click", (e) => e.stopPropagation());
+    input.addEventListener("input", () => {
+      const q = input.value.trim().toLowerCase();
+      const opts = selectEl._mkFullOptions || [];
+      const keepValue = selectEl.value;
+      selectEl.innerHTML = "";
+      const seen = new Set();
+      opts.forEach((o, idx) => {
+        // Not every cascade seeds a "-- Chọn ... --" placeholder option
+        // (some start straight from the real item list) — matching on an
+        // empty value rather than "index 0" means this only pins an
+        // actual placeholder when one exists, instead of always exempting
+        // whatever the first REAL item happens to be from filtering.
+        const isPlaceholder = o.value === "";
+        const isCurrentSelection = keepValue !== "" && o.value === keepValue;
+        const matches = !q || o.text.toLowerCase().includes(q);
+        if ((isPlaceholder || isCurrentSelection || matches) && !seen.has(o.value)) {
+          seen.add(o.value);
+          const opt = document.createElement("option");
+          opt.value = o.value;
+          opt.textContent = o.text;
+          selectEl.appendChild(opt);
+        }
+      });
+      selectEl.value = keepValue;
     });
   }
 
@@ -5114,6 +5208,8 @@ function injectWidget(toolName) {
       const customerPull = document.getElementById("markee-customer-select-pull");
       renderSelectOptions(customerPush, allCustomers, "-- Chọn Khách hàng --");
       renderSelectOptions(customerPull, allCustomers, "-- Chọn Khách hàng --");
+      enableSelectSearch(customerPush, "Tìm khách hàng...");
+      enableSelectSearch(customerPull, "Tìm khách hàng...");
 
       // Restore WIP Push customer
       const savedPushCust = MarkeeStorage.get("markee_wip_push_customer");
@@ -5152,6 +5248,7 @@ function injectWidget(toolName) {
       chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId }, (res) => {
         const projects = res && Array.isArray(res.projects) ? res.projects : [];
         renderSelectOptions(projectPushSelect, projects, "-- Chọn Dự án --");
+        enableSelectSearch(projectPushSelect, "Tìm dự án...");
         projectPushSelect.disabled = false;
 
         const savedPushProj = MarkeeStorage.get("markee_wip_push_project");
@@ -5199,6 +5296,7 @@ function injectWidget(toolName) {
       chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId }, (res) => {
         const projects = res && Array.isArray(res.projects) ? res.projects : [];
         renderSelectOptions(projectPullSelect, projects, "-- Chọn Dự án --");
+        enableSelectSearch(projectPullSelect, "Tìm dự án...");
         projectPullSelect.disabled = false;
 
         const savedPullProj = MarkeeStorage.get("markee_wip_pull_project");
@@ -5727,6 +5825,8 @@ function initLoginPopup() {
   const loggedInView = document.getElementById("logged-in-view");
   const loggedInEmail = document.getElementById("logged-in-email");
   const logoutBtn = document.getElementById("logout-btn");
+  const workspaceRow = document.getElementById("workspace-row");
+  const workspaceSelect = document.getElementById("workspace-select");
   // Popup header used to always read the static "KPI Prototype" label — once
   // we know who's logged in, showing their own name here is more useful
   // (this popup is per-person: every log/task it creates is attributed to
@@ -5737,8 +5837,47 @@ function initLoginPopup() {
 
   if (!loginForm || !emailInput || !passwordInput || !loginStatus) return false;
 
+  // Workspace selector — only meaningful for an identity with MORE than
+  // one granted Workspace (Leader with Chính + Phụ, or super_admin who is
+  // granted every Workspace). A plain Member has zero (their access is
+  // per-project via project_members, not per-Workspace, so GET_MY_WORKSPACES
+  // always comes back empty for them) and a single-Workspace Leader has
+  // nothing to actually choose between — both cases hide the row entirely
+  // rather than show a useless 1-option dropdown.
+  function refreshWorkspaceSelector() {
+    if (!workspaceRow || !workspaceSelect) return;
+    chrome.runtime.sendMessage({ action: "GET_MY_WORKSPACES" }, (res) => {
+      const workspaces = (res && Array.isArray(res.workspaces)) ? res.workspaces : [];
+      if (workspaces.length <= 1) {
+        workspaceRow.hidden = true;
+        return;
+      }
+      const active = (res && res.active) || "all";
+      workspaceSelect.innerHTML = "";
+      const allOpt = document.createElement("option");
+      allOpt.value = "all";
+      allOpt.textContent = "Tất cả Workspace";
+      workspaceSelect.appendChild(allOpt);
+      workspaces.forEach((w) => {
+        const opt = document.createElement("option");
+        opt.value = w.code;
+        opt.textContent = w.name || w.code;
+        workspaceSelect.appendChild(opt);
+      });
+      workspaceSelect.value = active;
+      workspaceRow.hidden = false;
+    });
+  }
+
+  if (workspaceSelect) {
+    workspaceSelect.onchange = () => {
+      chrome.runtime.sendMessage({ action: "SET_ACTIVE_WORKSPACE", code: workspaceSelect.value });
+    };
+  }
+
   function showLoggedOut() {
     if (loggedInView) loggedInView.hidden = true;
+    if (workspaceRow) workspaceRow.hidden = true;
     loginForm.hidden = false;
     if (popupTitle) popupTitle.textContent = DEFAULT_POPUP_TITLE;
   }
@@ -5750,6 +5889,7 @@ function initLoginPopup() {
       if (loggedInEmail) loggedInEmail.textContent = fullName || email || "";
     }
     loginForm.hidden = true;
+    refreshWorkspaceSelector();
   }
 
   function refreshAuthState() {

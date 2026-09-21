@@ -218,6 +218,30 @@
         margin-bottom: 12px;
       }
 
+      .workspace-row {
+        margin-bottom: 12px;
+      }
+      .workspace-row label {
+        margin-bottom: 6px;
+      }
+      #workspace-select {
+        width: 100%;
+        height: 38px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--white);
+        color: var(--text);
+        padding: 0 10px;
+        font-size: 13px;
+        font-weight: 600;
+        outline: none;
+        cursor: pointer;
+      }
+      #workspace-select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(227, 0, 15, 0.12);
+      }
+
       [hidden] {
         display: none !important;
       }
@@ -235,6 +259,18 @@
       <div id="logged-in-view" hidden>
         <div class="logged-in-row">
           <span>Đã đăng nhập: <strong id="logged-in-email">—</strong></span>
+        </div>
+        <!-- Only shown when the logged-in identity has more than one
+             granted Workspace (a Leader with Chính + Phụ, or a
+             super_admin) — a plain Member has none (their access is
+             per-project, not per-Workspace) and never sees this, same as
+             the rest of pm-new's own permission model. Narrows every
+             Customer/Project list the widget shows to just this one
+             Workspace; "Tất cả Workspace" keeps today's unfiltered
+             behaviour. -->
+        <div id="workspace-row" class="workspace-row" hidden>
+          <label for="workspace-select">Workspace đang thao tác</label>
+          <select id="workspace-select"></select>
         </div>
         <button type="button" class="secondary" id="logout-btn">Đăng xuất</button>
       </div>
