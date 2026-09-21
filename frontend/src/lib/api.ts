@@ -143,6 +143,20 @@ api.interceptors.response.use(
   }
 );
 
+// Emit advisory warnings returned by the backend (e.g., Task/Meeting overlaps
+// an approved leave) so a single UI listener can surface them as non-blocking
+// toasts. Warnings never block the original request/response.
+api.interceptors.response.use(
+  response => {
+    const warning = response.data?.warning;
+    if (warning && typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('api-warning', { detail: warning }));
+    }
+    return response;
+  },
+  err => Promise.reject(err)
+);
+
 // Auth
 export const login = (e: string, p: string) =>
   api.post('/auth/login', new URLSearchParams({ username: e, password: p }), {
@@ -525,6 +539,33 @@ export interface CalendarMeeting {
 }
 export const getCalendarMeetings = (from: string, to: string) =>
   api.get<CalendarMeeting[]>('/calendar/meetings', { params: { from, to } }).then(r => r.data);
+
+// Dashboard Calendar — tasks + meetings + approved leave blocks for the
+// current user, or (for Leaders/Super Admin) a selected member/team.
+export interface CalendarLeaveBlock {
+  id: string;
+  leave_request_id: number;
+  title: string;
+  start: string; // YYYY-MM-DD
+  end: string;   // YYYY-MM-DD
+  type: 'leave';
+  member_id: number | null;
+  member_name: string;
+  color: string;
+}
+export interface DashboardCalendarEvents {
+  tasks: CalendarTask[];
+  meetings: CalendarMeeting[];
+  leave_blocks: CalendarLeaveBlock[];
+}
+export const getDashboardCalendarEvents = (
+  from: string,
+  to: string,
+  options?: { member_id?: number; team?: string }
+) =>
+  api.get<DashboardCalendarEvents>('/calendar/dashboard-events', {
+    params: { from, to, ...(options?.member_id ? { member_id: options.member_id } : {}), ...(options?.team ? { team: options.team } : {}) },
+  }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
 // LEGACY COMPATIBLE (kept for Settings, Skills, System Categories, Members)
