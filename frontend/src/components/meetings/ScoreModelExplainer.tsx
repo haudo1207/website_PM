@@ -67,7 +67,7 @@ export default function ScoreModelExplainer() {
       >
         <div>
           <h2 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
-            <Gauge size={16} className="text-[#6366f1]" />
+            <Gauge size={16} className="text-[#0058be]" />
             Cách tính điểm & kiểm tra tự động
           </h2>
           <p className="text-[11px] text-[#64748b] mt-1">
@@ -75,8 +75,8 @@ export default function ScoreModelExplainer() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="px-3 py-1.5 rounded-lg bg-[#f5f3ff] text-[#6366f1] text-xs font-extrabold">100 điểm</div>
-          <div className="flex items-center gap-1 text-[11px] font-bold text-[#6366f1]">
+          <div className="px-3 py-1.5 rounded-lg bg-[#eff4ff] text-[#0058be] text-xs font-extrabold">100 điểm</div>
+          <div className="flex items-center gap-1 text-[11px] font-bold text-[#0058be]">
             {expanded ? 'Thu gọn' : 'Mở rộng'}
             {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
           </div>
@@ -89,11 +89,11 @@ export default function ScoreModelExplainer() {
             {STEPS.map(step => (
               <div
                 key={step.title}
-                className={`border rounded-xl p-3.5 ${step.highlight ? 'border-[#bab5ff] bg-[#faf9ff]' : 'border-[#e2e8f0]'}`}
+                className={`border rounded-xl p-3.5 ${step.highlight ? 'border-[#bcd6f5] bg-[#f5f8ff]' : 'border-[#e2e8f0]'}`}
               >
                 <div className="flex items-center justify-between gap-2 mb-2">
                   <strong className="text-xs text-[#0b1c30]">{step.title}</strong>
-                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${step.highlight ? 'bg-[#e7e4ff] text-[#6366f1]' : 'bg-[#f0f2f6] text-[#506078]'}`}>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${step.highlight ? 'bg-[#eff4ff] text-[#0058be]' : 'bg-[#f0f2f6] text-[#506078]'}`}>
                     {step.weight}
                   </span>
                 </div>

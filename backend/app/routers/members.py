@@ -162,6 +162,13 @@ def member_to_dict(m: Member) -> dict:
             for s in m.skills
         ],
         "employment_status": m.employment_status or "ON",
+        # Stored as naive UTC (datetime.utcnow(), see sync_from_recruitment)
+        # — append "Z" explicitly so the frontend's `new Date(...)` parses it
+        # as the correct UTC instant instead of local time (Dashboard's
+        # period-aware OFF filter, isMemberActiveInPeriod, compares this
+        # against period-boundary Date objects and silently always fell back
+        # to "no cutoff" before this field existed in the response at all).
+        "off_effective_at": (m.off_effective_at.isoformat() + "Z") if m.off_effective_at else None,
         "has_account": m.user is not None,
         "account_active": m.user.is_active if m.user else None,
     }
@@ -1209,7 +1216,27 @@ def sync_from_recruitment(
                 # Update employment status
                 old_status = member.employment_status
                 member.employment_status = employment_status
-                
+
+                # Stamp the OFF effective date so the Dashboard period
+                # filters can answer "was this Member active during the
+                # selected period?" without reconstructing from current
+                # status. Set on a fresh ON→OFF transition, AND backfilled
+                # whenever a sync confirms OFF but the cutoff is still
+                # missing — a Member who went OFF before this column
+                # existed stays `old_status == "OFF"` on every later sync
+                # (no "transition" ever happens again), so a transition-only
+                # check left it NULL forever and the Dashboard's period
+                # filter kept treating them as active for every period
+                # (its own documented "legacy row, no cutoff" safety net) —
+                # re-running the sync could never fix it. Re-syncing an
+                # already-stamped OFF Member is still a no-op (does not
+                # reset the timestamp). OFF→ON rehires clear the stamp so
+                # the Member becomes active in every period again.
+                if employment_status == "OFF" and (old_status != "OFF" or member.off_effective_at is None):
+                    member.off_effective_at = datetime.datetime.utcnow()
+                elif employment_status == "ON" and old_status == "OFF":
+                    member.off_effective_at = None
+
                 # Handle account locking/unlocking based on status change
                 if member.user:
                     if employment_status == "OFF" and member.user.is_active:
@@ -1236,6 +1263,11 @@ def sync_from_recruitment(
                     leader_email=leader_email,
                     is_recruitment_synced=True,
                     employment_status=employment_status,
+                    # First-time sync of an OFF application (no prior Member
+                    # row): stamp OFF effective date as the sync moment.
+                    # ON members stay NULL so the time-aware filter treats
+                    # them as always-active.
+                    off_effective_at=datetime.datetime.utcnow() if employment_status == "OFF" else None,
                 )
                 db.add(member)
                 

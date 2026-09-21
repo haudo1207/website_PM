@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { useParams, useSearchParams } from 'next/navigation';
 import { Loader2, FolderOpen, Target, Clock } from 'lucide-react';
 
 interface SharedLog {
@@ -30,10 +30,17 @@ function formatDate(iso: string | null) {
 
 export default function SharedProjectPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const token = params?.token as string;
+  // Deep link straight to one Feature's section — set by the "Mở Link"/Share
+  // flow (see ProjectPrototypeTab's Share icon, EditWipLogModal-adjacent
+  // create_share_link backend call). Matched by name since this public page
+  // never requires the viewer to know a feature_id.
+  const targetFeature = searchParams?.get('feature') || null;
   const [data, setData] = useState<SharedProject | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const scrolledRef = useRef(false);
 
   useEffect(() => {
     if (!token) return;
@@ -52,6 +59,15 @@ export default function SharedProjectPage() {
       }
     })();
   }, [token]);
+
+  useEffect(() => {
+    if (!data || !targetFeature || scrolledRef.current) return;
+    const el = document.getElementById(`shared-feature-${targetFeature}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      scrolledRef.current = true;
+    }
+  }, [data, targetFeature]);
 
   if (loading) {
     return (
@@ -94,7 +110,13 @@ export default function SharedProjectPage() {
         )}
 
         {data.features.map((f) => (
-          <div key={f.id} className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+          <div
+            key={f.id}
+            id={`shared-feature-${f.name}`}
+            className={`bg-white border rounded-xl shadow-sm overflow-hidden transition-colors ${
+              targetFeature === f.name ? 'border-[#0058be] ring-2 ring-[#0058be]/30' : 'border-slate-200'
+            }`}
+          >
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 bg-slate-50/50">
               <Target className="w-4 h-4 text-[#0058be] shrink-0" />
               <h2 className="text-sm font-bold text-slate-800 truncate">{f.name}</h2>

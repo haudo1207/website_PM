@@ -1,4 +1,17 @@
 import os
+import logging
+
+# Without this, the root logger has no handler at all, so every
+# `logger.info(...)` call in the app (the Zalo auto-summary loop, meeting
+# reminders, etc.) is silently swallowed by Python's logging "last resort"
+# handler (WARNING+ only) — `docker logs` never shows it, making it
+# impossible to tell whether a background loop is even running, sleeping,
+# or erroring. Configure it once, here, before any module-level logger is
+# created.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 
 from typing import Optional
 from fastapi import FastAPI, Depends, Header
@@ -785,6 +798,9 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS ai_tasks JSON"
         ))
+        conn.execute(text(
+            "ALTER TABLE project_feature_logs ADD COLUMN IF NOT EXISTS title VARCHAR(255)"
+        ))
 
         # ── Workload Settings: configurable thresholds for Section 4 ────
         conn.execute(text("""
@@ -868,6 +884,16 @@ def apply_schema_updates():
         # Member employment status (ON/OFF) synced from CV/Recruitment system
         conn.execute(text(
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS employment_status VARCHAR(20) DEFAULT 'ON'"
+        ))
+        # Capture the moment a Recruitment/CV sync flips a Member to OFF so
+        # Dashboard period filters can answer "was this member active during
+        # the selected period?" without using current status to reconstruct
+        # historical periods. NULL = unknown cutoff (legacy rows before this
+        # column landed) — system_audit treats those as active for all
+        # historical periods to preserve existing KPI history; new OFF
+        # transitions from Recruitment sync stamp this column at sync time.
+        conn.execute(text(
+            "ALTER TABLE members ADD COLUMN IF NOT EXISTS off_effective_at TIMESTAMP NULL"
         ))
 
 def init_db_defaults():
@@ -1796,20 +1822,36 @@ async def start_zalo_summary_loop():
             finally:
                 db.close()
 
-        daily_at = await asyncio.to_thread(_current_daily_at)
-        if daily_at:
-            logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
-            await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
-        while True:
+        async def _run_tick_once():
             db = BackgroundSessionLocal()
             try:
                 created = await asyncio.to_thread(run_summary_tick, db, interval)
                 if created:
                     logger.info(f"Zalo summary tick: created {created} summaries")
+                else:
+                    logger.info("Zalo summary tick: nothing new to summarize")
             except Exception as e:
                 logger.error(f"Zalo summary tick failed: {e}")
             finally:
                 db.close()
+
+        daily_at = await asyncio.to_thread(_current_daily_at)
+        if daily_at:
+            logger.info(f"Zalo summary loop: daily mode, running at {daily_at} (Asia/Ho_Chi_Minh)")
+            # Catch-up: tick once immediately on startup instead of
+            # unconditionally waiting for the NEXT scheduled slot. Without
+            # this, a backend restart at/after today's daily_at (a deploy,
+            # a crash) silently skipped that day's summary entirely — this
+            # loop only ever fires exactly at the next computed target, with
+            # no memory of whether today's run already happened. Safe to
+            # call speculatively: run_summary_tick windows forward from each
+            # conversation's own last summary and skips ones with nothing
+            # new (see its own docstring), so this is a no-op if today's run
+            # already completed, and a real catch-up otherwise.
+            await _run_tick_once()
+            await asyncio.sleep(_seconds_until_next_daily_run(daily_at))
+        while True:
+            await _run_tick_once()
             daily_at = await asyncio.to_thread(_current_daily_at)
             await asyncio.sleep(_seconds_until_next_daily_run(daily_at) if daily_at else interval)
 
@@ -1819,10 +1861,14 @@ async def start_zalo_summary_loop():
 @app.on_event("startup")
 async def start_meeting_reminder_loop():
     async def _loop():
+        import time
+        import logging
+        logger = logging.getLogger("meeting_reminders")
         await asyncio.sleep(10)  # stagger from the auto-sync loop above
         from .database import BackgroundSessionLocal
         from .services.meeting_reminders import dispatch_due_reminders, dispatch_start_link_notifications
         while True:
+            cycle_started = time.monotonic()
             db = BackgroundSessionLocal()
             try:
                 await asyncio.to_thread(dispatch_due_reminders, db)
@@ -1833,7 +1879,25 @@ async def start_meeting_reminder_loop():
                 pass
             finally:
                 db.close()
-            await asyncio.sleep(60)
+            # A meeting was reported live in production as ~3 minutes late
+            # (reminder/link fired well past its due time, not just the
+            # expected few-seconds poll slack) — this loop had no visibility
+            # into how long a cycle itself takes, so a slow Zalo HTTP call
+            # (each up to zalo.DEFAULT_TIMEOUT=15s, once per linked
+            # conversation, run serially) could silently push the NEXT
+            # cycle's claim minutes late with nothing in the logs to explain
+            # it. Log any cycle taking noticeably longer than the poll
+            # interval so a repeat is diagnosable instead of guessed at.
+            elapsed = time.monotonic() - cycle_started
+            if elapsed > 20:
+                logger.warning("Meeting reminder cycle took %.1fs (longer than the 20s poll interval) — a Zalo/Telegram send is likely running slow.", elapsed)
+            # Was briefly reverted to 60s over a suspicion this loop's DB use
+            # competes with regular request handling for connections — ruled
+            # out on inspection: this loop uses BackgroundSessionLocal, a
+            # SEPARATE Postgres engine with its own tiny pool_size=1 pool
+            # (see database.py), specifically isolated from the main app's
+            # pool for exactly this reason. Kept at 20s.
+            await asyncio.sleep(20)
 
     asyncio.create_task(_loop())
 

@@ -949,3 +949,74 @@ def require_route_project_access(
         raise HTTPException(403, "Yêu cầu quyền quản lý, bạn không có quyền thực hiện thao tác này!")
 
     return user
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Member period-aware OFF filter
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# When the Recruitment/CV sync flips a Member to OFF, it stamps
+# Member.off_effective_at (UTC timestamp) so Dashboard period filters can
+# answer "was this Member active during the selected period?" without
+# reconstructing history from the current status. The rules are:
+#
+#   - employment_status == 'ON'  → always considered active (covers both
+#     first-time ON sync and OFF → ON rehires).
+#   - employment_status == 'OFF' and off_effective_at IS NULL → legacy row
+#     synced before the column existed. We treat NULL as "active for every
+#     historical period" so existing KPI history isn't destroyed (matches
+#     the prompt's "Do NOT delete historical data" rule).
+#   - employment_status == 'OFF' and off_effective_at IS NOT NULL → the
+#     Member is active for any period that ends BEFORE off_effective_at
+#     and inactive for any period that ends ON/AFTER it. The period "end"
+#     is used as the boundary so Previous Period is evaluated against the
+#     right cut-off even when the period straddles the stamp.
+#
+# Both `period_start` and `period_end` may be None (e.g. no time-range
+# supplied — legacy callers preserve behaviour). When period_end is None
+# we fall back to "today" as the effective boundary, which matches the
+# existing default behaviour of `_aggregate_team_comparison`.
+
+from datetime import datetime, timezone as _tz
+
+
+def _member_active_in_window(
+    member,
+    period_start: datetime | None = None,
+    period_end: datetime | None = None,
+) -> bool:
+    """Return True iff `member` was active for the entire selected window.
+
+    - ON   → True.
+    - OFF + None cutoff → True  (legacy safety — preserves prior
+      behaviour for rows that pre-date the column).
+    - OFF + cutoff at/before window START → False (whole window is
+      past the OFF cut-off).
+    - OFF + cutoff in the middle of the window → True only for the
+      portion BEFORE cutoff; the function returns True only when the
+      WHOLE period predates cutoff (the simple, conservative rule for
+      the current "is this Member part of the dataset for the period?"
+      yes/no check).
+    """
+    status = (getattr(member, "employment_status", None) or "ON").upper()
+    if status != "OFF":
+        return True
+    cutoff = getattr(member, "off_effective_at", None)
+    if cutoff is None:
+        # Legacy OFF row without a captured cutoff → keep prior behaviour:
+        # treat as active so existing KPI history is preserved.
+        return True
+    if period_end is None:
+        # Caller didn't specify — preserve prior "include everyone"
+        # behaviour so callers that don't pass a window are unaffected.
+        return True
+    # Normalise both sides to naive UTC for comparison (DB column may be
+    # naive; the period_end parsed by callers is naive in the aggregator).
+    if cutoff.tzinfo is not None:
+        cutoff = cutoff.astimezone(_tz.utc).replace(tzinfo=None)
+    end = period_end
+    if isinstance(end, datetime) and end.tzinfo is not None:
+        end = end.astimezone(_tz.utc).replace(tzinfo=None)
+    # The OFF transition happened during/after this period → exclude.
+    return cutoff > end
+

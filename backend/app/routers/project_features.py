@@ -9,7 +9,7 @@ import logging
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from ..database import get_db
-from ..models.project_feature import ProjectFeature, ProjectFeatureLog
+from ..models.project_feature import ProjectFeature, ProjectFeatureLog, ProjectKnowledgeItem
 from ..models.member import Member
 from ..utils.access import require_route_project_access, require_project
 from ..utils.auth import get_current_user
@@ -86,6 +86,7 @@ def _log_to_dict(l: ProjectFeatureLog) -> dict:
         "id": l.id,
         "feature_id": l.feature_id,
         "project_id": l.project_id,
+        "title": l.title,
         "content": l.content,
         "status": l.status,
         "author": (l.author.display_name if l.author else None) or l.author_display_name,
@@ -94,6 +95,19 @@ def _log_to_dict(l: ProjectFeatureLog) -> dict:
         "attached_files": l.attached_files or [],
         "ai_summary": l.ai_summary,
         "ai_tasks": l.ai_tasks or [],
+    }
+
+
+def _knowledge_to_dict(k: ProjectKnowledgeItem) -> dict:
+    return {
+        "id": k.id,
+        "project_id": k.project_id,
+        "feature_id": k.feature_id,
+        "title": k.title,
+        "content": k.content,
+        "author": (k.author.display_name if k.author else None) or k.author_display_name,
+        "created_at": k.created_at.isoformat() if k.created_at else None,
+        "updated_at": k.updated_at.isoformat() if k.updated_at else None,
     }
 
 
@@ -326,12 +340,35 @@ def download_log_attachment(pid: int, lid: int, idx: int, db: Session = Depends(
     return FileResponse(path, filename=meta["file_name"], media_type=meta.get("mime_type") or "application/octet-stream")
 
 
+@router.delete("/projects/{pid:int}/feature-logs/{lid:int}/attachments/{idx:int}")
+def remove_log_attachment(pid: int, lid: int, idx: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """"Gỡ bỏ" in the "Sửa bản nháp WIP" modal — drop one file from the log's
+    attachment list. Only removes the JSON metadata entry (matches how the
+    rest of this router treats attachments as lightweight references); the
+    underlying stored file is left in place, same lifecycle as an orphaned
+    upload elsewhere in the app."""
+    require_project(db, current_user, pid)
+    log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
+    if not log:
+        raise HTTPException(404, "Không tìm thấy log")
+    files = list(log.attached_files or [])
+    if idx < 0 or idx >= len(files):
+        raise HTTPException(404, "Không tìm thấy file đính kèm")
+    files.pop(idx)
+    log.attached_files = files or None
+    db.commit()
+    db.refresh(log)
+    return _log_to_dict(log)
+
+
 @router.post("/projects/{pid:int}/share-link")
-def create_share_link(pid: int, request: Request, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_share_link(pid: int, request: Request, body: dict = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     import secrets
+    from urllib.parse import quote
     from ..config import settings
     from ..models.project import Project
 
+    body = body or {}
     require_project(db, current_user, pid)
     project = db.query(Project).filter(Project.id == pid).first()
     if not project:
@@ -353,7 +390,85 @@ def create_share_link(pid: int, request: Request, db: Session = Depends(get_db),
     # URL. The public route is proxied through the frontend's /api/* rewrite,
     # so the frontend's own public origin is what users need.
     base_url = (settings.APP_BASE_URL or settings.FRONTEND_URL or "").rstrip("/")
-    return {"share_token": project.share_token, "share_url": f"{base_url}/share/project/{project.share_token}"}
+    share_url = f"{base_url}/share/project/{project.share_token}"
+
+    # Optional deep link straight to one Feature's section (markee-dashboard's
+    # "Mở Link" after saving a WIP entry does this) — the public share page
+    # reads this back as ?feature=<name> to scroll/highlight that section,
+    # instead of dropping the viewer at the top of the whole project.
+    feature_id = body.get("feature_id")
+    if feature_id:
+        feature = db.query(ProjectFeature).filter(ProjectFeature.id == feature_id, ProjectFeature.project_id == pid).first()
+        if feature:
+            share_url += f"?feature={quote(feature.name)}"
+
+    return {"share_token": project.share_token, "share_url": share_url}
+
+
+@router.patch("/projects/{pid:int}/feature-logs/{lid:int}")
+def update_log(pid: int, lid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Edit an existing WIP log — mirrors markee-dashboard's "Sửa bản nháp
+    WIP" modal (Tiêu đề / Tính năng / Dự án / Nội dung Markdown), adapted to
+    pm-new's normalized Feature table: `feature_name` (free text, like
+    markee-dashboard's own field) is resolved to a real ProjectFeature row —
+    reusing one with the same name in the destination project, or creating
+    one — rather than requiring the caller to already know a feature_id.
+    `target_project_id` moves the log (and re-homes its Feature link) to a
+    different project the caller also has access to.
+    """
+    require_project(db, current_user, pid)
+    log = db.query(ProjectFeatureLog).filter(ProjectFeatureLog.id == lid, ProjectFeatureLog.project_id == pid).first()
+    if not log:
+        raise HTTPException(404, "Không tìm thấy log")
+
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(400, "Thiếu nội dung log")
+
+    target_project_id = body.get("target_project_id") or pid
+    if target_project_id != pid:
+        require_project(db, current_user, target_project_id)
+
+    old_content, old_project_id = log.content, log.project_id
+    log.content = content
+    if "title" in body:
+        log.title = (body.get("title") or "").strip() or None
+
+    feature_name = (body.get("feature_name") or "").strip()
+    if feature_name or target_project_id != pid:
+        if not feature_name:
+            # Moving project without renaming the Feature — carry the same
+            # name over into the destination project's own Feature row.
+            feature_name = log.feature.name if log.feature else "Chưa đặt tên"
+        feature = (
+            db.query(ProjectFeature)
+            .filter(ProjectFeature.project_id == target_project_id, ProjectFeature.name.ilike(feature_name))
+            .first()
+        )
+        if not feature:
+            feature = ProjectFeature(
+                project_id=target_project_id, name=feature_name,
+                created_by_id=_member_id_for(current_user, db),
+            )
+            db.add(feature)
+            db.flush()
+        log.feature_id = feature.id
+
+    log.project_id = target_project_id
+    db.commit()
+    db.refresh(log)
+    if old_content != log.content or old_project_id != log.project_id:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Project Feature Log",
+            entity_type="ProjectFeatureLog", entity_id=log.id, action="UPDATE",
+            project_id=log.project_id, field_name="content", old_value=old_content[:200], new_value=log.content[:200],
+            description=(
+                f"Sửa log #{log.id}" if old_project_id == log.project_id
+                else f"Sửa và chuyển log #{log.id} từ dự án #{old_project_id} sang #{log.project_id}"
+            )
+        )
+        db.commit()
+    return _log_to_dict(log)
 
 
 @router.delete("/projects/{pid:int}/feature-logs/{lid:int}")
@@ -626,3 +741,101 @@ def push_log_tasks(pid: int, lid: int, body: dict, db: Session = Depends(get_db)
         )
         db.commit()
     return {"success": True, "pushed_count": pushed_count, "log": _log_to_dict(log)}
+
+
+# ─── Knowledge Hub — curated entries, separate from the raw WIP log timeline
+# above (see ProjectKnowledgeItem docstring) ──────────────────────────────
+@router.get("/projects/{pid:int}/knowledge-items")
+def list_knowledge_items(pid: int, feature_id: int = None, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    query = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.project_id == pid)
+    if feature_id:
+        query = query.filter(ProjectKnowledgeItem.feature_id == feature_id)
+    items = query.order_by(ProjectKnowledgeItem.created_at.desc()).all()
+    return [_knowledge_to_dict(k) for k in items]
+
+
+@router.post("/projects/{pid:int}/knowledge-items")
+def create_knowledge_item(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    title = (body.get("title") or "").strip()
+    content = (body.get("content") or "").strip()
+    if not title or not content:
+        raise HTTPException(400, "Thiếu tiêu đề hoặc nội dung")
+
+    feature_id = body.get("feature_id")
+    if feature_id:
+        feature = db.query(ProjectFeature).filter(ProjectFeature.id == feature_id, ProjectFeature.project_id == pid).first()
+        if not feature:
+            raise HTTPException(404, "Không tìm thấy tính năng")
+
+    author_id = _member_id_for(current_user, db)
+    item = ProjectKnowledgeItem(
+        project_id=pid,
+        feature_id=feature_id or None,
+        title=title,
+        content=content,
+        author_id=author_id,
+        author_display_name=None if author_id else _display_name_for(current_user),
+    )
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item.id, action="CREATE",
+        resource_name=item.title, project_id=pid,
+        description=f"Thêm mục Knowledge Hub '{item.title}'"
+    )
+    db.commit()
+    return _knowledge_to_dict(item)
+
+
+@router.patch("/projects/{pid:int}/knowledge-items/{kid:int}")
+def update_knowledge_item(pid: int, kid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    item = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.id == kid, ProjectKnowledgeItem.project_id == pid).first()
+    if not item:
+        raise HTTPException(404, "Không tìm thấy mục Knowledge Hub")
+
+    if "title" in body:
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "Thiếu tiêu đề")
+        item.title = title
+    if "content" in body:
+        content = (body.get("content") or "").strip()
+        if not content:
+            raise HTTPException(400, "Thiếu nội dung")
+        item.content = content
+
+    db.commit()
+    db.refresh(item)
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item.id, action="UPDATE",
+        resource_name=item.title, project_id=pid,
+        description=f"Sửa mục Knowledge Hub '{item.title}'"
+    )
+    db.commit()
+    return _knowledge_to_dict(item)
+
+
+@router.delete("/projects/{pid:int}/knowledge-items/{kid:int}")
+def delete_knowledge_item(pid: int, kid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    require_project(db, current_user, pid)
+    item = db.query(ProjectKnowledgeItem).filter(ProjectKnowledgeItem.id == kid, ProjectKnowledgeItem.project_id == pid).first()
+    if not item:
+        raise HTTPException(404, "Không tìm thấy mục Knowledge Hub")
+
+    item_id, item_title = item.id, item.title
+    db.delete(item)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project Knowledge Item",
+        entity_type="ProjectKnowledgeItem", entity_id=item_id, action="DELETE",
+        resource_name=item_title, project_id=pid,
+        description=f"Xóa mục Knowledge Hub '{item_title}'"
+    )
+    db.commit()
+    return {"success": True}

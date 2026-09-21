@@ -928,6 +928,16 @@ def get_conversation_messages(
     conv = _resolve_conversation_for_viewer(db, current_user, conversation_id)
 
     q = db.query(ZaloMessage).filter(ZaloMessage.conversation_id == conversation_id)
+    # Only messages since the conversation's CURRENT link to a project — not
+    # its entire lifetime history. A group unlinked then relinked later (or
+    # linked to a different project) keeps the same conversation_id/message
+    # rows, so without this a relink surfaced everything from the previous
+    # linked period too (reported: reconnecting after 2 days still showed
+    # messages from before the disconnect). project_linked_at is re-stamped
+    # on every link (see link_conversation_to_project above), so this
+    # doesn't affect a conversation that's been continuously linked.
+    if conv.project_linked_at:
+        q = q.filter(ZaloMessage.created_at >= conv.project_linked_at)
     limit = min(limit, 200)
     if after_id:
         # Incremental poll — always oldest-of-the-new-batch first, ascending.

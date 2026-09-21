@@ -351,6 +351,10 @@ export const createPlatform = (data: { name: string; icon?: string; color?: stri
 // TASK GROUPS (v5)
 // ═══════════════════════════════════════════════════════════
 export const getTaskGroups = (phaseId: number) => api.get(`/phases/${phaseId}/task-groups`).then(r => r.data);
+// One request for every Task Group across every Phase of a project — replaces
+// firing getTaskGroups() once per phase in parallel (Promise.all), which let
+// a project with many phases alone burst past the app's shared DB pool.
+export const getProjectTaskGroups = (projectId: number) => api.get(`/projects/${projectId}/task-groups`).then(r => r.data);
 export const createTaskGroup = (phaseId: number, data: { name: string; description?: string; manday_est?: number }) =>
   api.post(`/phases/${phaseId}/task-groups`, data).then(r => r.data);
 export const updateTaskGroup = (phaseId: number, gid: number, data: object) =>
@@ -464,6 +468,8 @@ export interface CalendarTask {
   skill_solution_id: number | null;
   skill_vendor_id: number | null;
   ticket_id: string | null; // Task's real Link field — LinkChipsEditor's chip storage
+  remark: string | null; // comma-joined performance_settings rule ids, same shape as the Tasks tab's Remark
+  send: string | null; // '' | 'gửi' | 'đã gửi'
   notes: string | null;
   project_id: number;
   project_name: string;
@@ -720,14 +726,35 @@ export const getProjectFeatureLogs = (projectId: number, featureId?: number) =>
   api.get(`/projects/${projectId}/feature-logs`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
 export const createProjectFeatureLog = (projectId: number, featureId: number, content: string, status?: string) =>
   api.post(`/projects/${projectId}/features/${featureId}/logs`, { content, status }).then(r => r.data);
+// content is required (kept for the simple inline-edit callers); title/
+// feature_name/target_project_id are all optional extras used by the full
+// "Sửa bản nháp WIP" modal (title + move Feature/Project in one save).
+export const updateProjectFeatureLog = (
+  projectId: number, logId: number, content: string,
+  extra?: { title?: string; feature_name?: string; target_project_id?: number },
+) => api.patch(`/projects/${projectId}/feature-logs/${logId}`, { content, ...extra }).then(r => r.data);
+export const createProjectShareLink = (projectId: number, featureId?: number) =>
+  api.post(`/projects/${projectId}/share-link`, featureId ? { feature_id: featureId } : {}).then(r => r.data as { share_token: string; share_url: string });
 export const deleteProjectFeatureLog = (projectId: number, logId: number) =>
   api.delete(`/projects/${projectId}/feature-logs/${logId}`).then(r => r.data);
 export const getProjectFeatureLogAttachmentBlob = (projectId: number, logId: number, idx: number) =>
   api.get(`/projects/${projectId}/feature-logs/${logId}/attachments/${idx}`, { responseType: 'blob' }).then(r => r.data as Blob);
+export const removeProjectFeatureLogAttachment = (projectId: number, logId: number, idx: number) =>
+  api.delete(`/projects/${projectId}/feature-logs/${logId}/attachments/${idx}`).then(r => r.data);
 export const generateFeatureLogAiTasks = (projectId: number, logId: number) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/ai-tasks`).then(r => r.data);
 export const pushFeatureLogTasks = (projectId: number, logId: number, tasks: any[]) =>
   api.post(`/projects/${projectId}/feature-logs/${logId}/push-tasks`, { tasks }).then(r => r.data);
+// Project Knowledge Hub — curated entries, separate from the WIP log timeline
+export const getProjectKnowledgeItems = (projectId: number, featureId?: number) =>
+  api.get(`/projects/${projectId}/knowledge-items`, { params: featureId ? { feature_id: featureId } : {} }).then(r => r.data);
+export const createProjectKnowledgeItem = (projectId: number, title: string, content: string, featureId?: number) =>
+  api.post(`/projects/${projectId}/knowledge-items`, { title, content, feature_id: featureId }).then(r => r.data);
+export const updateProjectKnowledgeItem = (projectId: number, itemId: number, body: { title?: string; content?: string }) =>
+  api.patch(`/projects/${projectId}/knowledge-items/${itemId}`, body).then(r => r.data);
+export const deleteProjectKnowledgeItem = (projectId: number, itemId: number) =>
+  api.delete(`/projects/${projectId}/knowledge-items/${itemId}`).then(r => r.data);
+
 export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
   new Promise<any>((resolve, reject) => {
     const reader = new FileReader();
@@ -947,10 +974,15 @@ export interface TeamComparisonMember {
   manday_est: number;
   manday_actual: number;
   kpi: number;
+  // Giao — KPI assigned regardless of completion status (status-agnostic).
+  // Used for workload/overload classification instead of kpi_pct, since
+  // kpi_pct stays at 0 until something is actually marked Done.
+  giao: number;
   progress_pct: number;
   // KPI% for workload classification (from Done tasks in selected period)
   period_kpi: number;
   kpi_pct: number;
+  giao_pct: number;
 }
 export interface TeamComparisonProject {
   project_id: number;
@@ -986,6 +1018,10 @@ export interface TeamComparisonTeam {
   member_count: number;
   members: TeamComparisonMember[];
   kpi: number;
+  // Giao — team's total assigned KPI, status-agnostic (see
+  // TeamComparisonMember.giao).
+  giao: number;
+  giao_pct: number;
   plan_md: number;
   actual_md: number;
   util: number;
@@ -1000,6 +1036,9 @@ export interface TeamComparisonTeam {
   // Leader's individual workload KPI (own tasks only, NOT team aggregate)
   leader_period_kpi: number;
   leader_kpi_pct: number;
+  // Leader's individual Giao (own tasks only) — see TeamComparisonMember.giao.
+  leader_giao: number;
+  leader_giao_pct: number;
   // Leader's personal task aggregates (own tasks only, NOT team)
   leader_done: number;
   leader_doing: number;

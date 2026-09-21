@@ -13,8 +13,11 @@ import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import {
   MONTH_WEEKS_COUNT,
   checkTaskInPeriod,
+  isTaskDoneInPeriod,
   calculateDaysLate,
+  parseDateString,
 } from '@/app/dashboard/constants';
+import { getKpiGiaoForMember } from '@/lib/kpiPotential';
 
 const getTaskKpiForMember = (t: any, memberId: any) => {
   const isDone = t.status === 'Done' || t.status === 'done';
@@ -45,6 +48,13 @@ const getTaskKpiForMember = (t: any, memberId: any) => {
   }
   return 0;
 };
+
+// Tie-break order for "Task trong kỳ đang xem"'s advertised sort
+// ("Deadline gần nhất → Critical → High → Normal → Interrupt").
+const PRIORITY_SORT_RANK: Record<string, number> = { critical: 0, high: 1, normal: 2, interrupt: 3 };
+function priorityRank(p?: string): number {
+  return PRIORITY_SORT_RANK[(p || '').toLowerCase()] ?? 4;
+}
 
 export interface MemberDetailModalProps {
   member: any;
@@ -77,7 +87,11 @@ export default function MemberDetailModal({
   onMonthChange,
   onWeekChange,
 }: MemberDetailModalProps) {
-  const [taskFilter, setTaskFilter] = useState<'all' | 'overdue' | 'critical' | 'high'>('all');
+  const [taskFilter, setTaskFilter] = useState<'all' | 'group' | 'overdue' | 'critical' | 'high'>('all');
+  // "Dự án đang tham gia" sort — default KPI (completed work), switchable to
+  // Manday. Purely a display order; doesn't affect which projects are
+  // listed (that's still `activeProjects` below).
+  const [projectSortMode, setProjectSortMode] = useState<'kpi' | 'manday'>('kpi');
 
   if (!member) return null;
 
@@ -94,17 +108,64 @@ export default function MemberDetailModal({
   const normalTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'normal');
   const interruptTasks = memberTasks.filter(t => (t.priority || '').toLowerCase() === 'interrupt');
 
-  // Recompute KPI from memberTasks (workspace-scoped + period-filtered)
-  // to avoid data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  // Recompute KPI from the member's own tasks (workspace-scoped) to avoid
+  // data-scope mismatch when parent uses rawTasksAll for drilled-in members.
+  // This is the SAME Total KPI calculation as Section 4 of Team Load
+  // (backend `system_audit.py:_aggregate_team_comparison`'s
+  // `per_member_period_kpi`): Σ kpi_assigned + Σ kpi_support over the
+  // member's tasks whose end_date_actual falls INSIDE the selected period.
+  //
+  // Deliberately uses `isTaskDoneInPeriod` here instead of `memberTasks`
+  // (which is filtered by the lenient `checkTaskInPeriod` — a task whose
+  // planned window merely overlaps the period, kept lenient on purpose so
+  // Giao/task-count figures don't depend on completion status/date). A
+  // Done task can appear in `memberTasks` via that overlap even though it
+  // was actually finished in a DIFFERENT period; summing HT over
+  // `memberTasks` directly would double it into every such period instead
+  // of the one it actually finished in. `isTaskDoneInPeriod` re-checks
+  // end_date_actual strictly against the period, matching the backend
+  // exactly, so this number can't drift from Team Load's Total KPI again.
   const localKpi = useMemo(() => {
     let k = 0;
-    for (const t of memberTasks) {
-      k += getTaskKpiForMember(t, member.id);
+    for (const t of memberAllTasks) {
+      if (isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)) {
+        k += getTaskKpiForMember(t, member.id);
+      }
     }
     return Math.round(k * 10) / 10;
+  }, [memberAllTasks, member.id, selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
+
+  // KPI Giao — assigned KPI regardless of completion status (same
+  // status-agnostic priority_kpi_base × manday_est formula as the
+  // ranking table's "Giao" column, `@/lib/kpiPotential`). Summed over
+  // `memberTasks` (the LENIENT, planned-window candidate set) on purpose:
+  // unlike HT above, Giao must reflect everything assigned/due this
+  // period even if it's still open, so a Leader can see how much is
+  // actually on this person's plate — not just what's already finished.
+  const localKpiGiao = useMemo(() => {
+    let g = 0;
+    for (const t of memberTasks) {
+      g += getKpiGiaoForMember(t, member.id);
+    }
+    return Math.round(g * 10) / 10;
   }, [memberTasks, member.id]);
 
   const activeProjects = projects.filter(p => memberTasks.some(t => String(t.project_id) === String(p.id)));
+
+  // Same per-project KPI/Manday this member earned — used both to sort
+  // "Dự án đang tham gia" and (below, in the JSX) to render each card's
+  // own numbers, computed once here instead of twice.
+  const activeProjectsSorted = useMemo(() => {
+    const withStats = activeProjects.map(p => {
+      const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
+      const pManday = pTasks.reduce((acc, t) => acc + (t.manday_actual || t.manday_est || 0), 0);
+      const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? getTaskKpiForMember(t, member.id) : 0), 0);
+      return { project: p, pKpi, pManday };
+    });
+    withStats.sort((a, b) => projectSortMode === 'manday' ? b.pManday - a.pManday : b.pKpi - a.pKpi);
+    return withStats.map(x => x.project);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjects.map(p => p.id).join(','), memberTasks, member.id, projectSortMode]);
 
   // Period label for the header
   const periodLabel = useMemo(() => {
@@ -140,6 +201,21 @@ export default function MemberDetailModal({
     return `${(kpi / divisor).toFixed(1)}%`;
   }, [localKpi, filterDuration]);
 
+  // GIAO TRUNG BÌNH = KPI GIAO / THỜI GIAN BỘ LỌC — same divisor as KPI
+  // TRUNG BÌNH above, but based on Giao (assigned, status-agnostic)
+  // instead of HT (completed-only). This is the figure that should drive
+  // "quá tải" (overload) judgment: KPI TRUNG BÌNH stays at 0% until
+  // something is actually marked Done, so a person already holding 3
+  // tasks worth well over 100%'s worth of assigned work would still look
+  // "not overloaded" by that metric alone. Mirrors the same >120%/>=90%
+  // thresholds Team Load's Leader card already uses for `leader_giao_pct`.
+  const giaoPct = useMemo(() => {
+    const divisor = filterDuration > 0 ? filterDuration : 1;
+    return localKpiGiao / divisor;
+  }, [localKpiGiao, filterDuration]);
+  const giaoTrungBinhText = `${giaoPct.toFixed(1)}%`;
+  const giaoOverloadColor = giaoPct > 120 ? 'text-rose-600' : giaoPct >= 90 ? 'text-emerald-600' : 'text-[#0058be]';
+
   const totalPossible = openTasks.length + doneTasks.length;
   const workload = totalPossible > 0 ? Math.min(100, Math.round((openTasks.length / Math.max(5, totalPossible)) * 100)) : 67;
 
@@ -173,12 +249,77 @@ export default function MemberDetailModal({
     return Object.values(map).sort((a, b) => b.manday - a.manday);
   }, [memberTasks]);
 
-  const filteredTasks = memberTasks.filter(t => {
-    if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && calculateDaysLate(t) > 0;
-    if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
-    if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
-    return true;
-  });
+  const filteredTasks = useMemo(() => {
+    const base = memberTasks.filter(t => {
+      if (taskFilter === 'overdue') return (t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel') && calculateDaysLate(t) > 0;
+      if (taskFilter === 'critical') return (t.priority || '').toLowerCase() === 'critical';
+      if (taskFilter === 'high') return (t.priority || '').toLowerCase() === 'high';
+      return true; // 'all' and 'group' (group renders its own rows below) both start from the full set
+    });
+    // "Sắp xếp: Deadline gần nhất → Critical → High → Normal → Interrupt"
+    // (label right above the table) — nearest deadline first, tasks with
+    // no deadline sort last, ties broken by priority rank.
+    return [...base].sort((a, b) => {
+      const da = parseDateString(a.end_date_est);
+      const db = parseDateString(b.end_date_est);
+      if (da && db) {
+        const diff = da.getTime() - db.getTime();
+        if (diff !== 0) return diff;
+      } else if (da && !db) {
+        return -1;
+      } else if (!da && db) {
+        return 1;
+      }
+      return priorityRank(a.priority) - priorityRank(b.priority);
+    });
+  }, [memberTasks, taskFilter]);
+
+  // "Group Task" tab — one row per Task Group that still has ≥1 task in
+  // memberTasks (already period + member scoped above), derived on the fly
+  // rather than a fixed server list, so it can never drift from whatever
+  // the flat task tabs are showing. `task_group_id`/`task_group_name` are
+  // present on tasks from BOTH callers of this modal — Overview's
+  // /api/all-tasks-global (task_groups.py:list_all_tasks_global) and Team
+  // Load's /api/system-audit/team-comparison-tasks (system_audit.py:
+  // get_team_comparison_tasks) both set these via the same serialize_task
+  // (task_group_id) plus an explicit task_group_name assignment — so this
+  // works regardless of which of the two APIs fed `tasks` in.
+  const groupRows = useMemo(() => {
+    const map = new Map<string, {
+      groupId: any; groupName: string; projectId: any; projectName: string;
+      taskCount: number; criticalCount: number; overdueCount: number; nearestDeadline: Date | null;
+    }>();
+    memberTasks.forEach(t => {
+      const gid = t.task_group_id;
+      if (gid == null) return;
+      const key = String(gid);
+      if (!map.has(key)) {
+        map.set(key, {
+          groupId: gid,
+          groupName: t.task_group_name || `Group #${gid}`,
+          projectId: t.project_id,
+          projectName: t.projectName || t.project_name || '',
+          taskCount: 0,
+          criticalCount: 0,
+          overdueCount: 0,
+          nearestDeadline: null,
+        });
+      }
+      const row = map.get(key)!;
+      row.taskCount++;
+      if ((t.priority || '').toLowerCase() === 'critical') row.criticalCount++;
+      const isOpen = t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel';
+      if (isOpen && calculateDaysLate(t) > 0) row.overdueCount++;
+      const d = parseDateString(t.end_date_est);
+      if (d && (!row.nearestDeadline || d < row.nearestDeadline)) row.nearestDeadline = d;
+    });
+    return Array.from(map.values()).sort((a, b) => {
+      if (a.nearestDeadline && b.nearestDeadline) return a.nearestDeadline.getTime() - b.nearestDeadline.getTime();
+      if (a.nearestDeadline) return -1;
+      if (b.nearestDeadline) return 1;
+      return b.taskCount - a.taskCount;
+    });
+  }, [memberTasks]);
 
   return (
     <div className="fixed inset-0 z-50 overflow-hidden">
@@ -252,7 +393,53 @@ export default function MemberDetailModal({
             </div>
             <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
               <span className="text-lg font-black text-[#0058be] leading-none">{localKpi.toFixed(1)}</span>
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5">KPI</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                Total KPI
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">Total KPI</p>
+                  <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                  <p className="text-white font-mono">Total KPI = Σ kpi_assigned + Σ kpi_support</p>
+                  <p className="text-white/60 mt-1.5">Trong đó:</p>
+                  <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                    <li><b>kpi_assigned / kpi_support:</b> Tính từ <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> (Cancel = 0). Task chưa hoàn thành không mang giá trị, nên tổng này thực tế là KPI của task Done trong kỳ lọc.</li>
+                    <li><b>Phạm vi:</b> Task của Member trong Workspace + kỳ lọc (Tuần/Tháng/Năm) hiện tại.</li>
+                  </ul>
+                  <p className="text-white/50 mt-1.5">Đây là cùng giá trị được Portal tính trong Section 4 của Team Load; không có phép tính thứ hai ở UI.</p>
+                </FormulaTooltip>
+              </span>
+            </div>
+          </div>
+
+          {/* 1a. KPI GIAO (assigned, status-agnostic) — separate from HT
+              above on purpose. Powers workload/overload judgment: unlike
+              KPI TRUNG BÌNH (0% until something is Done), Giao reflects
+              everything currently assigned regardless of status, so it
+              can flag a person as loaded/overloaded even before they've
+              finished anything this period. */}
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className={`text-lg font-black leading-none ${giaoOverloadColor}`}>{giaoTrungBinhText}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                GIAO TRUNG BÌNH
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">Giao trung bình</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">GIAO TRUNG BÌNH = KPI GIAO ÷ THỜI GIAN BỘ LỌC</p>
+                  <p className="text-white/60 mt-1.5">Khác với KPI TRUNG BÌNH (chỉ tính task Done), chỉ số này tính TOÀN BỘ task được giao — kể cả đang làm/chưa Done — nên phản ánh đúng khối lượng đang ôm, dùng để đánh giá quá tải. Ngưỡng: <b className="text-rose-300">&gt;120% = quá tải</b>, <b className="text-emerald-300">&ge;90% = tốt</b>.</p>
+                </FormulaTooltip>
+              </span>
+            </div>
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2.5 text-center flex flex-col justify-center">
+              <span className="text-lg font-black text-[#0058be] leading-none">{localKpiGiao.toFixed(1)}</span>
+              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight mt-1.5 flex items-center justify-center gap-0.5">
+                KPI Giao
+                <FormulaTooltip align="right">
+                  <p className="font-bold text-white/90 mb-1">KPI Giao</p>
+                  <p className="text-white/80 mb-1">Công thức:</p>
+                  <p className="text-white font-mono">KPI Giao = Σ (priority_kpi_base × manday_est)</p>
+                  <p className="text-white/60 mt-1.5">Tính cho MỌI task được giao trong kỳ, bất kể trạng thái (Done/Doing/chưa làm) — không giống Total KPI (chỉ tính task Done).</p>
+                </FormulaTooltip>
+              </span>
             </div>
           </div>
 
@@ -415,14 +602,35 @@ export default function MemberDetailModal({
 
           {/* 4. DỰ ÁN ĐANG THAM GIA */}
           <div>
-            <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider mb-3">Dự án đang tham gia</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-xs font-black text-[#0b1c30] uppercase tracking-wider">Dự án đang tham gia</h3>
+              {activeProjects.length > 1 && (
+                <div className="flex gap-1">
+                  {([
+                    { key: 'kpi', label: 'KPI nhiều nhất' },
+                    { key: 'manday', label: 'Manday nhiều nhất' },
+                  ] as const).map(opt => (
+                    <button
+                      key={opt.key}
+                      onClick={() => setProjectSortMode(opt.key)}
+                      className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold transition-all cursor-pointer ${projectSortMode === opt.key
+                          ? 'bg-[#0058be] text-white shadow-sm'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                        }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <div className="space-y-3">
-              {activeProjects.length === 0 ? (
+              {activeProjectsSorted.length === 0 ? (
                 <div className="p-4 bg-slate-50 border border-slate-100 rounded-2xl text-center text-xs font-semibold text-slate-400">
                   Chưa có dự án nào đang tham gia.
                 </div>
               ) : (
-                activeProjects.map(p => {
+                activeProjectsSorted.map(p => {
                   const pTasks = memberTasks.filter(t => String(t.project_id) === String(p.id));
                   const pOpen = pTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel').length;
                   const pCritical = pTasks.filter(t => (t.priority || '').toLowerCase() === 'critical').length;
@@ -481,7 +689,7 @@ export default function MemberDetailModal({
                 <p className="text-[10px] text-slate-400 font-medium">Sắp xếp: Deadline gần nhất → Critical → High → Normal → Interrupt</p>
               </div>
               <div className="flex gap-1">
-                {(['all', 'overdue', 'critical', 'high'] as const).map(filter => (
+                {(['all', 'group', 'overdue', 'critical', 'high'] as const).map(filter => (
                   <button
                     key={filter}
                     onClick={() => setTaskFilter(filter)}
@@ -490,7 +698,7 @@ export default function MemberDetailModal({
                         : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                       }`}
                   >
-                    {filter === 'all' ? 'Tất cả' : filter === 'overdue' ? 'Trễ' : filter === 'critical' ? 'Critical' : 'High'}
+                    {filter === 'all' ? 'Tất cả' : filter === 'group' ? 'Group Task' : filter === 'overdue' ? 'Trễ' : filter === 'critical' ? 'Critical' : 'High'}
                   </button>
                 ))}
               </div>
@@ -500,15 +708,61 @@ export default function MemberDetailModal({
               <table className="w-full text-xs border-separate border-spacing-0">
                 <thead>
                   <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider">
-                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">TASK</th>
+                    <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">{taskFilter === 'group' ? 'GROUP TASK' : 'TASK'}</th>
                     <th className="px-4 py-2.5 text-left bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DỰ ÁN</th>
-                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">PRIORITY</th>
+                    <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">{taskFilter === 'group' ? 'CRITICAL' : 'PRIORITY'}</th>
                     <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">DEADLINE</th>
                     <th className="px-4 py-2.5 text-center bg-slate-50 text-slate-500 sticky top-0 z-20 border-b border-slate-200">TRẠNG THÁI</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {filteredTasks.length === 0 ? (
+                  {taskFilter === 'group' ? (
+                    groupRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="text-center py-6 text-xs text-slate-400 font-semibold">
+                          Không có Group Task nào.
+                        </td>
+                      </tr>
+                    ) : (
+                      groupRows.map((g) => {
+                        const dlStr = g.nearestDeadline ? `${String(g.nearestDeadline.getDate()).padStart(2, '0')}/${String(g.nearestDeadline.getMonth() + 1).padStart(2, '0')}` : '—';
+                        return (
+                          <tr key={g.groupId} onClick={() => { if (g.projectId != null) { onClose(); onNavigate(g.projectId); } }} className="hover:bg-slate-50/80 transition-colors cursor-pointer">
+                            <td className="px-4 py-3">
+                              <p className="font-bold text-[#0b1c30] text-xs">📁 {g.groupName}</p>
+                              <p className="text-[10px] text-slate-400 mt-0.5">{g.taskCount} task trong kỳ.</p>
+                            </td>
+                            <td className="px-4 py-3 text-slate-600 font-medium text-xs">
+                              {g.projectName || '—'}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              {g.criticalCount > 0 ? (
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-700">
+                                  {g.criticalCount}
+                                </span>
+                              ) : (
+                                <span className="text-slate-300">—</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-center font-bold text-slate-700 text-xs">
+                              {dlStr}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              {g.overdueCount > 0 ? (
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-600">
+                                  {g.overdueCount} trễ
+                                </span>
+                              ) : (
+                                <span className="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600">
+                                  OK
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )
+                  ) : filteredTasks.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="text-center py-6 text-xs text-slate-400 font-semibold">
                         Không có task nào.

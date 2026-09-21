@@ -230,6 +230,61 @@ export function calculateDaysLate(task: any): number {
   return 0;
 }
 
+// Mirrors backend Condition 3 in `_aggregate_team_comparison`
+// (system_audit.py): a NOT-yet-done task whose deadline has already
+// passed the selected period's END boundary still "belongs" to that
+// period (so a Leader/Member's overdue work keeps showing up in
+// "Tuần này" instead of silently vanishing once its deadline is in the
+// past). Also requires the task to have EXISTED by the period's end
+// (created_at <= periodEnd) — same guard the backend uses — so a task
+// created this week can't retroactively leak into weeks that already
+// passed before it existed. Without this fallback, the frontend's
+// planned-window-overlap check alone would exclude such a task from
+// EVERY period, while the backend (which drives the Team Load card's
+// Giao/Trễ numbers) keeps counting it — producing a card-vs-modal
+// mismatch for any task that's been overdue longer than one period.
+function isTaskOverdueRelativeToPeriodEnd(task: any, periodEnd: Date | null): boolean {
+  if (!periodEnd) return false;
+  const status = task.status === 'Done' || task.status === 'done' ? 'done'
+    : task.status === 'Cancel' || task.status === 'cancel' ? 'cancel' : 'open';
+  if (status !== 'open') return false;
+  const endDateEst = parseDateString(task.end_date_est);
+  if (!endDateEst || endDateEst >= periodEnd) return false;
+  const createdAt = parseDateString(task.created_at);
+  if (createdAt && createdAt > periodEnd) return false;
+  return true;
+}
+
+function dateFallsInPeriod(d: Date | null, periodStart: Date | null, periodEnd: Date | null): boolean {
+  if (!d) return false;
+  if (periodStart && d < periodStart) return false;
+  if (periodEnd && d > periodEnd) return false;
+  return true;
+}
+
+// Mirrors backend `giao_time_filters` in `_aggregate_team_comparison`
+// (system_audit.py) EXACTLY: 3 independent point-in-range checks —
+// `start_date`, `created_at`, `end_date_est` — OR'd together, each tested
+// against the period on its own (like separate SQL `BETWEEN` clauses),
+// plus the "quá hạn tương đối với kỳ" fallback for still-open tasks whose
+// deadline has already passed the period's end.
+//
+// Deliberately NOT an interval-overlap test (checking whether the task's
+// whole [start, end] span merely touches the period) — that shape has 2
+// concrete failure modes, both confirmed against real prod data:
+//   1. A long-running task (start far before its deadline) would match
+//      EVERY week in between, not just the week(s) one of its own dates
+//      actually falls in — Giao gets spread across weeks the backend
+//      never attributes it to.
+//   2. A Done task's real work happened days before it was actually
+//      logged into the system (`created_at` lags the real dates on a
+//      backfilled entry) — an overlap test built from `start_date`/
+//      `end_date_actual` never even looks at `created_at`, so the task
+//      silently vanishes from the week it was actually entered, even
+//      though the backend's `created_at`-in-period check counts it there.
+// `end_date_actual` is deliberately NOT consulted here — a Done task's
+// real completion-period membership is `isTaskDoneInPeriod`'s job only;
+// mixing it into this lenient check is what caused failure mode 2 above.
 export function checkTaskInPeriod(
   task: any,
   selectedYear: number | 'all',
@@ -239,21 +294,10 @@ export function checkTaskInPeriod(
 ): boolean {
   if (!task) return false;
 
-  const isDone = task.status === 'Done' || task.status === 'done';
-  const endStr = isDone
-    ? (task.end_date_actual || task.end_date_est || task.end_date || task.deadline)
-    : (task.end_date_est || task.end_date || task.deadline);
-  const startStr = task.start_date || task.created_at;
+  let periodStart: Date | null = null;
+  let periodEnd: Date | null = null;
 
-  const tEnd = parseDateString(endStr || startStr);
-  const tStart = parseDateString(startStr || endStr);
-
-  if (!tEnd && !tStart) return false;
-
-  const taskDate = tEnd || tStart;
-  if (!taskDate) return false;
-
-  // 1. If a WEEK filter is active (selectedWeek !== 'all' or activeQuickFilter starts with 'Tuần'):
+  // 1. WEEK filter (selectedWeek !== 'all' or a 'Tuần…' quick filter)
   if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) {
     let range: { monday: Date; sunday: Date } | null = null;
     if (activeQuickFilter === 'Tuần này') {
@@ -265,20 +309,81 @@ export function checkTaskInPeriod(
     } else if (typeof selectedWeek === 'number') {
       range = getWeekDateRange(selectedWeek, selectedMonth, selectedYear);
     }
-
     if (range) {
-      const inRange = (taskDate >= range.monday && taskDate <= range.sunday) ||
-        Boolean(tStart && tEnd && tStart <= range.sunday && tEnd >= range.monday);
-      return Boolean(inRange);
+      periodStart = range.monday;
+      periodEnd = range.sunday;
     }
+  } else if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
+    // 2. MONTH filter (KPI fiscal cycle, or a plain calendar month fallback)
+    const cycle = CYCLE_TEMPLATE[selectedMonth];
+    const yr = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+    if (cycle) {
+      periodStart = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+      periodEnd = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+    } else {
+      periodStart = new Date(yr, selectedMonth - 1, 1, 0, 0, 0, 0);
+      periodEnd = new Date(yr, selectedMonth, 0, 23, 59, 59, 999);
+    }
+  } else if (selectedYear !== 'all' && typeof selectedYear === 'number') {
+    // 3. YEAR filter only
+    periodStart = new Date(selectedYear, 0, 1, 0, 0, 0, 0);
+    periodEnd = new Date(selectedYear, 11, 31, 23, 59, 59, 999);
   }
 
-  // 2. Year Filter
+  if (!periodStart && !periodEnd) return true; // "Tất cả" — no period filter active
+
+  const startDate = parseDateString(task.start_date);
+  const createdAt = parseDateString(task.created_at);
+  const endDateEst = parseDateString(task.end_date_est || task.end_date || task.deadline);
+
+  if (dateFallsInPeriod(startDate, periodStart, periodEnd)) return true;
+  if (dateFallsInPeriod(createdAt, periodStart, periodEnd)) return true;
+  if (dateFallsInPeriod(endDateEst, periodStart, periodEnd)) return true;
+
+  return isTaskOverdueRelativeToPeriodEnd(task, periodEnd);
+}
+
+// Strict HT-only companion to `checkTaskInPeriod`. Returns true only for a
+// DONE task whose end_date_actual falls EXACTLY inside the selected
+// period — used to gate the HT (completed KPI) sum specifically, so a
+// task's completed KPI counts ONCE, into the single period it actually
+// finished in (never both the period it was started/due AND the period
+// it finished). `checkTaskInPeriod` itself stays lenient (planned-window
+// overlap) for ALL tasks because that broader check also selects the
+// candidate set for Giao (assigned KPI/Manday), which must NOT depend on
+// completion status or date — see the comment on its week-filter branch.
+export function isTaskDoneInPeriod(
+  task: any,
+  selectedYear: number | 'all',
+  selectedMonth: number | 'all',
+  selectedWeek: number | 'all',
+  activeQuickFilter: string | null = null
+): boolean {
+  if (!task) return false;
+  const isDone = task.status === 'Done' || task.status === 'done';
+  if (!isDone || !task.end_date_actual) return false;
+
+  const taskDate = parseDateString(task.end_date_actual);
+  if (!taskDate) return false;
+
+  if (selectedWeek !== 'all' || (activeQuickFilter && activeQuickFilter.startsWith('Tuần'))) {
+    let range: { monday: Date; sunday: Date } | null = null;
+    if (activeQuickFilter === 'Tuần này') {
+      range = getMondayToSundayRange(new Date());
+    } else if (activeQuickFilter === 'Tuần trước') {
+      range = getPrevWeekRange(new Date());
+    } else if (activeQuickFilter === 'Tuần tới') {
+      range = getNextWeekRange(new Date());
+    } else if (typeof selectedWeek === 'number') {
+      range = getWeekDateRange(selectedWeek, selectedMonth, selectedYear);
+    }
+    if (range) return taskDate >= range.monday && taskDate <= range.sunday;
+  }
+
   if (selectedYear !== 'all' && typeof selectedYear === 'number' && taskDate.getFullYear() !== selectedYear) {
     return false;
   }
 
-  // 3. Month Filter (KPI cycle or standard month)
   if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
     const cycle = CYCLE_TEMPLATE[selectedMonth];
     if (cycle) {

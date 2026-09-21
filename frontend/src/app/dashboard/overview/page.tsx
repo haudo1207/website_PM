@@ -14,7 +14,8 @@ import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, isTaskDoneInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { getKpiGiaoForMember, getProjectKpiGiao } from '@/lib/kpiPotential';
 
 const getShortName = (name: string) => {
   if (!name) return 'Unknown';
@@ -116,32 +117,93 @@ const getTaskKpiForMember = (t: any, memberId: any) => {
   return 0;
 };
 
-// Same role-split as getTaskKpiForMember, but ignores the "Done" gate — the
-// KPI a task is WORTH for a member regardless of completion, i.e. their
-// "Giao" (target) side of the KPI HT/Giao ratio in the ranking table.
-const getTaskKpiPotentialForMember = (t: any, memberId: any) => {
-  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
-  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
+// Period-aware Member OFF filter — mirrors the backend
+// `_member_active_in_window` rule so a Member turned OFF by the
+// Recruitment/CV sync disappears from the dataset used for the selected
+// period without retroactively invalidating historical periods:
+//   - ON   → always active
+//   - OFF + off_effective_at NULL → treated as active (legacy rows — never
+//     guess; preserve prior behaviour so KPI history isn't destroyed)
+//   - OFF + off_effective_at set → active iff off_effective_at > periodEnd
+//     (i.e. the OFF cut-off is AFTER the period's end). Mirrors the
+//     backend `_member_active_in_window` exactly.
+const isMemberActiveInPeriod = (m: any, periodEnd: Date | null): boolean => {
+  if (!m) return false;
+  const status = String(m.employment_status || 'ON').toUpperCase();
+  if (status !== 'OFF') return true;
+  const cutoff = m.off_effective_at ? new Date(m.off_effective_at) : null;
+  if (!cutoff || isNaN(cutoff.getTime())) return true;
+  if (!periodEnd || isNaN(periodEnd.getTime())) return true;
+  return cutoff.getTime() > periodEnd.getTime();
+};
 
-  if (isAssigned && isSupport) {
-    if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
-      return t.kpi_assigned + t.kpi_support;
+// Helper to resolve the period-end for the currently-selected Dashboard
+// filters (year / month / week / quick filter). Reuses the same helpers
+// used by the Frontend period system (`getMondayToSundayRange`,
+// `getPrevWeekRange`, `getNextWeekRange`, `CYCLE_TEMPLATE`) so Section A
+// stays consistent with the rest of the Dashboard.
+const resolveOverviewPeriodEnd = (params: {
+  selectedYear: number | 'all';
+  selectedMonth: number | 'all';
+  selectedWeek: number | 'all';
+  activeQuickFilter: string | null;
+}): Date => {
+  const { activeQuickFilter, selectedMonth, selectedYear } = params;
+  if (activeQuickFilter === 'Tuần trước') {
+    // End of previous week = this week's Monday at 00:00:00 minus 1ms.
+    const thisWeekMonday = getMondayToSundayRange(new Date()).monday;
+    return new Date(thisWeekMonday.getTime() - 1);
+  }
+  if (activeQuickFilter === 'Tuần này') return getMondayToSundayRange(new Date()).sunday;
+  if (activeQuickFilter === 'Tuần tới') {
+    // Next week's Sunday = this week's Sunday + 7 days.
+    const thisSunday = getMondayToSundayRange(new Date()).sunday;
+    return new Date(thisSunday.getTime() + 7 * 24 * 60 * 60 * 1000);
+  }
+  if (activeQuickFilter === 'Tháng trước' || activeQuickFilter === 'Tháng này' || activeQuickFilter === 'Tháng tới') {
+    // Map "Tháng X" to the corresponding CYCLE_TEMPLATE month so the
+    // filter matches `checkTaskInPeriod`'s month-end boundary exactly.
+    const now = new Date();
+    const monthMap: Record<string, number> = {
+      'Tháng trước': now.getMonth() === 0 ? 12 : now.getMonth(), // JS 0-based → CYCLE 1-based
+      'Tháng này': now.getMonth() + 1,
+      'Tháng tới': now.getMonth() === 11 ? 1 : now.getMonth() + 2,
+    };
+    const cm = monthMap[activeQuickFilter];
+    const yr = typeof selectedYear === 'number' ? selectedYear : now.getFullYear();
+    const cycle = CYCLE_TEMPLATE[cm];
+    if (cycle) return new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+  }
+  // For month/quarter/week selectors derive the period end from CYCLE_TEMPLATE
+  // (mirrors `checkTaskInPeriod`'s logic) so Dashboard A/B/C stay in sync.
+  if (typeof selectedMonth === 'number') {
+    const cycle = CYCLE_TEMPLATE[selectedMonth];
+    if (cycle) {
+      const yr = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+      return new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
     }
-    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const y = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+    return new Date(y, selectedMonth, 0, 23, 59, 59, 999);
   }
-  if (isAssigned) {
-    if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
-    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-    const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
-    return kpiVal * (ratio / 100);
+  if (typeof selectedYear === 'number') {
+    return new Date(selectedYear, 11, 31, 23, 59, 59, 999);
   }
-  if (isSupport) {
-    if (typeof t.kpi_support === 'number') return t.kpi_support;
-    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
-    const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
-    return kpiVal * (ratio / 100);
-  }
-  return 0;
+  return new Date();
+};
+
+// Same role-split as getTaskKpiForMember, but ignores the "Done" gate —
+// returns the "Giao" (target) share a Member WOULD earn once the task is
+// completed, regardless of the current status. This is the value that
+// belongs on the right side of the KPI HT/Giao pair in the ranking table.
+//
+// Reuses the priority_kpi_base × manday_est formula (see
+// `frontend/src/lib/kpiPotential.ts`) split Assignee/Support via the same
+// `kpi_ratio_assign`/`kpi_ratio_support` columns used by the backend
+// `kpi_engine.calc_kpi_split()`. Status-agnostic because `manday_est` and
+// the ratio columns are always populated, while `kpi_base`/`kpi_assigned`/
+// `kpi_support` are only set when a task reaches `Done`.
+const getTaskKpiPotentialForMember = (t: any, memberId: any) => {
+  return getKpiGiaoForMember(t, memberId);
 };
 
 const PriorityDetailModal = ({
@@ -491,7 +553,16 @@ export default function OverviewTab() {
   const [selectedWorkspaceScope, setSelectedWorkspaceScope] = useState<string | null>(null);
   const [externalProjectsCollapsed, setExternalProjectsCollapsed] = useState(false);
   const [contributionModalProject, setContributionModalProject] = useState<any>(null);
-  const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>('');
+  // Lazy-initialized from localStorage instead of via a useEffect — this
+  // value feeds the ['dashboard-overview', ...] React Query key below
+  // (fetchOverview also reads it directly for the API request URLs), so
+  // starting from '' and correcting it a tick later on every fresh page
+  // load meant the FIRST fetch always ran unscoped/wrong, then a second
+  // (correct) one replaced it — visible as "loads wrong, then fixes itself"
+  // on every load, not just an occasional flake.
+  const [selectedWorkspaceCode, setSelectedWorkspaceCode] = useState<string>(
+    () => (typeof window !== 'undefined' ? localStorage.getItem('active_workspace_code') || '' : '')
+  );
   const [selectedMemberId, setSelectedMemberId] = useState<string>('all');
 
   useEffect(() => {
@@ -957,6 +1028,18 @@ export default function OverviewTab() {
       const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
       return selLeader?.member_id != null ? Number(selLeader.member_id) : null;
     })();
+
+    // Period-aware OFF filter for Section A (KPI Member Ranking) and the
+    // member-cards bar above it. Computed once per render and reused for
+    // both the member-card list and the KPI ranking roster so the two stay
+    // in sync (counted members always match the visible cards).
+    const periodEndForActiveFilter = resolveOverviewPeriodEnd({
+      selectedYear,
+      selectedMonth,
+      selectedWeek,
+      activeQuickFilter,
+    });
+
     const memberCardSource = (() => {
       if (!showsMemberCards || !leaderDisplayName) return [];
       const selTrim = leaderDisplayName.trim().toLowerCase();
@@ -965,6 +1048,8 @@ export default function OverviewTab() {
       if (selMid) {
         return rawMembers.filter((m: any) => {
           if (String(m.id) === selMid) return false; // the Leader themself is never their own "member" card
+          // Period-aware OFF filter (see isMemberActiveInPeriod above).
+          if (!isMemberActiveInPeriod(m, periodEndForActiveFilter)) return false;
           const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
           if (lmId) return lmId === selMid;
           const leaderName = ((m.leader_name || '').trim() || 'Không có Leader').toLowerCase();
@@ -975,7 +1060,8 @@ export default function OverviewTab() {
           return false;
         });
       }
-      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim);
+      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim
+        && isMemberActiveInPeriod(m, periodEndForActiveFilter));
     })();
     const memberCardsList = memberCardSource.map(m => {
       const mTasks = rawTasks.filter(memberTaskFilter([m.id]));
@@ -1113,7 +1199,10 @@ export default function OverviewTab() {
     fTasks.forEach(t => {
       pmManday += (t.manday_actual || t.manday_est || 0);
       pmMandayPlanned += (t.manday_est || 0);
-      pmKpiPlanned += (t.kpi_base || 0); // "Giao" side of the KPI ratio — counted regardless of completion
+      // "Giao" side of the KPI ratio — counted regardless of completion.
+      // Uses `priority_kpi_base × manday_est` (see @/lib/kpiPotential) so it
+      // includes in-progress / overdue / not-yet-Done tasks as well.
+      pmKpiPlanned += getProjectKpiGiao(t);
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) pmKpi += (t.kpi_base || 0); // Only count KPI for completed tasks
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
@@ -1160,7 +1249,16 @@ export default function OverviewTab() {
     // deliberate exception: it already narrows fTasks down to just the
     // external-Workspace subset on purpose, so it keeps using that.
     const myTasksBroadSource = rawTasksAll.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
-    const initialRanking = activeTeamList.map(m => {
+
+    // Apply the period-aware OFF filter to the ranking roster (Section A).
+    // Filtering here keeps `activeTeamList` itself untouched so other
+    // consumers (project rollups, leader cards) continue to behave as
+    // before; only the KPI Member Ranking rosters — which represent the
+    // "team members active in this period" set — get the cut.
+    const activeRankingMembers = activeTeamList.filter((m: any) =>
+      isMemberActiveInPeriod(m, periodEndForActiveFilter)
+    );
+    const initialRanking = activeRankingMembers.map(m => {
       const myTasks = (selectedWorkspaceScope === 'external' ? fTasks : myTasksBroadSource).filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
       // Per-Workspace Manday allocation — powers the split-allocation bar in
@@ -1174,9 +1272,21 @@ export default function OverviewTab() {
         kpiPlanned += getTaskKpiPotentialForMember(t, m.id);
         const wsCode = (t.projectDataScope || '').toLowerCase();
         if (wsCode) mandayByWs[wsCode] = (mandayByWs[wsCode] || 0) + taskManday;
-        const done = (t.status === 'Done' || t.status === 'done') && Boolean(t.end_date_actual);
-        if (done) { d++; k += getTaskKpiForMember(t, m.id); }
-        else {
+        // HT (Done count + KPI) is gated by isTaskDoneInPeriod — strictly
+        // "did this task's end_date_actual fall in THIS period" — not just
+        // "is it Done at all". myTasks itself (checkTaskInPeriod, lenient
+        // planned-window overlap) can include a Done task whose DEADLINE
+        // touched this period even though it was actually finished in a
+        // different one (kept there on purpose, for Giao/mdPlanned above);
+        // such a task is neither "done in this period" nor genuinely still
+        // open, so it's excluded from the Done/In-progress/Overdue
+        // breakdown entirely rather than being miscounted as either.
+        const isDone = t.status === 'Done' || t.status === 'done';
+        const doneInPeriod = isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter);
+        if (doneInPeriod) {
+          d++;
+          k += getTaskKpiForMember(t, m.id);
+        } else if (!isDone) {
           i++;
           if (calculateDaysLate(t) > 0) o++;
         }
@@ -1329,7 +1439,18 @@ export default function OverviewTab() {
         return pmName.includes(mName);
       });
 
-      const pTasksToUse = (isDrilledIn && teamMemberIds.length > 0) ? pLeaderTasks : pAllTasks;
+      // A Leader viewing "Toàn bộ team" (not drilled into one specific
+      // Member/other-Leader) still has `teamMemberIds` scoped to their own
+      // (or a browsed) team's real roster — never the whole company, see
+      // showsMemberCards below — so this must use pLeaderTasks too, not just
+      // when isDrilledIn. Otherwise "Toàn bộ team" silently fell back to
+      // pAllTasks (the project's WHOLE cast, every other team/Leader
+      // included), which is exactly why the contribution modal's per-member
+      // breakdown showed people who aren't even on this Leader's team. Same
+      // reasoning already applied to tasksForPeriodCheck below — kept in
+      // sync here so the numbers shown match whether the project itself
+      // qualifies to appear at all.
+      const pTasksToUse = ((currentUserRole === 'leader' && !isDrilledIn) || (isDrilledIn && teamMemberIds.length > 0)) ? pLeaderTasks : pAllTasks;
       // "Dự án đang triển khai" respects the Tuần/Tháng/Năm/quick-filter period
       // for whether a project shows up at all (hasTaskInPeriod below), but the
       // Task/Manday/KPI numbers on each card were still summed from
@@ -1347,7 +1468,9 @@ export default function OverviewTab() {
       pTasksForStats.forEach(t => {
         pManday += (t.manday_actual || t.manday_est || 0);
         pMandayPlanned += (t.manday_est || 0);
-        pKpiPlanned += (t.kpi_base || 0);
+        // "Giao" side — uses priority_kpi_base × manday_est (status-agnostic,
+        // counts in-progress / overdue tasks too). See @/lib/kpiPotential.
+        pKpiPlanned += getProjectKpiGiao(t);
         if (t.status === 'Done' || t.status === 'done') {
           pKpi += getTaskKpiForMember(t, t.assigned_id);
           if (t.support_id != null && String(t.support_id) !== String(t.assigned_id)) {
@@ -1390,6 +1513,18 @@ export default function OverviewTab() {
       // Replaces the old contributingNames flat comma list, which read as
       // "everyone did everything" instead of showing each member's own task
       // count/manday/KPI.
+      //
+      // pTasksForStats (via pLeaderTasks) includes a task if EITHER its
+      // assigned OR support person is in the current team roster — a task
+      // I'm assigned that some OTHER team's member merely supported on
+      // legitimately belongs in "my" numbers. But that does NOT make the
+      // support person "my team member": without this guard, that person
+      // (possibly another Leader entirely) got a row here too, just because
+      // they happened to touch the same task — showing people who were
+      // never part of the team being viewed. Only roles held by someone
+      // actually in teamMemberIds get a row (teamMemberIds is the whole
+      // company when unscoped, e.g. Admin's "Toàn bộ", so this is a no-op
+      // there).
       const memberStatsMap: Record<string, { name: string; total: number; done: number; manday: number; kpi: number }> = {};
       pTasksForStats.forEach((t: any) => {
         const isDoneT = t.status === 'Done' || t.status === 'done';
@@ -1399,6 +1534,7 @@ export default function OverviewTab() {
         }
         roles.forEach(({ id, name }) => {
           if (id == null) return;
+          if (teamMemberIds.length > 0 && !isIdInList(teamMemberIds, id)) return;
           const key = String(id);
           if (!memberStatsMap[key]) memberStatsMap[key] = { name: name || 'Không rõ', total: 0, done: 0, manday: 0, kpi: 0 };
           memberStatsMap[key].total++;
@@ -1428,14 +1564,19 @@ export default function OverviewTab() {
         || pAllTasks.some((t: any) => isSameId(t.assigned_id, drilledPersonId) || isSameId(t.support_id, drilledPersonId))
         || (Boolean(drilledPersonName) && pmName.includes(drilledPersonName));
 
+      // "Tiến độ" on the "Dự án đang triển khai" cards — per explicit user
+      // request, this must reflect what the currently-viewed team/member
+      // actually did on the project (Done/Tổng of pTasksForStats, already
+      // scoped to teamMemberIds + the active Tuần/Tháng/Năm filter), NOT
+      // the project's Master-Phase stage. phaseProgressPct keeps the old
+      // phase-based number available under its own name in case any other
+      // surface fed by this same object still wants it.
+      const teamTaskProgressPct = pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0;
       return {
         id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
-        // Issue 3 — Project Progress from Settings → Master Phases (single
-        // source of truth). Fall back to 0 only if the backend omitted the
-        // field. Task-completion percentage is preserved as
-        // `taskCompletionPct` for surfaces that intentionally show it.
-        progress: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
-        taskCompletionPct: pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0,
+        progress: teamTaskProgressPct,
+        phaseProgressPct: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
+        taskCompletionPct: teamTaskProgressPct,
         totalTasks: pTasksForStats.length, doneTasks: done, openTasks: open, lateTasks: late,
         manday: Math.round(pManday * 10) / 10, mandayPlanned: Math.round(pMandayPlanned * 10) / 10,
         kpi: Math.round(pKpi * 10) / 10, kpiPlanned: Math.round(pKpiPlanned * 10) / 10,
@@ -1543,10 +1684,15 @@ export default function OverviewTab() {
       return 52;
     })();
 
-    // Add kpiTrungBinh to each ranking row
+    // Add kpiTrungBinh to each ranking row — m.kpi is already a points value
+    // on a "100 points = 100% of one week's quota" scale (matches the KPI
+    // HT/Giao column right next to it, e.g. "198.9/198.9"), so dividing by
+    // the number of weeks in the filtered period already yields a
+    // percentage-scale number on its own. A stray extra ×100 here used to
+    // turn a correct 198.9% into 19890%.
     const rankedWithKpiAvg = finalRanking.map(m => ({
       ...m,
-      kpiTrungBinh: filterDuration > 0 ? Math.round((m.kpi / filterDuration) * 100) : 0,
+      kpiTrungBinh: filterDuration > 0 ? Math.round(m.kpi / filterDuration) : 0,
     }));
 
     return {
@@ -2228,10 +2374,14 @@ export default function OverviewTab() {
                       <FormulaTooltip>
                         <p className="font-bold text-white/90 mb-1">KPI HT / Giao</p>
                         <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">HT = Σ kpi của task Done (có end_date_actual) trong kỳ</p>
-                        <p className="text-white font-mono">Giao = Σ kpi_potential của toàn bộ task trong kỳ (mọi trạng thái)</p>
-                        <p className="text-white/60 mt-1.5">KPI tính theo vai trò: assigned hoặc support, với tỷ lệ phân bổ (kpi_ratio_assign/support).</p>
-                        <p className="text-white/60 mt-1">Nếu task có cả assigned và support: kpi_assigned + kpi_support.</p>
+                        <p className="text-white font-mono">HT = Σ kpi_assigned + Σ kpi_support của task Done (có end_date_actual) trong kỳ</p>
+                        <p className="text-white font-mono">Giao = Σ (priority_kpi_base × manday_est) của task trong kỳ (mọi trạng thái)</p>
+                        <p className="text-white/60 mt-1.5">Trong đó:</p>
+                        <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                          <li><b>HT (kpi_assigned/kpi_support):</b> tính từ <code>utils/kpi_engine.py</code>; chỉ tồn tại trên task Done.</li>
+                          <li><b>Giao (priority_kpi_base × manday_est):</b> lấy từ <code>frontend/src/lib/kpiPotential.ts</code>; manday_est và priority luôn có sẵn nên Giao đếm mọi task được giao.</li>
+                        </ul>
+                        <p className="text-white/60 mt-1">Phân bổ theo vai trò (assigned/support) dùng chung <code>kpi_ratio_assign/support</code> cho cả hai phía.</p>
                       </FormulaTooltip>
                     </span>
                   </th>
@@ -2241,7 +2391,7 @@ export default function OverviewTab() {
                       <FormulaTooltip>
                         <p className="font-bold text-white/90 mb-1">KPI Trung Bình (%)</p>
                         <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc × 100)</p>
+                        <p className="text-white font-mono">KPI Trung Bình = round(KPI Tổng / Thời Gian Bộ Lọc)</p>
                         <p className="text-white/60 mt-1.5">Trong đó:</p>
                         <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
                           <li><b>KPI Tổng:</b> Σ kpi_base các task Done (có end_date_actual) trong kỳ</li>
@@ -2572,7 +2722,7 @@ export default function OverviewTab() {
                   </span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5 mt-3.5">
-                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
+                  <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`% task Done/Tổng của team đang xem trong kỳ đang lọc: ${p.doneTasks}/${p.totalTasks}`}>
                     <span className="block text-[7px] uppercase font-black text-slate-400">Tiến độ</span>
                     <strong className="block text-[11px] font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
                   </div>
@@ -2844,10 +2994,10 @@ export default function OverviewTab() {
               )}
 
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3 px-6 mt-4">
-                <div className="bg-slate-50 rounded-xl p-3 text-center" title="Tiến độ giai đoạn (Phase) dự án đang ở — cấu hình ở Settings → Master Phases, KHÔNG phải % task Done.">
+                <div className="bg-slate-50 rounded-xl p-3 text-center" title={`% task Done/Tổng của team đang xem trong kỳ đang lọc: ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">{p.isOwned ? 'Tiến độ' : 'Tiến độ phần giao'}</span>
                   <strong className="block text-base font-black text-[#0b1c30] mt-1">{p.progress}%</strong>
-                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">theo giai đoạn dự án</span>
+                  <span className="block text-[8px] font-bold text-slate-400 mt-0.5">Xong / Tổng task</span>
                 </div>
                 <div className="bg-slate-50 rounded-xl p-3 text-center" title={`Đã Done / Tổng task (trong kỳ đang lọc): ${p.doneTasks}/${p.totalTasks}`}>
                   <span className="block text-[9px] uppercase font-black text-slate-400">Task</span>

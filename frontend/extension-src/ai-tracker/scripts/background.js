@@ -54,6 +54,40 @@ function getAuthState() {
   });
 }
 
+// Fetches the logged-in identity's real Workspace grants from the SAME
+// endpoint the pm-new Dashboard's own WorkspaceSwitcher/Navbar use
+// (GET /api/users/me — backend/app/routers/users.py) and caches them
+// locally. `/api/projects` already scopes its own results by this same
+// identity's grants server-side (project_query_for_user), so Customer/
+// Project lists in the widget are ALREADY correct for a Leader/Member with
+// one Workspace — this cache exists so a person with MORE than one granted
+// Workspace (or a super_admin, who sees every Workspace unscoped by
+// default) can explicitly narrow the widget to just one via the popup's
+// Workspace selector. Default stays "all" (today's exact behaviour,
+// unchanged) unless the person picks a specific one.
+async function fetchAndStoreWorkspaces(accessToken) {
+  try {
+    const res = await fetch(`${API_BASE}/api/users/me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!res.ok) return;
+    const me = await res.json();
+    const workspaces = Array.isArray(me.workspaces) ? me.workspaces : [];
+    await new Promise((resolve) => {
+      chrome.storage.local.get(["kpi_prototype_active_workspace"], (r) => {
+        const update = { kpi_prototype_workspaces: workspaces };
+        // Only seed a default the FIRST time — never clobber a choice the
+        // person already made in a previous session.
+        if (!r.kpi_prototype_active_workspace) update.kpi_prototype_active_workspace = "all";
+        chrome.storage.local.set(update, resolve);
+      });
+    });
+  } catch (e) {
+    // Non-fatal — the widget just falls back to unfiltered "all" (today's
+    // behaviour) if this lookup fails for any reason.
+  }
+}
+
 async function doLogin(email, password) {
   const res = await fetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
@@ -78,6 +112,7 @@ async function doLogin(email, password) {
       resolve,
     ),
   );
+  await fetchAndStoreWorkspaces(data.access_token);
   return { email, fullName: data.full_name || "" };
 }
 
@@ -122,13 +157,22 @@ async function tryAutoLoginFromCookie() {
       resolve,
     ),
   );
+  await fetchAndStoreWorkspaces(data.access_token);
   return { success: true, email: data.email, fullName: data.full_name || "" };
 }
 
 async function doLogout() {
   await new Promise((resolve) =>
     chrome.storage.local.remove(
-      ["kpi_prototype_access_token", "kpi_prototype_refresh_token", "kpi_prototype_token_expires_at", "kpi_prototype_email", "kpi_prototype_full_name"],
+      [
+        "kpi_prototype_access_token",
+        "kpi_prototype_refresh_token",
+        "kpi_prototype_token_expires_at",
+        "kpi_prototype_email",
+        "kpi_prototype_full_name",
+        "kpi_prototype_workspaces",
+        "kpi_prototype_active_workspace",
+      ],
       resolve,
     ),
   );
@@ -182,6 +226,23 @@ async function apiFetch(path, options = {}) {
     res = await doFetch(token);
   }
   return res;
+}
+
+// Active Workspace filter the widget's Customer/Project lists should be
+// narrowed to — "all" (the default, and today's exact unfiltered
+// behaviour) or a specific Workspace `code` the person picked in the
+// popup's Workspace selector. Appended as `/api/projects`'s own `business`
+// query param (see backend/app/routers/projects.py's `list_projects`,
+// same param the Dashboard's WorkspaceSwitcher already sends) — NOT a
+// client-side filter, so it stays consistent with every other scope rule
+// `project_query_for_user` already applies for this identity.
+function getActiveWorkspaceQueryParam() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(["kpi_prototype_active_workspace"], (r) => {
+      const code = (r.kpi_prototype_active_workspace || "all").trim();
+      resolve(code && code !== "all" ? `?business=${encodeURIComponent(code)}` : "");
+    });
+  });
 }
 
 // ==========================================
@@ -431,21 +492,171 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "GET_PROJECTS") {
-    apiFetch("/api/projects")
-      .then((r) => r.json())
-      .then((data) => {
-        const list = Array.isArray(data) ? data : data.items || [];
-        sendResponse({ projects: list.map((p) => ({ id: p.id, name: p.name })) });
-      })
-      .catch((err) => {
-        console.log("🔴 [ERROR] GET_PROJECTS:", err.message);
+    getActiveWorkspaceQueryParam().then((qs) =>
+      apiFetch(`/api/projects${qs}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.items || [];
+          let projects = list.map((p) => ({
+            id: p.id,
+            name: p.name,
+            customer_id: p.customer_id ?? null,
+            customer_name: p.customer_name ?? null,
+          }));
+          // customer_id, when provided, narrows to that Customer — filtered
+          // HERE (not via /api/projects?customer_id=) because only 1 project
+          // in a real check of this DB actually had the relational
+          // customer_id FK populated; customer_name (free text, ~6x more
+          // populated) is the field real data actually carries, and that's
+          // exactly the identity GET_CUSTOMERS below hands back as "id".
+          if (message.customer_id) {
+            const wanted = String(message.customer_id);
+            projects = projects.filter((p) => String(p.customer_name || "") === wanted);
+          }
+          sendResponse({ projects });
+        })
+        .catch((err) => {
+          console.log("🔴 [ERROR] GET_PROJECTS:", err.message);
+          sendResponse({ projects: [] });
+        }),
+    );
+    return true;
+  }
+
+  if (message.action === "GET_PROJECTS_BY_CUSTOMER") {
+    // Same real handler as GET_PROJECTS above, keyed by the request shape
+    // the customer->project cascade UI actually sends (customerId, not
+    // customer_id) — was entirely unhandled before this fix (every
+    // "Khách hàng" -> "Dự án" cascade in the widget silently returned
+    // nothing once a customer was picked).
+    getActiveWorkspaceQueryParam().then((qs) =>
+      apiFetch(`/api/projects${qs}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.items || [];
+          let projects = list.map((p) => ({
+            id: p.id,
+            name: p.name,
+            customer_id: p.customer_id ?? null,
+            customer_name: p.customer_name ?? null,
+          }));
+          if (message.customerId) {
+            const wanted = String(message.customerId);
+            projects = projects.filter((p) => String(p.customer_name || "") === wanted);
+          }
+          sendResponse({ projects });
+        })
+        .catch((err) => {
+          console.log("🔴 [ERROR] GET_PROJECTS_BY_CUSTOMER:", err.message);
+          sendResponse({ projects: [] });
+        }),
+    );
+    return true;
+  }
+
+  if (message.action === "GET_FAVORITE_PROJECTS") {
+    // "⭐ Ưu thích" project list — no backend concept of a favorited project
+    // exists in pm-new, and this action had no handler at all before this
+    // fix (the widget's project quick-picker DEFAULTS to this filter tab,
+    // so with an empty/undefined response it looked like the widget
+    // couldn't see ANY real projects, even though "📁 Tất cả" worked fine).
+    // Real per-browser favorite list, stored locally, same mechanism the
+    // "🕒 Gần đây" tab already uses for markee_recent_project_ids.
+    chrome.storage.local.get(["markee_favorite_project_ids"], (stored) => {
+      const favIds = new Set((stored.markee_favorite_project_ids || []).map(Number));
+      if (favIds.size === 0) {
         sendResponse({ projects: [] });
+        return;
+      }
+      apiFetch("/api/projects")
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.items || [];
+          sendResponse({
+            projects: list
+              .filter((p) => favIds.has(Number(p.id)))
+              .map((p) => ({ id: p.id, name: p.name, customer_id: p.customer_id ?? null, customer_name: p.customer_name ?? null })),
+          });
+        })
+        .catch((err) => {
+          console.log("🔴 [ERROR] GET_FAVORITE_PROJECTS:", err.message);
+          sendResponse({ projects: [] });
+        });
+    });
+    return true;
+  }
+
+  if (message.action === "TOGGLE_FAVORITE_PROJECT") {
+    chrome.storage.local.get(["markee_favorite_project_ids"], (stored) => {
+      const ids = new Set((stored.markee_favorite_project_ids || []).map(Number));
+      const id = Number(message.projectId);
+      if (ids.has(id)) ids.delete(id);
+      else ids.add(id);
+      chrome.storage.local.set({ markee_favorite_project_ids: Array.from(ids) }, () => {
+        sendResponse({ success: true, isFavorite: ids.has(id) });
       });
+    });
+    return true;
+  }
+
+  if (message.action === "GET_CUSTOMERS") {
+    // Was previously not wired up at all (no handler existed for this
+    // action), so every "Khách hàng" dropdown fed by it could never
+    // populate. Deliberately NOT the relational Customer entity
+    // (/api/system-categories/customers, backend/app/models/system_category.py)
+    // — a real check of this DB found only 1 of 11 projects actually has
+    // that FK (Project.customer_id) populated, so filtering by it would
+    // leave almost every real Customer's "Dự án" step empty. Project's own
+    // free-text customer_name is ~6x more populated and is what the rest of
+    // pm-new's UI already treats as the real "customer" a project belongs
+    // to — deriving the list from that (distinct values already on real
+    // projects) guarantees every Customer shown here actually has ≥1
+    // project behind it. The name doubles as its own "id" (GET_PROJECTS'
+    // customer_id filter above matches on this same string).
+    getActiveWorkspaceQueryParam().then((qs) =>
+      apiFetch(`/api/projects${qs}`)
+        .then((r) => r.json())
+        .then((data) => {
+          const list = Array.isArray(data) ? data : data.items || [];
+          const names = Array.from(
+            new Set(list.map((p) => (p.customer_name || "").trim()).filter(Boolean))
+          ).sort((a, b) => a.localeCompare(b));
+          sendResponse({ customers: names.map((n) => ({ id: n, name: n })) });
+        })
+        .catch((err) => {
+          console.log("🔴 [ERROR] GET_CUSTOMERS:", err.message);
+          sendResponse({ customers: [] });
+        }),
+    );
     return true;
   }
 
   if (message.action === "GET_USER_EMAIL") {
     getAuthState().then((s) => sendResponse({ email: s.kpi_prototype_email || null }));
+    return true;
+  }
+
+  if (message.action === "GET_MY_WORKSPACES") {
+    // Feeds the popup's Workspace selector — the full Workspace grant list
+    // from the last successful login (GET /api/users/me), plus which one
+    // is currently active. Only meaningful when the person has more than
+    // one Workspace (or is a super_admin, who is granted every Workspace
+    // and sees "all" unfiltered by default) — the popup hides the
+    // selector entirely when there's nothing to choose between.
+    chrome.storage.local.get(["kpi_prototype_workspaces", "kpi_prototype_active_workspace"], (r) => {
+      sendResponse({
+        workspaces: Array.isArray(r.kpi_prototype_workspaces) ? r.kpi_prototype_workspaces : [],
+        active: r.kpi_prototype_active_workspace || "all",
+      });
+    });
+    return true;
+  }
+
+  if (message.action === "SET_ACTIVE_WORKSPACE") {
+    const code = (message.code || "all").trim() || "all";
+    chrome.storage.local.set({ kpi_prototype_active_workspace: code }, () => {
+      sendResponse({ success: true, active: code });
+    });
     return true;
   }
 
@@ -636,19 +847,24 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.action === "GET_PROJECT_SHARE_LINK") {
+    // "Mở Link" after saving must land the (already logged-in) user straight
+    // on THIS project's Prototype tab in the real app — not the public
+    // /share/project/{token} page (that's for people without an account;
+    // confirmed wrong for this flow via direct user feedback). Uses the
+    // real next.config.js rewrite (/project/detail/:tab -> /project/detail
+    // ?tab=:tab), same URL shape project/detail/page.tsx's own tab links
+    // produce. Also passes projectId explicitly (message.projectId, set by
+    // the SET_SELECTED_PROJECT fix) instead of re-reading
+    // getSelectedProject() — the two could disagree mid-flow otherwise.
     (async () => {
       try {
         const current = await getSelectedProject();
-        if (!current.id) throw new Error("Chưa chọn dự án");
-        const res = await apiFetch(`/api/projects/${current.id}/share-link`, { method: "POST" });
-        if (!res.ok) throw new Error(`share-link failed (${res.status})`);
-        const data = await res.json();
-        let shareUrl = data.share_url;
-        const queryParts = [];
+        const projectId = message.projectId || current.id;
+        if (!projectId) throw new Error("Chưa chọn dự án");
+        let shareUrl = `${API_BASE}/project/detail/prototype?id=${encodeURIComponent(projectId)}`;
         if (message.featureName && String(message.featureName).trim()) {
-          queryParts.push("feature=" + encodeURIComponent(String(message.featureName).trim()));
+          shareUrl += "&feature=" + encodeURIComponent(String(message.featureName).trim());
         }
-        if (queryParts.length > 0) shareUrl += "?" + queryParts.join("&");
         sendResponse({ success: true, shareUrl });
       } catch (err) {
         console.log("🔴 [ERROR] share-link:", err.message);
