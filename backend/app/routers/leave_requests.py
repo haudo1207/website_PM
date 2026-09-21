@@ -7,8 +7,6 @@ import logging
 
 from ..database import get_db
 from ..models.leave_request import LeaveRequest
-from ..models.member import Member
-from ..models.notification import Notification
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
 from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER, ALL_SCOPE, user_allowed_scopes
@@ -133,12 +131,6 @@ def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User
 # CREATE LEAVE REQUEST
 @router.post("")
 def create_leave_request(body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    # Leave requests are auto-approved on creation (2026-09 requirement).
-    # Preserve the status field in body only if it already denotes a terminal
-    # state; otherwise force Approved so the flow never stays Pending.
-    raw_status = (body.get('status') or 'Pending')
-    status = raw_status if raw_status in ('Approved', 'Rejected') else 'Approved'
-
     leave_request = LeaveRequest(
         user_id=current_user.id,
         leave_type=body.get('leave_type'),
@@ -152,31 +144,12 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
         ward=body.get('ward', ''),
         address=body.get('address'),
         reason=body.get('reason', ''),
-        status=status,
+        status=body.get('status', 'Pending'),
     )
     db.add(leave_request)
     db.commit()
     db.refresh(leave_request)
     lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
-
-    # ── In-app notification to the direct leader (non-blocking) ───────
-    # A Leader is whoever this requester's Member.leader_member_id points to.
-    try:
-        if lr.user and lr.user.member and lr.user.member.leader_member_id:
-            leader_member = db.query(Member).filter(Member.id == lr.user.member.leader_member_id).first()
-            if leader_member and leader_member.user:
-                member_name = lr.user.member.full_name or lr.user.full_name or f"User #{lr.user_id}"
-                notif = Notification(
-                    recipient_id=leader_member.user.id,
-                    sender_id=current_user.id,
-                    message=f"{member_name} đã đăng ký {lr.leave_type} từ {lr.start_date} đến {lr.end_date}",
-                    notification_type="leave_registered",
-                )
-                db.add(notif)
-                db.commit()
-    except Exception as exc:
-        logger.error("Leader notification failed for Leave Request #%s: %s", lr.id, exc)
-        db.rollback()
 
     # ── Telegram notification (non-blocking) ─────────────────────────
     # The Leave Request is already saved successfully. Notifying admins is an
@@ -271,12 +244,6 @@ def approve_leave_request(id: int, body: dict, db: Session = Depends(get_db), cu
         raise HTTPException(400, "Status phải là Approved hoặc Rejected")
 
     old_status = lr.status
-    # Idempotent: if the leave is already in the requested terminal state,
-    # just return it without recording a redundant audit log.
-    if old_status == status:
-        lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == id).first()
-        return leave_to_dict(lr)
-
     lr.status = status
     db.commit()
     db.refresh(lr)
