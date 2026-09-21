@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   DndContext,
@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
+import { getDashboardCalendarEvents, updateTask, CalendarTask, CalendarMeeting, CalendarLeaveBlock, getApiErrorMessage, getLeaders } from '@/lib/api';
 import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
@@ -57,22 +57,32 @@ export default function CalendarPage() {
   // they are; this only hides already-fetched items client-side). All 3
   // on by default so the default view is unchanged from before this filter
   // existed.
-  const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support']));
-  // Client-side only (spec: "Search hoàn toàn là presentation/filter
-  // layer") — filters whatever's already loaded for the current date
-  // range, same as the event-type Filter above. Never triggers a new
-  // /calendar/tasks or /calendar/meetings request; switching date range
-  // still fetches exactly as before.
+  const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support', 'leave']));
   const [searchQuery, setSearchQuery] = useState('');
-  // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
-  // browser still fires a native click on the same element right after a
-  // real drag-and-drop. Suppress that one synthetic click so finishing a
-  // drag doesn't also pop the detail drawer open.
+  // Dashboard Calendar scope: Super Admin may filter by Leader's team.
+  const [selectedLeaderMemberId, setSelectedLeaderMemberId] = useState<number | null>(null);
+  const [availableLeaders, setAvailableLeaders] = useState<{ member_id: number; name: string }[]>([]);
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
   const suppressClickRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+
+  // Load current role and available leaders for Super Admin.
+  useEffect(() => {
+    const role = (typeof window !== 'undefined' ? localStorage.getItem('role') : '') || '';
+    setCurrentUserRole(role);
+    if (role === 'super_admin') {
+      getLeaders().then((res: any[]) => {
+        setAvailableLeaders(
+          (res || [])
+            .filter((l: any) => l.member_id)
+            .map((l: any) => ({ member_id: l.member_id, name: l.name }))
+        );
+      }).catch(() => {});
+    }
+  }, []);
 
   // Day: single day (buildRangeDays(anchor,1) — same engine as 4-day/7-day,
   // just length 1, no new rendering code). 4-day: rolling window from the
@@ -101,34 +111,28 @@ export default function CalendarPage() {
     return formatRangeLabel(days);
   }, [viewMode, anchorDate, days]);
 
-  const { data: tasks, isFetching, error, refetch } = useQuery({
-    queryKey: ['calendar-tasks', from, to],
-    queryFn: () => getCalendarTasks(from, to),
+  const { data: dashboardData, isFetching, error, refetch } = useQuery({
+    queryKey: ['calendar-dashboard-events', from, to, selectedLeaderMemberId, currentUserRole],
+    queryFn: () => getDashboardCalendarEvents(from, to, {
+      ...(currentUserRole === 'super_admin' && selectedLeaderMemberId ? { leader_member_id: selectedLeaderMemberId } : {}),
+    }),
     staleTime: 30_000,
   });
 
-  // Meeting is a separate Personal Calendar event type — own endpoint, own
-  // query, own data source (the existing Meeting model) — merged with Task
-  // only for display, never combined server-side. See "Chốt thêm
-  // requirement: ... hai loại dữ liệu và quyền xử lý độc lập."
-  const { data: meetings } = useQuery({
-    queryKey: ['calendar-meetings', from, to],
-    queryFn: () => getCalendarMeetings(from, to),
-    staleTime: 30_000,
-  });
+  const tasks = dashboardData?.tasks;
+  const meetings = dashboardData?.meetings;
+  const leaveBlocks = dashboardData?.leave_blocks || [];
 
   const displayTasks = useMemo(
     () => (tasks || []).map(t => (t.id in overrides ? { ...t, scheduled_at: overrides[t.id] } : t)),
     [tasks, overrides]
   );
-  // UI-only filter (spec: "Filter chỉ xử lý ở UI, không thay đổi scope của
-  // API") — applied on top of whatever the server already scoped to this
-  // member, never sent as a request param.
   const roleFilteredTasks = useMemo(
     () => displayTasks.filter(t => filters.has(t.calendar_role)),
     [displayTasks, filters]
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
+  const filteredLeaveBlocks = useMemo(() => (filters.has('leave') ? leaveBlocks : []), [leaveBlocks, filters]);
 
   // A task "belongs" to the visible range the same way the Grid already
   // decides it does: scheduled tasks by scheduled_at's date, date-only
@@ -188,7 +192,13 @@ export default function CalendarPage() {
       [meeting.title, meeting.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
     );
   }, [filteredMeetings, normalizedQuery]);
-  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0;
+  const searchedLeaveBlocks = useMemo(() => {
+    if (!normalizedQuery) return filteredLeaveBlocks;
+    return filteredLeaveBlocks.filter(block =>
+      [block.title, block.member_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [filteredLeaveBlocks, normalizedQuery]);
+  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0 && searchedLeaveBlocks.length === 0;
 
   const scheduledTasks = useMemo(() => searchedTasks.filter(t => !!t.scheduled_at), [searchedTasks]);
   // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
@@ -239,9 +249,13 @@ export default function CalendarPage() {
       const sortMin = t ? t.hours * 60 + t.minutes : 24 * 60;
       map.set(m.date, [...(map.get(m.date) || []), { kind: 'meeting', meeting: m, timeLabel, sortMin }]);
     }
+    for (const block of searchedLeaveBlocks) {
+      if (!block.start) continue;
+      map.set(block.start, [...(map.get(block.start) || []), { kind: 'leave', leave: block, timeLabel: null, sortMin: 24 * 60 + 1 }]);
+    }
     map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
     return map;
-  }, [viewMode, searchedTasks, searchedMeetings]);
+  }, [viewMode, searchedTasks, searchedMeetings, searchedLeaveBlocks]);
 
   const goToday = () => setAnchorDate(new Date());
   // Day: ±1. 4-day: ±4. 7-day (Tuần): ±7 (a full week — startOfWeekMonday
@@ -380,6 +394,26 @@ export default function CalendarPage() {
         <div className="flex-1 min-h-0 p-3 flex flex-col">
           <SummaryCards stats={summaryStats} />
           <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
+            {/* Super Admin Team filter — uses canonical Leader list from the
+                same source as Dashboard Overview Leader Cards. */}
+            {currentUserRole === 'super_admin' && availableLeaders.length > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
+                <span className="text-[11px] font-semibold text-slate-500">Team</span>
+                <select
+                  value={selectedLeaderMemberId ?? ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSelectedLeaderMemberId(val ? Number(val) : null);
+                  }}
+                  className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
+                >
+                  <option value="">Tất cả</option>
+                  {availableLeaders.map(l => (
+                    <option key={l.member_id} value={l.member_id}>{l.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <CalendarToolbar
               rangeLabel={rangeLabel}
               viewMode={viewMode}
@@ -421,6 +455,7 @@ export default function CalendarPage() {
                   days={days}
                   tasks={scheduledTasks}
                   meetings={searchedMeetings}
+                  leaveBlocks={searchedLeaveBlocks}
                   dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}

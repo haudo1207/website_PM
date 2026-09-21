@@ -1,6 +1,6 @@
 'use client';
 
-import { CalendarTask, CalendarMeeting } from '@/lib/api';
+import { CalendarTask, CalendarMeeting, CalendarLeaveBlock } from '@/lib/api';
 import { hexToRgba, FALLBACK_COLOR } from './TaskBlock';
 import { isSameDay, toApiDate } from './dateUtils';
 
@@ -11,9 +11,10 @@ import { isSameDay, toApiDate } from './dateUtils';
 // there's no timeline to split it from). Sorted by time, date-only tasks
 // (no time) last within their day.
 export interface MonthItem {
-  kind: 'task' | 'meeting';
+  kind: 'task' | 'meeting' | 'leave';
   task?: CalendarTask;
   meeting?: CalendarMeeting;
+  leave?: CalendarLeaveBlock;
   timeLabel: string | null;
   sortMin: number;
 }
@@ -58,6 +59,18 @@ function MonthItemChip({
         <span className="shrink-0">📅</span>
         {item.timeLabel && <span className="text-indigo-400 shrink-0">{item.timeLabel}</span>}
         <span className="truncate font-medium text-indigo-700">{m.title}</span>
+      </div>
+    );
+  }
+  if (item.kind === 'leave' && item.leave) {
+    const block = item.leave;
+    return (
+      <div
+        className="flex items-center gap-1 px-1 py-[1px] rounded text-[10px] leading-[15px] bg-gray-200"
+        title={block.title}
+      >
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
+        <span className="truncate font-medium text-gray-700">{block.title}</span>
       </div>
     );
   }

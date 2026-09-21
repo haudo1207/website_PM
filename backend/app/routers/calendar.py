@@ -14,7 +14,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
+from typing import Optional
+
 from ..database import get_db
+from ..models.leave_request import LeaveRequest
 from ..models.member import Member
 from ..models.meeting import Meeting, MeetingMember
 from ..models.phase import Phase
@@ -23,6 +26,7 @@ from ..models.skill_master import Group, Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
+from ..utils.access import ROLE_SUPER_ADMIN
 from ..utils.auth import get_current_user
 from ..utils.kpi_engine import parse_date
 from .meetings import meeting_to_dict
@@ -160,6 +164,157 @@ def list_calendar_project_colors(db: Session = Depends(get_db), current_user: Us
     return {
         pref.project_id: pref.color
         for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == member_id).all()
+    }
+
+
+# ─── Dashboard Calendar Events ────────────────────────────────────────
+def _resolve_team_member_ids(
+    db: Session,
+    current_user: User,
+    member_id: Optional[int],
+    leader_member_id: Optional[int],
+) -> list[int]:
+    """Return member ids whose data the caller may view.
+
+    - member_id: self, managed member (leader), or super_admin.
+    - leader_member_id: super_admin only — canonical team via Member.leader_member_id.
+    - neither: caller's own member.
+    """
+    caller_member_id = getattr(current_user, "member_id", None)
+    role = getattr(current_user, "role", "")
+
+    if member_id is not None:
+        if role == ROLE_SUPER_ADMIN or member_id == caller_member_id:
+            return [member_id]
+        if caller_member_id:
+            managed = {m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()}
+            if member_id in managed:
+                return [member_id]
+        raise HTTPException(403, "Không có quyền xem lịch của thành viên này.")
+
+    if leader_member_id is not None:
+        if role != ROLE_SUPER_ADMIN:
+            raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
+        team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+        team.append(leader_member_id)
+        return team
+
+    if not caller_member_id:
+        return []
+    return [caller_member_id]
+
+
+@router.get("/dashboard-events")
+def list_dashboard_calendar_events(
+    from_: str = Query(..., alias="from", description="YYYY-MM-DD, inclusive"),
+    to: str = Query(..., description="YYYY-MM-DD, inclusive"),
+    member_id: Optional[int] = Query(None, description="View a specific member's calendar"),
+    leader_member_id: Optional[int] = Query(None, description="Super Admin: filter by Leader's team"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Dashboard Calendar — returns tasks, meetings, and approved leave blocks
+    for the current user or (for Leaders/Super Admin) a selected member/team.
+    """
+    target_ids = _resolve_team_member_ids(db, current_user, member_id, leader_member_id)
+    if not target_ids:
+        return {"tasks": [], "meetings": [], "leave_blocks": []}
+
+    from_date = parse_date(from_)
+    to_date = parse_date(to)
+    if not from_date or not to_date:
+        raise HTTPException(400, "Invalid 'from'/'to' — expected YYYY-MM-DD.")
+
+    from_dt = datetime.combine(from_date, time.min)
+    to_dt = datetime.combine(to_date, time.min) + timedelta(days=1)
+
+    # Tasks (assigned or support) for target members
+    task_results = (
+        db.query(Task, TaskGroup, Phase, Project)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .join(Project, Phase.project_id == Project.id)
+        .filter(or_(Task.assigned_id.in_(target_ids), Task.support_id.in_(target_ids)))
+        .filter(or_(
+            Task.scheduled_at.is_(None),
+            and_(Task.scheduled_at >= from_dt, Task.scheduled_at < to_dt),
+        ))
+        .all()
+    )
+
+    members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
+    groups_map = {g.id: g.name for g in db.query(Group).all()}
+    skills_map = {s.id: s.name for s in db.query(Skill).all()}
+    caller_member_id = getattr(current_user, "member_id", None)
+    color_map = {}
+    if caller_member_id:
+        color_map = {
+            pref.project_id: pref.color
+            for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == caller_member_id).all()
+        }
+
+    tasks_out = []
+    for task, tg, phase, project in task_results:
+        t_dict = serialize_task(task, db, members_map, groups_map, skills_map)
+        t_dict["project_id"] = project.id
+        t_dict["project_name"] = project.name
+        t_dict["project_color"] = color_map.get(project.id)
+        if task.assigned_id in target_ids:
+            t_dict["calendar_role"] = "assigned"
+        elif task.support_id in target_ids:
+            t_dict["calendar_role"] = "support"
+        else:
+            t_dict["calendar_role"] = "assigned"
+        tasks_out.append(t_dict)
+
+    # Meetings created by or including target members
+    meetings = (
+        db.query(Meeting)
+        .filter(Meeting.meeting_date >= from_date, Meeting.meeting_date <= to_date)
+        .filter(or_(
+            Meeting.created_by.in_(target_ids),
+            Meeting.id.in_(
+                db.query(MeetingMember.meeting_id)
+                .filter(MeetingMember.member_id.in_(target_ids))
+                .subquery()
+            ),
+        ))
+        .order_by(Meeting.meeting_date, Meeting.start_time)
+        .all()
+    )
+
+    # Approved leave blocks overlapping the window
+    leave_blocks = []
+    approved_leaves = (
+        db.query(LeaveRequest)
+        .join(User, LeaveRequest.user_id == User.id)
+        .filter(LeaveRequest.status == "Approved")
+        .filter(User.member_id.in_(target_ids))
+        .filter(LeaveRequest.start_date <= to_date.isoformat(), LeaveRequest.end_date >= from_date.isoformat())
+        .all()
+    )
+    for lr in approved_leaves:
+        member_name = ""
+        member_id_val = None
+        if lr.user and lr.user.member:
+            member_name = lr.user.member.full_name or lr.user.member.display_name or ""
+            member_id_val = lr.user.member.id
+        leave_blocks.append({
+            "id": f"leave-{lr.id}",
+            "leave_request_id": lr.id,
+            "title": f"{member_name} - OFF" if member_name else "OFF",
+            "start": lr.start_date,
+            "end": lr.end_date,
+            "type": "leave",
+            "member_id": member_id_val,
+            "member_name": member_name,
+            "color": "#9ca3af",
+        })
+
+    return {
+        "tasks": tasks_out,
+        "meetings": [meeting_to_dict(m, db, current_user) for m in meetings],
+        "leave_blocks": leave_blocks,
     }
 
 
