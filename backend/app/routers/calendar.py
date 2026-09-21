@@ -153,15 +153,16 @@ def _resolve_dashboard_target_member_ids(
     db: Session,
     current_user: User,
     member_id: Optional[int],
-    team: Optional[str],
+    leader_member_id: Optional[int],
 ) -> list[int]:
     """Return the list of member ids whose calendar data the caller may view.
 
     Rules:
     - member_id supplied: caller must be that member, the member's direct
       leader, or a Super Admin.
-    - team supplied: only Super Admin may filter by team; returns every member
-      in that team.
+    - leader_member_id supplied (Super Admin only): resolve the Leader's team
+      using the canonical Member.leader_member_id relationship — same logic
+      used by Dashboard Overview Leader Cards and Team Load section 4.
     - neither supplied: caller's own linked member.
     """
     caller_member_id = getattr(current_user, "member_id", None)
@@ -178,14 +179,16 @@ def _resolve_dashboard_target_member_ids(
                 return [member_id]
         raise HTTPException(403, "Bạn không có quyền xem lịch của thành viên này.")
 
-    if team is not None:
+    if leader_member_id is not None:
         if role != ROLE_SUPER_ADMIN:
-            raise HTTPException(403, "Chỉ Super Admin mới có thể lọc theo team.")
-        team_value = team.strip()
-        q = db.query(Member.id)
-        if team_value and team_value.lower() != "all":
-            q = q.filter(Member.team == team_value)
-        return [m.id for m in q.all()]
+            raise HTTPException(403, "Chỉ Super Admin mới có thể lọc theo team Leader.")
+        # Canonical team resolution: Leader + all members whose
+        # leader_member_id points to this Leader's Member.id
+        team_ids = [
+            m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()
+        ]
+        team_ids.append(leader_member_id)
+        return team_ids
 
     if not caller_member_id:
         return []
@@ -197,7 +200,7 @@ def list_dashboard_calendar_events(
     from_: str = Query(..., alias="from", description="YYYY-MM-DD, inclusive"),
     to: str = Query(..., description="YYYY-MM-DD, inclusive"),
     member_id: Optional[int] = Query(None, description="View a specific member's calendar"),
-    team: Optional[str] = Query(None, description="Super Admin only: filter by team"),
+    leader_member_id: Optional[int] = Query(None, description="Super Admin only: filter by Leader's team"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -208,7 +211,7 @@ def list_dashboard_calendar_events(
     TaskBlock/MeetingBlock components; leave blocks are returned as a separate
     list with a simple, grid-friendly shape.
     """
-    target_member_ids = _resolve_dashboard_target_member_ids(db, current_user, member_id, team)
+    target_member_ids = _resolve_dashboard_target_member_ids(db, current_user, member_id, leader_member_id)
     if not target_member_ids:
         return {"tasks": [], "meetings": [], "leave_blocks": []}
 
@@ -296,13 +299,13 @@ def list_dashboard_calendar_events(
         leave_blocks.append({
             "id": f"leave-{lr.id}",
             "leave_request_id": lr.id,
-            "title": lr.leave_type,
+            "title": f"{member_name} - OFF" if member_name else "OFF",
             "start": lr.start_date,
             "end": lr.end_date,
             "type": "leave",
             "member_id": member_id_val,
             "member_name": member_name,
-            "color": "#f87171",
+            "color": "#9ca3af",
         })
 
     return {
