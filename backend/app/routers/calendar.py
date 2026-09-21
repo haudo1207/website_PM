@@ -9,11 +9,12 @@ specs/008-task-calendar-overview/plan.md section 0.
 """
 import re
 from datetime import datetime, time, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
+
+from typing import Optional
 
 from ..database import get_db
 from ..models.leave_request import LeaveRequest
@@ -25,7 +26,7 @@ from ..models.skill_master import Group, Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
-from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER
+from ..utils.access import ROLE_SUPER_ADMIN
 from ..utils.auth import get_current_user
 from ..utils.kpi_engine import parse_date
 from .meetings import meeting_to_dict
@@ -149,46 +150,54 @@ def list_calendar_meetings(
     return [meeting_to_dict(m, db, current_user) for m in meetings]
 
 
-def _resolve_dashboard_target_member_ids(
+@router.get("/project-colors")
+def list_calendar_project_colors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """This member's saved Personal Calendar color per project — a bulk map
+    so Quick Create can show "already has a color" for any project the
+    moment it's selected, without a round-trip per project. Projects with
+    no saved preference are simply absent (frontend falls back to a default
+    color), matching the same "no record = default" rule as the tasks list.
+    """
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return {}
+    return {
+        pref.project_id: pref.color
+        for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == member_id).all()
+    }
+
+
+# ─── Dashboard Calendar Events ────────────────────────────────────────
+def _resolve_team_member_ids(
     db: Session,
     current_user: User,
     member_id: Optional[int],
     leader_member_id: Optional[int],
 ) -> list[int]:
-    """Return the list of member ids whose calendar data the caller may view.
+    """Return member ids whose data the caller may view.
 
-    Rules:
-    - member_id supplied: caller must be that member, the member's direct
-      leader, or a Super Admin.
-    - leader_member_id supplied (Super Admin only): resolve the Leader's team
-      using the canonical Member.leader_member_id relationship — same logic
-      used by Dashboard Overview Leader Cards and Team Load section 4.
-    - neither supplied: caller's own linked member.
+    - member_id: self, managed member (leader), or super_admin.
+    - leader_member_id: super_admin only — canonical team via Member.leader_member_id.
+    - neither: caller's own member.
     """
     caller_member_id = getattr(current_user, "member_id", None)
-    role = getattr(current_user, "role", ROLE_LEADER)
+    role = getattr(current_user, "role", "")
 
     if member_id is not None:
         if role == ROLE_SUPER_ADMIN or member_id == caller_member_id:
             return [member_id]
-        if role == ROLE_LEADER and caller_member_id:
-            managed_ids = {
-                m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()
-            }
-            if member_id in managed_ids:
+        if caller_member_id:
+            managed = {m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()}
+            if member_id in managed:
                 return [member_id]
-        raise HTTPException(403, "Bạn không có quyền xem lịch của thành viên này.")
+        raise HTTPException(403, "Không có quyền xem lịch của thành viên này.")
 
     if leader_member_id is not None:
         if role != ROLE_SUPER_ADMIN:
-            raise HTTPException(403, "Chỉ Super Admin mới có thể lọc theo team Leader.")
-        # Canonical team resolution: Leader + all members whose
-        # leader_member_id points to this Leader's Member.id
-        team_ids = [
-            m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()
-        ]
-        team_ids.append(leader_member_id)
-        return team_ids
+            raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
+        team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+        team.append(leader_member_id)
+        return team
 
     if not caller_member_id:
         return []
@@ -200,19 +209,15 @@ def list_dashboard_calendar_events(
     from_: str = Query(..., alias="from", description="YYYY-MM-DD, inclusive"),
     to: str = Query(..., description="YYYY-MM-DD, inclusive"),
     member_id: Optional[int] = Query(None, description="View a specific member's calendar"),
-    leader_member_id: Optional[int] = Query(None, description="Super Admin only: filter by Leader's team"),
+    leader_member_id: Optional[int] = Query(None, description="Super Admin: filter by Leader's team"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Dashboard Calendar — returns tasks, meetings, and approved leave blocks
     for the current user or (for Leaders/Super Admin) a selected member/team.
-
-    Preserves the Personal Calendar event shapes so the frontend can reuse
-    TaskBlock/MeetingBlock components; leave blocks are returned as a separate
-    list with a simple, grid-friendly shape.
     """
-    target_member_ids = _resolve_dashboard_target_member_ids(db, current_user, member_id, leader_member_id)
-    if not target_member_ids:
+    target_ids = _resolve_team_member_ids(db, current_user, member_id, leader_member_id)
+    if not target_ids:
         return {"tasks": [], "meetings": [], "leave_blocks": []}
 
     from_date = parse_date(from_)
@@ -229,7 +234,7 @@ def list_dashboard_calendar_events(
         .join(TaskGroup, Task.task_group_id == TaskGroup.id)
         .join(Phase, TaskGroup.phase_id == Phase.id)
         .join(Project, Phase.project_id == Project.id)
-        .filter(or_(Task.assigned_id.in_(target_member_ids), Task.support_id.in_(target_member_ids)))
+        .filter(or_(Task.assigned_id.in_(target_ids), Task.support_id.in_(target_ids)))
         .filter(or_(
             Task.scheduled_at.is_(None),
             and_(Task.scheduled_at >= from_dt, Task.scheduled_at < to_dt),
@@ -240,8 +245,8 @@ def list_dashboard_calendar_events(
     members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
     groups_map = {g.id: g.name for g in db.query(Group).all()}
     skills_map = {s.id: s.name for s in db.query(Skill).all()}
-    color_map = {}
     caller_member_id = getattr(current_user, "member_id", None)
+    color_map = {}
     if caller_member_id:
         color_map = {
             pref.project_id: pref.color
@@ -254,11 +259,9 @@ def list_dashboard_calendar_events(
         t_dict["project_id"] = project.id
         t_dict["project_name"] = project.name
         t_dict["project_color"] = color_map.get(project.id)
-        # When viewing a team/another member, calendar_role is still computed
-        # relative to the target member set (not the caller).
-        if task.assigned_id in target_member_ids:
+        if task.assigned_id in target_ids:
             t_dict["calendar_role"] = "assigned"
-        elif task.support_id in target_member_ids:
+        elif task.support_id in target_ids:
             t_dict["calendar_role"] = "support"
         else:
             t_dict["calendar_role"] = "assigned"
@@ -269,10 +272,10 @@ def list_dashboard_calendar_events(
         db.query(Meeting)
         .filter(Meeting.meeting_date >= from_date, Meeting.meeting_date <= to_date)
         .filter(or_(
-            Meeting.created_by.in_(target_member_ids),
+            Meeting.created_by.in_(target_ids),
             Meeting.id.in_(
                 db.query(MeetingMember.meeting_id)
-                .filter(MeetingMember.member_id.in_(target_member_ids))
+                .filter(MeetingMember.member_id.in_(target_ids))
                 .subquery()
             ),
         ))
@@ -286,7 +289,7 @@ def list_dashboard_calendar_events(
         db.query(LeaveRequest)
         .join(User, LeaveRequest.user_id == User.id)
         .filter(LeaveRequest.status == "Approved")
-        .filter(User.member_id.in_(target_member_ids))
+        .filter(User.member_id.in_(target_ids))
         .filter(LeaveRequest.start_date <= to_date.isoformat(), LeaveRequest.end_date >= from_date.isoformat())
         .all()
     )
@@ -312,23 +315,6 @@ def list_dashboard_calendar_events(
         "tasks": tasks_out,
         "meetings": [meeting_to_dict(m, db, current_user) for m in meetings],
         "leave_blocks": leave_blocks,
-    }
-
-
-@router.get("/project-colors")
-def list_calendar_project_colors(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
-    """This member's saved Personal Calendar color per project — a bulk map
-    so Quick Create can show "already has a color" for any project the
-    moment it's selected, without a round-trip per project. Projects with
-    no saved preference are simply absent (frontend falls back to a default
-    color), matching the same "no record = default" rule as the tasks list.
-    """
-    member_id = getattr(current_user, "member_id", None)
-    if not member_id:
-        return {}
-    return {
-        pref.project_id: pref.color
-        for pref in db.query(CalendarProjectPreference).filter(CalendarProjectPreference.member_id == member_id).all()
     }
 
 

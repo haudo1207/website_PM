@@ -143,20 +143,6 @@ api.interceptors.response.use(
   }
 );
 
-// Emit advisory warnings returned by the backend (e.g., Task/Meeting overlaps
-// an approved leave) so a single UI listener can surface them as non-blocking
-// toasts. Warnings never block the original request/response.
-api.interceptors.response.use(
-  response => {
-    const warning = response.data?.warning;
-    if (warning && typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('api-warning', { detail: warning }));
-    }
-    return response;
-  },
-  err => Promise.reject(err)
-);
-
 // Auth
 export const login = (e: string, p: string) =>
   api.post('/auth/login', new URLSearchParams({ username: e, password: p }), {
@@ -564,7 +550,11 @@ export const getDashboardCalendarEvents = (
   options?: { member_id?: number; leader_member_id?: number }
 ) =>
   api.get<DashboardCalendarEvents>('/calendar/dashboard-events', {
-    params: { from, to, ...(options?.member_id ? { member_id: options.member_id } : {}), ...(options?.leader_member_id ? { leader_member_id: options.leader_member_id } : {}) },
+    params: {
+      from, to,
+      ...(options?.member_id ? { member_id: options.member_id } : {}),
+      ...(options?.leader_member_id ? { leader_member_id: options.leader_member_id } : {}),
+    },
   }).then(r => r.data);
 
 // ═══════════════════════════════════════════════════════════
