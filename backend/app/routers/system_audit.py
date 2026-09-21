@@ -644,13 +644,19 @@ def get_team_comparison_tasks(db: Session = Depends(get_db), current_user=Depend
     Workspace restriction" scope `_aggregate_team_comparison` already uses,
     gated by the same audit permission.
 
-    Still scoped by the caller's OWN Workspace access (`caller_scopes`) —
-    the same gate `_aggregate_team_comparison` uses to decide which
-    Teams/Leaders are visible at all — so a non-super_admin Leader calling
-    this directly can't pull every task system-wide, only tasks in a
-    Workspace they're actually granted (matching what Team Load itself
-    would ever show them, just without the extra "own project_members row"
-    restriction that broke the modal).
+    Still scoped to the caller — but along the SAME dimension
+    `_aggregate_team_comparison` actually uses: which MEMBERS belong to a
+    Team/Leader this caller may see (their own `caller_scopes` check on
+    the Leader's `data_scope`), not which Workspace the task's own project
+    happens to be tagged with. An earlier version of this endpoint filtered
+    by `Project.data_scope` instead, which reintroduced the very bug this
+    endpoint exists to fix: `_aggregate_team_comparison`'s own task
+    aggregation has NEVER filtered by the task's project scope (see its
+    own docstring/comments — a visible Member's task can live on a project
+    in any Workspace), so a Leader whose card is visible but whose actual
+    task sits on a project outside the CALLER's Workspace was still
+    silently excluded. Reusing `_aggregate_team_comparison` itself for the
+    member-id set guarantees this can never drift from the card again.
     """
     from .task_groups import serialize_task
     from ..models.skill_master import Group, Skill
@@ -668,7 +674,22 @@ def get_team_comparison_tasks(db: Session = Depends(get_db), current_user=Depend
         .join(Project, Phase.project_id == Project.id)
     )
     if not is_super_admin:
-        query = query.filter(sql_func.lower(Project.data_scope).in_(caller_scopes or set()))
+        # workspace=None → the FULL set of Teams/Leaders this caller may
+        # ever see on Team Load, independent of whatever Workspace filter
+        # the UI's dropdown currently has selected (the modal can be
+        # opened for a Member from any visible Team, not just the one
+        # matching today's dropdown selection).
+        visible = _aggregate_team_comparison(db, workspace=None, current_user=current_user)
+        allowed_member_ids: set[int] = set()
+        for team in visible.get("teams", []):
+            if team.get("leader_member_id") is not None:
+                allowed_member_ids.add(team["leader_member_id"])
+            for m in team.get("members", []):
+                if m.get("member_id") is not None:
+                    allowed_member_ids.add(m["member_id"])
+        query = query.filter(
+            Task.assigned_id.in_(allowed_member_ids) | Task.support_id.in_(allowed_member_ids)
+        )
     results = query.all()
 
     members_map = {m.id: (m.display_name or m.full_name) for m in db.query(Member).all()}
