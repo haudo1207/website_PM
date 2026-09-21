@@ -29,12 +29,12 @@ from ..utils.access import require_project, require_route_project_access, projec
 from ..utils.auth import get_current_user
 from ..utils.audit_service import AuditService
 from ..utils.skill_validation import validate_skill_area_consistency
+from ..utils.leave_conflict import task_leave_conflicts
 from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
 from ..services.document_storage import sync_task_link_documents, delete_task_link_documents
 # Đảm bảo có import date/datetime để tính ngày
 from datetime import date, datetime
 from decimal import Decimal
-from ..utils.kpi_engine import recalculate_task
 
 router = APIRouter(tags=["task-groups-and-tasks"], dependencies=[Depends(require_route_project_access)])
 
@@ -1640,7 +1640,19 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     if task.status == "Done":
         notify_task_done_if_zalo_linked(db, task, project_id)
 
-    return serialize_task(task, db)
+    response = serialize_task(task, db)
+
+    # Advisory leave-conflict warning — non-blocking.
+    conflicts = task_leave_conflicts(
+        db, task.assigned_id, task.support_id, task.scheduled_at, task.start_date
+    )
+    if conflicts:
+        response["warning"] = {
+            "message": "Một số thành viên được gán task đã đăng ký nghỉ trong khoảng thời gian này.",
+            "conflicts": conflicts,
+        }
+
+    return response
 
 
 @router.post("/task-groups/{gid}/tasks/{tid}/copy")
@@ -2084,7 +2096,19 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
     if old_dict["status"] != "Done" and task.status == "Done":
         notify_task_done_if_zalo_linked(db, task, project_id)
 
-    return serialize_task(task, db)
+    response = serialize_task(task, db)
+
+    # Advisory leave-conflict warning — non-blocking.
+    conflicts = task_leave_conflicts(
+        db, task.assigned_id, task.support_id, task.scheduled_at, task.start_date
+    )
+    if conflicts:
+        response["warning"] = {
+            "message": "Một số thành viên được gán task đã đăng ký nghỉ trong khoảng thời gian này.",
+            "conflicts": conflicts,
+        }
+
+    return response
 
 
 # ═══════════════════════════════════════════════════════════

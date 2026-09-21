@@ -1248,7 +1248,7 @@ export default function LeaveRequestPage() {
       } else {
         const created = await createLeaveRequest(payload);
         updateRequests((prev) => [created, ...prev]);
-        setToast('Leave request submitted successfully.');
+        setToast('Đơn nghỉ đã được gửi và tự động phê duyệt.');
       }
 
       router.replace('/leave-request');

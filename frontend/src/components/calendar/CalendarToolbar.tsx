@@ -7,12 +7,13 @@ import { toApiDate } from './dateUtils';
 // UI, không thay đổi scope của API"). Task is split into Assigned/Support
 // so a user can e.g. hide their own Support-only tasks while keeping
 // Meeting + their Assigned work visible.
-export type EventTypeFilter = 'meeting' | 'assigned' | 'support';
+export type EventTypeFilter = 'meeting' | 'assigned' | 'support' | 'leave';
 
 const FILTER_OPTIONS: { key: EventTypeFilter; label: string }[] = [
   { key: 'meeting', label: 'Meeting' },
   { key: 'assigned', label: 'Task – Assigned' },
   { key: 'support', label: 'Task – Support' },
+  { key: 'leave', label: 'Nghỉ / Off' },
 ];
 
 function FilterDropdown({
