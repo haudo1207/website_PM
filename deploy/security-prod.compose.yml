@@ -94,6 +94,37 @@ services:
       backend:
         condition: service_healthy
 
+  # kpi.timetech.vn — same brand-switch mechanism as frontend_markee/
+  # frontend above (frontend/src/lib/brand.ts), NEXT_PUBLIC_PORTAL_BRAND=
+  # timetech. Logo/name are still the TEMPORARY placeholder seeded in
+  # brand.ts pending real TimeTech assets — swap those there, nothing here
+  # needs to change once they arrive. kpi.markee.vn needs NO new service:
+  # it's the exact same "markee" brand as kpi.markeeai.com, so the VPS
+  # reverse-proxy only needs a new server block pointing that domain at
+  # this same frontend_markee container's port (${MARKEE_FRONTEND_PORT}).
+  frontend_timetech:
+    image: portal-timetech-prod-frontend:${APP_COMMIT}
+    container_name: timetech_prod_frontend
+    restart: unless-stopped
+    env_file: ./.env
+    build:
+      context: ${SOURCE_DIR}/frontend
+      args:
+        NEXT_PUBLIC_API_BASE_URL: /api
+        NEXT_PUBLIC_PORTAL_BRAND: timetech
+    environment:
+      BACKEND_INTERNAL_URL: http://backend:8000
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-gpt-4o}
+      AI_BASE_URL: ${AI_BASE_URL:-https://api.shopaikey.com/v1}
+      ASSEMBLYAI_API_KEY: ${ASSEMBLYAI_API_KEY:-9fcea11b84c54a7882455d271d5722e0}
+    ports:
+      - "0.0.0.0:${TIMETECH_FRONTEND_PORT:-3400}:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
 volumes:
   backend-uploads:
   zalo-worker-artifacts:
