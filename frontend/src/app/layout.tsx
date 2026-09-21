@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import './globals.css'
 import { brand } from '@/lib/brand'
 import Providers from './providers'
+import WarningListener from '@/components/WarningListener'
 
 // Every page here is a 'use client' page driven by client-side state/query
 // params and client-fetched data — Next.js has no server-side signal that
@@ -37,7 +38,10 @@ export default function RootLayout({
         <link href="https://fonts.googleapis.com/css2?family=Work+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
       </head>
       <body className="font-sans antialiased">
-        <Providers>{children}</Providers>
+        <Providers>
+          {children}
+          <WarningListener />
+        </Providers>
       </body>
     </html>
   )

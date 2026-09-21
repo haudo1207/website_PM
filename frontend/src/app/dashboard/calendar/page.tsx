@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   DndContext,
@@ -11,7 +11,16 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { getCalendarTasks, getCalendarMeetings, updateTask, CalendarTask, CalendarMeeting, getApiErrorMessage } from '@/lib/api';
+import {
+  getDashboardCalendarEvents,
+  updateTask,
+  CalendarTask,
+  CalendarMeeting,
+  CalendarLeaveBlock,
+  getApiErrorMessage,
+  getMembers,
+  getMe,
+} from '@/lib/api';
 import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
@@ -37,6 +46,7 @@ import {
   addDays,
   EVENT_HEIGHT,
 } from '@/components/calendar/dateUtils';
+import { getRole } from '@/lib/auth';
 
 export default function CalendarPage() {
   const [anchorDate, setAnchorDate] = useState(() => new Date());
@@ -57,13 +67,20 @@ export default function CalendarPage() {
   // they are; this only hides already-fetched items client-side). All 3
   // on by default so the default view is unchanged from before this filter
   // existed.
-  const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support']));
+  const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support', 'leave']));
   // Client-side only (spec: "Search hoàn toàn là presentation/filter
   // layer") — filters whatever's already loaded for the current date
   // range, same as the event-type Filter above. Never triggers a new
-  // /calendar/tasks or /calendar/meetings request; switching date range
+  // /calendar/dashboard-events request; switching date range
   // still fetches exactly as before.
   const [searchQuery, setSearchQuery] = useState('');
+  // Dashboard Calendar scope: Leaders may view a managed member; Super Admin
+  // may filter by team. These are request params, not presentation filters.
+  const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<string | null>('All');
+  const [availableTeams, setAvailableTeams] = useState<string[]>([]);
+  const [managedMembers, setManagedMembers] = useState<{ id: number; full_name?: string; display_name?: string; team?: string }[]>([]);
+  const [currentUserRole, setCurrentUserRole] = useState<string>('');
   // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
   // browser still fires a native click on the same element right after a
   // real drag-and-drop. Suppress that one synthetic click so finishing a
@@ -101,21 +118,46 @@ export default function CalendarPage() {
     return formatRangeLabel(days);
   }, [viewMode, anchorDate, days]);
 
-  const { data: tasks, isFetching, error, refetch } = useQuery({
-    queryKey: ['calendar-tasks', from, to],
-    queryFn: () => getCalendarTasks(from, to),
+  // Load current role + member_id once, plus the selectable scopes for Leaders/Super Admin.
+  useEffect(() => {
+    const role = getRole() || '';
+    setCurrentUserRole(role);
+    getMe().then((me: any) => {
+      const currentMemberId = me?.member_id ?? null;
+      if (role === 'leader' && currentMemberId) {
+        getMembers({ light: true }).then((res: any[]) => {
+          const list = (res || [])
+            .filter((m: any) => m.leader_member_id === currentMemberId)
+            .map((m: any) => ({
+              id: m.id,
+              full_name: m.full_name,
+              display_name: m.display_name,
+              team: m.team,
+            }));
+          setManagedMembers(list);
+        }).catch(() => {});
+      }
+      if (role === 'super_admin') {
+        getMembers({ light: true }).then((res: any[]) => {
+          const teams = Array.from(new Set((res || []).map((m: any) => m.team).filter(Boolean))).sort();
+          setAvailableTeams(['All', ...teams]);
+        }).catch(() => {});
+      }
+    }).catch(() => {});
+  }, []);
+
+  const { data: dashboardData, isFetching, error, refetch } = useQuery({
+    queryKey: ['calendar-dashboard-events', from, to, selectedMemberId, selectedTeam, currentUserRole],
+    queryFn: () => getDashboardCalendarEvents(from, to, {
+      ...(currentUserRole === 'leader' && selectedMemberId ? { member_id: selectedMemberId } : {}),
+      ...(currentUserRole === 'super_admin' && selectedTeam ? { team: selectedTeam } : {}),
+    }),
     staleTime: 30_000,
   });
 
-  // Meeting is a separate Personal Calendar event type — own endpoint, own
-  // query, own data source (the existing Meeting model) — merged with Task
-  // only for display, never combined server-side. See "Chốt thêm
-  // requirement: ... hai loại dữ liệu và quyền xử lý độc lập."
-  const { data: meetings } = useQuery({
-    queryKey: ['calendar-meetings', from, to],
-    queryFn: () => getCalendarMeetings(from, to),
-    staleTime: 30_000,
-  });
+  const tasks = dashboardData?.tasks;
+  const meetings = dashboardData?.meetings;
+  const leaveBlocks = dashboardData?.leave_blocks || [];
 
   const displayTasks = useMemo(
     () => (tasks || []).map(t => (t.id in overrides ? { ...t, scheduled_at: overrides[t.id] } : t)),
@@ -129,6 +171,7 @@ export default function CalendarPage() {
     [displayTasks, filters]
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
+  const filteredLeaveBlocks = useMemo(() => (filters.has('leave') ? leaveBlocks : []), [leaveBlocks, filters]);
 
   // A task "belongs" to the visible range the same way the Grid already
   // decides it does: scheduled tasks by scheduled_at's date, date-only
@@ -188,7 +231,13 @@ export default function CalendarPage() {
       [meeting.title, meeting.project_name].some(value => value?.toLowerCase().includes(normalizedQuery))
     );
   }, [filteredMeetings, normalizedQuery]);
-  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0;
+  const searchedLeaveBlocks = useMemo(() => {
+    if (!normalizedQuery) return filteredLeaveBlocks;
+    return filteredLeaveBlocks.filter(block =>
+      [block.title, block.member_name].some(value => value?.toLowerCase().includes(normalizedQuery))
+    );
+  }, [filteredLeaveBlocks, normalizedQuery]);
+  const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0 && searchedLeaveBlocks.length === 0;
 
   const scheduledTasks = useMemo(() => searchedTasks.filter(t => !!t.scheduled_at), [searchedTasks]);
   // Has a date (start_date) but no time (scheduled_at IS NULL) — shows in
@@ -238,6 +287,10 @@ export default function CalendarPage() {
       const timeLabel = t ? `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}` : null;
       const sortMin = t ? t.hours * 60 + t.minutes : 24 * 60;
       map.set(m.date, [...(map.get(m.date) || []), { kind: 'meeting', meeting: m, timeLabel, sortMin }]);
+    }
+    for (const block of searchedLeaveBlocks) {
+      if (!block.start) continue;
+      map.set(block.start, [...(map.get(block.start) || []), { kind: 'leave', leave: block, timeLabel: null, sortMin: 24 * 60 + 1 }]);
     }
     map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
     return map;
@@ -380,6 +433,49 @@ export default function CalendarPage() {
         <div className="flex-1 min-h-0 p-3 flex flex-col">
           <SummaryCards stats={summaryStats} />
           <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
+            {/* Dashboard Calendar scope selectors — Leader/Super Admin only. */}
+            {(currentUserRole === 'leader' || currentUserRole === 'super_admin') && (
+              <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
+                {currentUserRole === 'leader' && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-500">Thành viên</span>
+                    <select
+                      value={selectedMemberId ?? ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setSelectedMemberId(val ? Number(val) : null);
+                        setSelectedTeam(null);
+                      }}
+                      className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
+                    >
+                      <option value="">Của tôi</option>
+                      {managedMembers.map(m => (
+                        <option key={m.id} value={m.id}>{m.full_name || m.display_name}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {currentUserRole === 'super_admin' && (
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-semibold text-slate-500">Team</span>
+                    <select
+                      value={selectedTeam ?? 'All'}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setSelectedTeam(val || 'All');
+                        setSelectedMemberId(null);
+                      }}
+                      className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
+                    >
+                      <option value="All">Tất cả</option>
+                      {availableTeams.filter(t => t !== 'All').map(t => (
+                        <option key={t} value={t}>{t}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            )}
             <CalendarToolbar
               rangeLabel={rangeLabel}
               viewMode={viewMode}
@@ -421,6 +517,7 @@ export default function CalendarPage() {
                   days={days}
                   tasks={scheduledTasks}
                   meetings={searchedMeetings}
+                  leaveBlocks={searchedLeaveBlocks}
                   dateOnlyTasksByDay={dateOnlyTasksByDay}
                   onToggleDone={handleToggleDone}
                   onOpenDetail={handleOpenDetail}

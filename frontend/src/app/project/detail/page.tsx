@@ -936,6 +936,25 @@ function ProjectDetailContent() {
   const [reviewChecklistLoading, setReviewChecklistLoading] = useState(false);
   const [newChecklistContent, setNewChecklistContent] = useState('');
   const [taskFilterMode, setTaskFilterMode] = useState<'all' | 'review' | 'my_tasks' | 'smart_priority'>('all');
+  // Task tab period filter — same Tuần/Tháng quick-filter vocabulary as
+  // Dashboard (checkTaskInPeriod), but a SEPARATE state from the Overview
+  // sub-tab's overviewYear/Month/Week/QuickFilter above: that one defaults
+  // to "Tất cả" (a project-wide report), this one defaults to "Tuần này"
+  // (the working task list is meant to open already scoped to the current
+  // week, same default Overview/Team Load use) and switching one must not
+  // silently move the other.
+  const [taskPeriodYear, setTaskPeriodYear] = useState<number | 'all'>(() => new Date().getFullYear());
+  const [taskPeriodMonth, setTaskPeriodMonth] = useState<number | 'all'>(() => new Date().getMonth() + 1);
+  const [taskPeriodWeek, setTaskPeriodWeek] = useState<number | 'all'>(() => getWeekOfMonth(new Date()));
+  const [taskPeriodQuickFilter, setTaskPeriodQuickFilter] = useState<string | null>('Tuần này');
+  // Shared by filteredItems below AND getOrderedRows further down (which
+  // needs to know whether to hide an empty-after-filtering group) — kept
+  // as one plain expression, recomputed from state every render, rather
+  // than duplicated in both places.
+  const taskPeriodFilterActive = !(
+    taskPeriodYear === 'all' && taskPeriodMonth === 'all' && taskPeriodWeek === 'all'
+    && (taskPeriodQuickFilter === 'all' || !taskPeriodQuickFilter)
+  );
   // Blocking workflow (Đánh dấu bị chặn/Gỡ chặn) - modal DÙNG CHUNG cho cả 3
   // nơi kích hoạt: nút trong Task Edit Drawer, nút trong Leader Review Detail
   // Drawer, và chọn thẳng 1 status chứa "block" từ dropdown Status (statusValue
@@ -1719,6 +1738,32 @@ function ProjectDetailContent() {
     }
   };
 
+  // Same quick-filter resolution as applyOverviewQuickFilter above, applied
+  // to the Task tab's own separate period state instead.
+  const applyTaskPeriodQuickFilter = (type: string) => {
+    setTaskPeriodQuickFilter(type);
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setTaskPeriodYear(d.getFullYear()); setTaskPeriodMonth(d.getMonth() + 1); setTaskPeriodWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setTaskPeriodYear(now.getFullYear()); setTaskPeriodMonth(now.getMonth() + 1); setTaskPeriodWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setTaskPeriodYear(d.getFullYear()); setTaskPeriodMonth(d.getMonth() + 1); setTaskPeriodWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setTaskPeriodYear(d.getFullYear()); setTaskPeriodMonth(d.getMonth() + 1); setTaskPeriodWeek('all');
+    } else if (type === 'Tháng này') {
+      setTaskPeriodYear(now.getFullYear()); setTaskPeriodMonth(now.getMonth() + 1); setTaskPeriodWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setTaskPeriodYear(d.getFullYear()); setTaskPeriodMonth(d.getMonth() + 1); setTaskPeriodWeek('all');
+    } else if (type === 'all') {
+      setTaskPeriodYear('all'); setTaskPeriodMonth('all'); setTaskPeriodWeek('all');
+    }
+  };
+
   const [chats, setChats] = useState<any[]>([]);
   const [chatInput, setChatInput] = useState('');
 
@@ -2488,10 +2533,15 @@ function ProjectDetailContent() {
     const reviewFilter = taskFilterMode === 'review';
     const myTasksFilter = taskFilterMode === 'my_tasks';
     const smartPriorityFilter = taskFilterMode === 'smart_priority';
+    // Defaults to "Tuần này" (see taskPeriodQuickFilter's initial state
+    // above), so this is active — narrowing the list — unless the person
+    // explicitly picks "Tất cả kỳ".
+    const periodFilterActive = taskPeriodFilterActive;
     const hasActiveFilter = priorityFilter !== 'All' || statusFilter !== 'All'
       || assignedFilter !== 'All' || supportFilter !== 'All'
       || skillSolutionFilter !== 'All' || skillVendorFilter !== 'All'
-      || !!searchLower || !!memberFilterParam || reviewFilter || myTasksFilter || smartPriorityFilter;
+      || !!searchLower || !!memberFilterParam || reviewFilter || myTasksFilter || smartPriorityFilter
+      || periodFilterActive;
     if (!hasActiveFilter) {
       return items;
     }
@@ -2511,7 +2561,7 @@ function ProjectDetailContent() {
     if (!searchLower && priorityFilter === 'All' && statusFilter === 'All'
       && assignedFilter === 'All' && supportFilter === 'All'
       && skillSolutionFilter === 'All' && skillVendorFilter === 'All'
-      && !memberFilterParam) {
+      && !memberFilterParam && !periodFilterActive) {
       return baseItems;
     }
 
@@ -2541,13 +2591,26 @@ function ProjectDetailContent() {
         || (memberIdParam
           ? Number(item.assigned_id) === Number(memberIdParam) || Number(item.support_id) === Number(memberIdParam)
           : (item.assigned_name || '') === memberFilterParam || (item.support_name || '') === memberFilterParam);
-      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember;
+      // Same period rule as Dashboard/Overview/Team Load (checkTaskInPeriod)
+      // — a task belongs to "Tuần này" via its own start_date/created_at/
+      // end_date_est, or is still-open and overdue relative to the period.
+      const matchPeriod = !periodFilterActive
+        || checkTaskInPeriod(item, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter);
+      return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember && matchPeriod;
     });
 
+    // periodFilterActive deliberately excluded from this shortcut: a task
+    // matching ONLY the period filter (the common case — it defaults ON)
+    // must still go through the ancestor-walk/descendant-expansion below,
+    // otherwise a child task that's "in Tuần này" while its own parent
+    // task row's dates put it in a different week would show orphaned
+    // (no parent row above it) instead of the parent tagging along for
+    // hierarchy the way every other filter here already preserves.
     const onlySearch = !priorityFilter.match(/^All$/) === false && !statusFilter.match(/^All$/) === false
       && assignedFilter === 'All' && supportFilter === 'All'
       && skillSolutionFilter === 'All' && skillVendorFilter === 'All'
-      && priorityFilter === 'All' && statusFilter === 'All';
+      && priorityFilter === 'All' && statusFilter === 'All'
+      && !periodFilterActive;
     if (onlySearch) {
       return matchingTasks;
     }
@@ -2586,7 +2649,7 @@ function ProjectDetailContent() {
 
     // 4. Return in original order
     return baseItems.filter(item => allTasksToShow.has(item));
-  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId]);
+  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter]);
 
   // Skill Area/Skill filter dropdown options - value is the real ID (never
   // the display name, which is NOT unique across Categories/Groups), label
@@ -2686,8 +2749,14 @@ function ProjectDetailContent() {
 
       for (const g of groups) {
         const groupTasks = filteredItems.filter(t => t.task_group_id === g.id);
+        // A group with ZERO tasks at all (not just zero matching the
+        // current filter) has nothing a period/priority/search filter
+        // could ever exclude — always show it (e.g. right after creating
+        // an empty Group Task) rather than have it vanish under the
+        // default "Tuần này" period filter.
+        const groupHasNoTasksAtAll = !items.some(t => t.task_group_id === g.id);
 
-        if (groupTasks.length > 0 || (priorityFilter === 'All' && taskSearch === '')) {
+        if (groupTasks.length > 0 || groupHasNoTasksAtAll || (priorityFilter === 'All' && taskSearch === '' && !taskPeriodFilterActive)) {
           rows.push({ type: 'group', id: -g.id, group: g });
 
           const isCollapsed = collapsedGroups.has(g.id);
@@ -8362,7 +8431,7 @@ function ProjectDetailContent() {
                   <div className="flex items-stretch gap-4 flex-1 min-h-0">
                   {/* Task Table */}
                   <div ref={taskTableCardRef} className="flex-1 min-w-0 min-h-[65vh] bg-white border border-[#c2c6d6]/60 rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    <div className="flex items-center px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
+                    <div className="flex items-center flex-wrap gap-2 px-3 pt-2 pb-1 border-b border-slate-100 shrink-0">
                       <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
                         <button
                           onClick={() => setTaskFilterMode('all')}
@@ -8388,6 +8457,39 @@ function ProjectDetailContent() {
                         >
                           Ưu tiên thông minh
                         </button>
+                      </div>
+
+                      {/* Period filter — same Tuần/Tháng quick-filter vocabulary as
+                          Dashboard, compact chip row (no Năm/Tháng/Tuần dropdowns —
+                          this toolbar is a thin single-row strip, not a full filter
+                          card). Defaults to "Tuần này"; a task_group's own child
+                          tasks are filtered by this too (getOrderedRows), and a
+                          matching child task's ancestor task row still shows even
+                          when the ancestor's own dates fall in a different period
+                          (filteredItems' existing hierarchy-walk step). */}
+                      <div className="inline-flex items-center gap-1 ml-auto">
+                        {[
+                          { key: 'all', label: 'Tất cả kỳ' },
+                          { key: 'Tuần trước', label: 'Tuần trước' },
+                          { key: 'Tuần này', label: 'Tuần này' },
+                          { key: 'Tuần tới', label: 'Tuần tới' },
+                          { key: 'Tháng trước', label: 'Tháng trước' },
+                          { key: 'Tháng này', label: 'Tháng này' },
+                          { key: 'Tháng tới', label: 'Tháng tới' },
+                        ].map((btn) => {
+                          const isActive = taskPeriodQuickFilter === btn.key || (btn.key === 'all' && !taskPeriodFilterActive);
+                          return (
+                            <button
+                              key={btn.key}
+                              onClick={() => applyTaskPeriodQuickFilter(btn.key)}
+                              className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors whitespace-nowrap ${
+                                isActive ? 'bg-[#0058be] text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                              }`}
+                            >
+                              {btn.label}
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                     <div className="flex-1 min-h-0 overflow-auto task-table-scroll">

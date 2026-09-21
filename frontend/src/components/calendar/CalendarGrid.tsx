@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useDroppable } from '@dnd-kit/core';
-import { CalendarTask, CalendarMeeting } from '@/lib/api';
+import { CalendarTask, CalendarMeeting, CalendarLeaveBlock } from '@/lib/api';
 import TaskBlock, { DateOnlyChip } from './TaskBlock';
 import MeetingBlock from './MeetingBlock';
 import {
@@ -56,14 +56,28 @@ function DayHeaderCell({ day, isToday }: { day: Date; isToday: boolean }) {
 // sorted upstream, in page.tsx) shows by default, with a "+N task" toggle
 // to expand/collapse the rest. Collapse state is local per day column
 // (uncontrolled) — nothing about it needs to survive a day-range change.
+function LeaveBlockChip({ block }: { block: CalendarLeaveBlock }) {
+  return (
+    <div
+      className="flex items-center gap-1 px-1.5 py-[2px] rounded text-[10px] leading-[15px] bg-rose-100 text-rose-700 font-semibold mb-1"
+      title={`${block.member_name} — ${block.title}`}
+    >
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-rose-500" />
+      <span className="truncate">{block.member_name || block.title}</span>
+    </div>
+  );
+}
+
 function DateOnlyCell({
   day,
   tasks,
+  leaveBlocks,
   onToggleDone,
   onOpenDetail,
 }: {
   day: Date;
   tasks: CalendarTask[];
+  leaveBlocks: CalendarLeaveBlock[];
   onToggleDone: (task: CalendarTask) => void;
   onOpenDetail: (task: CalendarTask) => void;
 }) {
@@ -73,6 +87,9 @@ function DateOnlyCell({
 
   return (
     <div className="border-r border-b border-slate-100 last:border-r-0 px-1.5 py-1.5 min-h-[34px]">
+      {leaveBlocks.map(block => (
+        <LeaveBlockChip key={block.id} block={block} />
+      ))}
       {visibleTasks.map(task => (
         <DateOnlyChip key={task.id} task={task} onToggleDone={onToggleDone} onOpenDetail={onOpenDetail} />
       ))}
@@ -164,6 +181,7 @@ export default function CalendarGrid({
   days,
   tasks,
   meetings,
+  leaveBlocks,
   dateOnlyTasksByDay,
   onToggleDone,
   onOpenDetail,
@@ -173,6 +191,7 @@ export default function CalendarGrid({
   days: Date[];
   tasks: CalendarTask[]; // already filtered to scheduled_at != null
   meetings: CalendarMeeting[];
+  leaveBlocks: CalendarLeaveBlock[];
   dateOnlyTasksByDay: Map<string, CalendarTask[]>; // key = toApiDate(day); has a date, no time
   onToggleDone: (task: CalendarTask) => void;
   onOpenDetail: (task: CalendarTask) => void;
@@ -182,6 +201,16 @@ export default function CalendarGrid({
   const today = new Date();
   const gridHeight = (HOUR_END - HOUR_START) * HOUR_HEIGHT;
   const cols = gridColsStyle(days.length);
+
+  const leaveBlocksByDay = useMemo(() => {
+    const map = new Map<string, CalendarLeaveBlock[]>();
+    for (const block of leaveBlocks) {
+      if (!block.start) continue;
+      const key = block.start.slice(0, 10);
+      map.set(key, [...(map.get(key) || []), block]);
+    }
+    return map;
+  }, [leaveBlocks]);
 
   return (
     <div className="flex flex-col h-full">
@@ -204,6 +233,7 @@ export default function CalendarGrid({
               key={day.toISOString()}
               day={day}
               tasks={dateOnlyTasksByDay.get(toApiDate(day)) || []}
+              leaveBlocks={leaveBlocksByDay.get(toApiDate(day)) || []}
               onToggleDone={onToggleDone}
               onOpenDetail={onOpenDetail}
             />

@@ -72,3 +72,10 @@ specs-*
 .agents/
 
 Reports/
+
+.opencode
+
+# Graphify - local only
+graphify-out/
+
+AGENTS.md
