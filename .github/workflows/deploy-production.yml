@@ -26,6 +26,7 @@ jobs:
           SOURCE_DIR: /home/portalkpi/website_PM
           FRONTEND_PORT: "3000"
           MARKEE_FRONTEND_PORT: "3300"
+          TIMETECH_FRONTEND_PORT: "3400"
         run: |
           set -euo pipefail
           rsync -a --delete --exclude .git --exclude .env --exclude secrets --exclude backups --exclude frontend/data ./ "$SOURCE_DIR"/
@@ -80,7 +81,7 @@ jobs:
           # whole deploy on their own.
           attempt=1
           max_attempts=3
-          until docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee zalo-worker; do
+          until docker compose --env-file .env -f docker-compose.yml build backend frontend frontend_markee frontend_timetech zalo-worker; do
             if [ "$attempt" -ge "$max_attempts" ]; then
               echo "Docker build failed after $max_attempts attempts" >&2
               exit 1
@@ -94,3 +95,4 @@ jobs:
           docker compose --env-file .env -f docker-compose.yml up -d --no-build --remove-orphans
           timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3000/api/health; do sleep 5; done'
           timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3300/api/health; do sleep 5; done'
+          timeout 300 bash -c 'until curl -fsS http://127.0.0.1:3400/api/health; do sleep 5; done'
