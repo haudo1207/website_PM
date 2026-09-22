@@ -1006,6 +1006,46 @@ def bulk_delete_projects(body: dict, db: Session = Depends(get_db), current_user
 # PROJECT MEMBERS
 # ═══════════════════════════════════════════════════════════
 
+@router.get("/projects/members")
+def list_members_for_projects(project_ids: str = "", db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Union of project_members across several projects (chốt 2026-09-22,
+    feature 010 — Meeting form's "Thành viên tham gia" must be scoped to the
+    "Dự án liên quan" currently selected, not show every Member in the
+    system). `project_ids` is a comma-separated list, e.g. "1,2,3".
+
+    Access is re-checked here rather than trusted from the caller (chốt: FE
+    must never be able to widen this by sending a project_id outside its
+    scope) — this route has no `{pid}` path param, so the router-level
+    require_route_project_access dependency's generic pid-based check
+    doesn't apply to it; project_query_for_user() is the same accessible-
+    projects filter list_projects() itself uses."""
+    ids = [int(x) for x in project_ids.split(",") if x.strip().isdigit()]
+    if not ids:
+        return []
+    accessible_ids = [
+        pid for (pid,) in project_query_for_user(db, current_user)
+        .filter(Project.id.in_(ids)).with_entities(Project.id).all()
+    ]
+    if not accessible_ids:
+        return []
+    rows = (
+        db.query(project_members.c.member_id, Member)
+        .join(Member, Member.id == project_members.c.member_id)
+        .filter(project_members.c.project_id.in_(accessible_ids))
+        .all()
+    )
+    seen = {}
+    for member_id, member in rows:
+        if member_id not in seen:
+            seen[member_id] = {
+                "id": member.id,
+                "display_name": member.display_name,
+                "full_name": member.full_name,
+                "team": member.team,
+            }
+    return list(seen.values())
+
+
 @router.get("/projects/{pid:int}/members")
 def list_project_members(pid: int, db: Session = Depends(get_db)):
     rows = (
