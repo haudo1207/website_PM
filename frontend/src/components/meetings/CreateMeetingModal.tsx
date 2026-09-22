@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
 import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetingHosts, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
@@ -45,6 +45,8 @@ interface MeetingFormData {
 }
 
 const NOTIFY_CHANNEL_OPTIONS = ['App', 'Telegram', 'Zalo', 'Nhóm dự án'];
+// Default duration for a freshly-opened create form (chốt 2026-09-22).
+const DEFAULT_DURATION_MINUTES = '30';
 
 // Numbered-list UX for Mục tiêu / Agenda — Enter continues "1. / 2. / 3. ..."
 // so leaders don't have to type the numbers by hand.
@@ -80,27 +82,154 @@ function addMinutes(time: string, durationStr: string): string {
 const HOUR_OPTIONS = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0'));
 const MINUTE_OPTIONS = Array.from({ length: 60 }, (_, i) => String(i).padStart(2, '0'));
 
-function HourMinutePicker({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const [h, m] = (value || '00:00').split(':');
-  const hour = HOUR_OPTIONS.includes(h) ? h : '00';
-  const minute = MINUTE_OPTIONS.includes(m) ? m : '00';
+// Weekday + day + tháng, no year (chốt 2026-09-22 — wheel picker never shows a year).
+function formatWheelDate(d: Date): string {
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${SUMMARY_WEEKDAYS[d.getDay()]}, ${dd} tháng ${d.getMonth() + 1}`;
+}
+// Label shown on the closed trigger button, e.g. "T2, 22 tháng 9 · 08:30".
+function formatDateTimeTrigger(dateStr: string, timeStr: string): string {
+  if (!dateStr) return 'Chọn thời gian';
+  const d = new Date(dateStr + 'T00:00:00');
+  return `${formatWheelDate(d)} · ${timeStr || '00:00'}`;
+}
+function toDateInputValue(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+const WHEEL_ITEM_HEIGHT = 36;
+const WHEEL_VISIBLE_ROWS = 3;
+
+// One scrollable, snap-to-center column of a wheel picker (date, hour or
+// minute) — the selected item is whichever one lands in the middle row.
+function WheelColumn<T>({ items, selectedIndex, onSelect, renderItem, width }: {
+  items: T[];
+  selectedIndex: number;
+  onSelect: (index: number) => void;
+  renderItem: (item: T, isSelected: boolean) => React.ReactNode;
+  width?: number;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Guards the onScroll handler against the programmatic scrollTo below —
+  // without it, re-centering after a prop change would misread its OWN
+  // scroll as a fresh user pick and immediately re-trigger onSelect.
+  const isProgrammaticScrollRef = useRef(false);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    isProgrammaticScrollRef.current = true;
+    el.scrollTo({ top: selectedIndex * WHEEL_ITEM_HEIGHT, behavior: 'auto' });
+    const t = setTimeout(() => { isProgrammaticScrollRef.current = false; }, 60);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedIndex, items.length]);
+
+  const handleScroll = () => {
+    if (isProgrammaticScrollRef.current) return;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+    scrollTimeoutRef.current = setTimeout(() => {
+      const el = containerRef.current;
+      if (!el) return;
+      const idx = Math.max(0, Math.min(items.length - 1, Math.round(el.scrollTop / WHEEL_ITEM_HEIGHT)));
+      if (idx !== selectedIndex) onSelect(idx);
+    }, 100);
+  };
+
   return (
-    <div className="flex items-center gap-1.5">
-      <select
-        value={hour}
-        onChange={e => onChange(`${e.target.value}:${minute}`)}
-        className="w-[74px] px-2 py-2.5 border border-[#c2c6d6] rounded-lg text-xs bg-white focus:outline-none focus:border-[#0058be] transition-colors text-center font-bold text-[#0b1c30]"
-      >
-        {HOUR_OPTIONS.map(hh => <option key={hh} value={hh}>{hh}</option>)}
-      </select>
-      <span className="text-sm font-black text-[#565e74]">:</span>
-      <select
-        value={minute}
-        onChange={e => onChange(`${hour}:${e.target.value}`)}
-        className="w-[74px] px-2 py-2.5 border border-[#c2c6d6] rounded-lg text-xs bg-white focus:outline-none focus:border-[#0058be] transition-colors text-center font-bold text-[#0b1c30]"
-      >
-        {MINUTE_OPTIONS.map(mm => <option key={mm} value={mm}>{mm}</option>)}
-      </select>
+    <div
+      ref={containerRef}
+      onScroll={handleScroll}
+      className="overflow-y-auto snap-y snap-mandatory no-scrollbar"
+      style={{ height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ROWS, width }}
+    >
+      <div style={{ height: WHEEL_ITEM_HEIGHT }} />
+      {items.map((item, i) => (
+        <div
+          key={i}
+          onClick={() => onSelect(i)}
+          className="snap-center flex items-center justify-center cursor-pointer select-none"
+          style={{ height: WHEEL_ITEM_HEIGHT }}
+        >
+          {renderItem(item, i === selectedIndex)}
+        </div>
+      ))}
+      <div style={{ height: WHEEL_ITEM_HEIGHT }} />
+    </div>
+  );
+}
+
+// Single-row wheel picker: date, giờ, phút side by side, no calendar grid and
+// no separate tiers (chốt 2026-09-22). The centered row is the selection.
+function DateTimeWheelPicker({ date, time, onChange, onConfirm }: {
+  date: string;
+  time: string;
+  onChange: (date: string, time: string) => void;
+  onConfirm: () => void;
+}) {
+  const { dates, dateIndex } = useMemo(() => {
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const base = date ? new Date(date + 'T00:00:00') : today;
+    let start = new Date(today); start.setDate(start.getDate() - 30);
+    let end = new Date(today); end.setDate(end.getDate() + 180);
+    if (base < start) start = new Date(base.getFullYear(), base.getMonth(), base.getDate() - 5);
+    if (base > end) end = new Date(base.getFullYear(), base.getMonth(), base.getDate() + 5);
+    const list: Date[] = [];
+    for (const cur = new Date(start); cur <= end; cur.setDate(cur.getDate() + 1)) list.push(new Date(cur));
+    const idx = list.findIndex(d => toDateInputValue(d) === toDateInputValue(base));
+    return { dates: list, dateIndex: idx < 0 ? 0 : idx };
+  }, [date]);
+
+  const [hh, mm] = (time || '00:00').split(':');
+  const hourIndex = HOUR_OPTIONS.indexOf(hh) >= 0 ? HOUR_OPTIONS.indexOf(hh) : 0;
+  const minuteIndex = MINUTE_OPTIONS.indexOf(mm) >= 0 ? MINUTE_OPTIONS.indexOf(mm) : 0;
+
+  return (
+    <div className="absolute z-20 top-full left-0 mt-2 w-[320px] bg-white border border-[#c2c6d6] rounded-xl shadow-xl p-3">
+      <div className="relative flex items-stretch justify-center">
+        <div
+          className="pointer-events-none absolute left-0 right-0 bg-[#eff4ff] border border-[#bfdbfe] rounded-lg"
+          style={{ top: WHEEL_ITEM_HEIGHT, height: WHEEL_ITEM_HEIGHT }}
+        />
+        <WheelColumn
+          items={dates}
+          selectedIndex={dateIndex}
+          onSelect={i => onChange(toDateInputValue(dates[i]), time)}
+          renderItem={(d, sel) => (
+            <span className={`text-xs whitespace-nowrap ${sel ? 'font-black text-[#0058be]' : 'font-medium text-[#94a3b8]'}`}>{formatWheelDate(d)}</span>
+          )}
+          width={188}
+        />
+        <WheelColumn
+          items={HOUR_OPTIONS}
+          selectedIndex={hourIndex}
+          onSelect={i => onChange(date, `${HOUR_OPTIONS[i]}:${mm}`)}
+          renderItem={(h, sel) => (
+            <span className={`text-sm ${sel ? 'font-black text-[#0058be]' : 'font-medium text-[#94a3b8]'}`}>{h}</span>
+          )}
+          width={44}
+        />
+        <div className="flex items-center justify-center text-sm font-black text-[#565e74]" style={{ height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ROWS }}>:</div>
+        <WheelColumn
+          items={MINUTE_OPTIONS}
+          selectedIndex={minuteIndex}
+          onSelect={i => onChange(date, `${hh}:${MINUTE_OPTIONS[i]}`)}
+          renderItem={(m, sel) => (
+            <span className={`text-sm ${sel ? 'font-black text-[#0058be]' : 'font-medium text-[#94a3b8]'}`}>{m}</span>
+          )}
+          width={44}
+        />
+      </div>
+      <div className="flex justify-end mt-2 pt-2 border-t border-[#e6ebf3]">
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="px-4 py-1.5 bg-[#0058be] text-white text-xs font-bold rounded-lg hover:bg-[#00479a] transition-colors"
+        >
+          Xác nhận
+        </button>
+      </div>
     </div>
   );
 }
@@ -144,7 +273,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     platform: 'Google Meet',
     date: '',
     time: '',
-    duration: '60',
+    duration: DEFAULT_DURATION_MINUTES,
     link: '',
     transcript: '',
     auto_summarize: true,
@@ -184,6 +313,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // so this is a single nullable result, not a per-member list.
   const [organizerConflict, setOrganizerConflict] = useState<{ message: string; organizer_google_email: string } | null>(null);
   const [suggestedSlots, setSuggestedSlots] = useState<string[]>([]);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const timePickerWrapperRef = useRef<HTMLDivElement>(null);
   // Tracks project_ids across renders so the member-cascade effect below can
   // tell which project was just REMOVED (vs. this being the modal's initial
   // open/reset, where "removing" everything would be wrong).
@@ -197,6 +328,17 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // retry-link regeneration.
   const originalHostWorkspaceIdRef = useRef<number | null>(null);
   const hostAlreadyResolvedRef = useRef(false);
+
+  useEffect(() => {
+    if (!showTimePicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (timePickerWrapperRef.current && !timePickerWrapperRef.current.contains(e.target as Node)) {
+        setShowTimePicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showTimePicker]);
 
   useEffect(() => {
     let openedProjectIds: number[] = [];
@@ -248,7 +390,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         platform: 'Google Meet',
         date: defaultDate,
         time: defaultTime,
-        duration: '60',
+        duration: DEFAULT_DURATION_MINUTES,
         link: '',
         transcript: '',
         auto_summarize: true,
@@ -264,6 +406,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }
     prevProjectIdsRef.current = openedProjectIds;
     setError('');
+    setShowTimePicker(false);
   }, [initialData, isOpen]);
 
   useEffect(() => {
@@ -671,8 +814,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
   return (
     <div className="fixed inset-0 z-[70] flex justify-end">
-      {/* Backdrop */}
-      <div onClick={onClose} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300" />
+      {/* Backdrop — click-outside-to-close only; no dim/blur over the main window (chốt 2026-09-22) */}
+      <div onClick={onClose} className="absolute inset-0" />
 
       {/* Drawer Body */}
       <div className="relative w-full max-w-2xl bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
@@ -692,7 +835,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
         {/* Body & Form */}
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
-          <div className="p-6 space-y-4 overflow-y-auto flex-1 min-h-0">
+          <div className="p-5 space-y-3 overflow-y-auto flex-1 min-h-0">
             {error && <div className="mb-1 p-3 bg-red-50 text-red-600 text-xs rounded-lg font-semibold border border-red-200">{error}</div>}
             {isLocked && (
               <div className="mb-1 p-3 bg-amber-50 text-amber-800 text-xs rounded-lg font-semibold border border-amber-200">
@@ -700,10 +843,30 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               </div>
             )}
 
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Tên cuộc họp *</label>
+                <button
+                  type="button"
+                  onClick={regenerateTitle}
+                  className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline"
+                >
+                  <RefreshCw size={12} /> Hệ thống gợi ý lại
+                </button>
+              </div>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={e => { setFormData({ ...formData, title: e.target.value }); setManualTitleEdit(true); }}
+                placeholder="Hệ thống sẽ gợi ý tên cuộc họp dựa trên dự án + mục tiêu"
+                className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] font-semibold focus:outline-none focus:border-[#0058be] transition-colors"
+              />
+            </div>
+
             {/* 1. Phạm vi cuộc họp */}
             <SectionLabel n={1} label="Phạm vi cuộc họp" />
             <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Dự án liên quan *</label>
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Dự án liên quan *</label>
               <SearchableSelect
                 label="dự án"
                 icon="📁"
@@ -717,9 +880,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
             {/* 2. Nội dung cuộc họp */}
             <SectionLabel n={2} label="Nội dung cuộc họp" />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-1">
                   <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Mục tiêu & kết quả mong đợi *</label>
                   <button
                     type="button"
@@ -743,12 +906,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   }}
                   onChange={e => setFormData({ ...formData, objective: e.target.value })}
                   placeholder="1. Nhập mục tiêu — Enter để tự thêm số tiếp theo..."
-                  rows={4}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+                  rows={3}
+                  className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
                 />
               </div>
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-1">
                   <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Agenda / vấn đề cần xử lý</label>
                   <button
                     type="button"
@@ -772,17 +935,18 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   }}
                   onChange={e => setFormData({ ...formData, agenda: e.target.value })}
                   placeholder={'1. Nội dung cần cập nhật\n2. Vấn đề cần thảo luận\n3. Quyết định cần chốt'}
-                  rows={4}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
+                  rows={3}
+                  className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors resize-y"
                 />
               </div>
             </div>
 
             {/* 3. Người tham gia & thời gian */}
             <SectionLabel n={3} label="Người tham gia & thời gian" />
-            <div className="space-y-4">
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <div className="flex items-center justify-between mb-1.5">
+                <div className="flex items-center justify-between mb-1">
                   <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia *</label>
                   <div className="flex items-center gap-3">
                     <button
@@ -849,25 +1013,26 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   create; on edit it's pre-filled with the meeting's CURRENT Host
                   and only offers a suggestion chip when the project's Workspace
                   changed (Rule 6) — never silently overwritten (Rule 4).
-                  Full-width so it reads as its own decision, not squeezed beside
-                  time/duration. Locked (ONGOING/DONE/CANCELLED) shows read-only. */}
+                  Paired with Thành viên in the same row for a compact layout
+                  (chốt 2026-09-22). Locked (ONGOING/DONE/CANCELLED) shows read-only. */}
+              <div>
               {isLocked ? (
                 <div>
-                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Host</label>
-                  <div className="w-full px-3 py-2.5 border border-[#e2e8f0] rounded-lg text-xs text-[#565e74] bg-[#f8f9fb]">
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Host</label>
+                  <div className="w-full px-3 py-2 border border-[#e2e8f0] rounded-lg text-xs text-[#565e74] bg-[#f8f9fb]">
                     {initialData.host_google_email || initialData.organizer_google_email || 'Không xác định'}
                   </div>
                 </div>
               ) : formData.platform === 'Google Meet' && (
                 <div>
-                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Host *</label>
+                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Host *</label>
                   <select
                     value={formData.host_workspace_id ?? ''}
                     onChange={e => {
                       setHostManuallySet(true);
                       setFormData(prev => ({ ...prev, host_workspace_id: e.target.value ? Number(e.target.value) : null }));
                     }}
-                    className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                    className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                   >
                     <option value="">— Chọn tài khoản Host —</option>
                     {hostsList.map(h => (
@@ -891,24 +1056,36 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   )}
                 </div>
               )}
+              </div>
+              </div>
 
               <div>
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời gian họp *</label>
-                    <input
-                      type="date"
-                      value={formData.date}
-                      onChange={e => setFormData({ ...formData, date: e.target.value })}
-                      className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors"
-                    />
+                  <div className="relative" ref={timePickerWrapperRef}>
+                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Thời gian bắt đầu *</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowTimePicker(v => !v)}
+                      className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium text-left flex items-center gap-1.5"
+                    >
+                      <CalendarIcon size={13} className="text-[#0058be] shrink-0" />
+                      <span className="truncate">{formatDateTimeTrigger(formData.date, formData.time)}</span>
+                    </button>
+                    {showTimePicker && (
+                      <DateTimeWheelPicker
+                        date={formData.date}
+                        time={formData.time}
+                        onChange={(d, t) => setFormData(prev => ({ ...prev, date: d, time: t }))}
+                        onConfirm={() => setShowTimePicker(false)}
+                      />
+                    )}
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Thời lượng</label>
+                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Thời lượng</label>
                     <select
                       value={formData.duration}
                       onChange={e => setFormData({ ...formData, duration: e.target.value })}
-                      className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                      className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                     >
                       <option value="15">15 phút</option>
                       <option value="30">30 phút</option>
@@ -917,14 +1094,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                       <option value="90">1.5 giờ</option>
                     </select>
                   </div>
-                </div>
-
-                <div className="mt-2">
-                  <label className="block text-[10px] font-bold text-[#94a3b8] uppercase tracking-wider mb-1">Giờ bắt đầu</label>
-                  <HourMinutePicker
-                    value={formData.time}
-                    onChange={t => setFormData({ ...formData, time: t })}
-                  />
                 </div>
 
                 {isEditingPastMeeting && (
@@ -966,7 +1135,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             {/* 4. Kết nối & thông báo */}
             <SectionLabel n={4} label="Kết nối & thông báo" />
             <div>
-              <div className="flex items-center justify-between mb-1.5">
+              <div className="flex items-center justify-between mb-1">
                 <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Nền tảng họp + Link họp</label>
                 <div className="flex items-center gap-3">
                   <button
@@ -1043,7 +1212,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     const shouldClearLink = platform === 'Google Meet' && !formData.link.includes('meet.google.com');
                     setFormData({ ...formData, platform, link: shouldClearLink ? '' : formData.link });
                   }}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                  className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                 >
                   <option value="Google Meet">💻 Google Meet</option>
                   <option value="Zoom">🎥 Zoom</option>
@@ -1056,7 +1225,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   onChange={e => setFormData({ ...formData, link: e.target.value })}
                   readOnly={formData.platform === 'Google Meet'}
                   placeholder={formData.platform === 'Zoom' ? 'https://zoom.us/j/...' : formData.platform === 'Google Meet' ? 'Bấm "Tạo link Google Meet" ở trên' : formData.platform === 'Microsoft Teams' ? 'https://teams.microsoft.com/l/meetup-join/...' : 'https://...'}
-                  className={`w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6] ${formData.platform === 'Google Meet' ? 'bg-[#f8f9fe] cursor-not-allowed' : ''}`}
+                  className={`w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] focus:outline-none focus:border-[#0058be] transition-colors placeholder:text-[#c2c6d6] ${formData.platform === 'Google Meet' ? 'bg-[#f8f9fe] cursor-not-allowed' : ''}`}
                 />
               </div>
 
@@ -1087,32 +1256,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
             </div>
 
             <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Tên cuộc họp *</label>
-                <button
-                  type="button"
-                  onClick={regenerateTitle}
-                  className="flex items-center gap-1 text-[11px] font-bold text-[#0058be] hover:underline"
-                >
-                  <RefreshCw size={12} /> Hệ thống gợi ý lại
-                </button>
-              </div>
-              <input
-                type="text"
-                value={formData.title}
-                onChange={e => { setFormData({ ...formData, title: e.target.value }); setManualTitleEdit(true); }}
-                placeholder="Hệ thống sẽ gợi ý tên cuộc họp dựa trên dự án + mục tiêu"
-                className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] font-semibold focus:outline-none focus:border-[#0058be] transition-colors"
-              />
-            </div>
-
-            <div>
-              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1.5">Nhắc lịch & kênh thông báo</label>
+              <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Nhắc lịch & kênh thông báo</label>
               <div className="grid grid-cols-1 sm:grid-cols-[140px_1fr] gap-3">
                 <select
                   value={formData.reminder_minutes}
                   onChange={e => setFormData({ ...formData, reminder_minutes: parseInt(e.target.value, 10) })}
-                  className="w-full px-3 py-2.5 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                  className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
                 >
                   <option value={5}>Trước 5 phút</option>
                   <option value={10}>Trước 10 phút</option>
