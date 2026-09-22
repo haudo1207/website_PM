@@ -702,33 +702,25 @@ function injectWidget(toolName) {
     display: "none",
     flexDirection: "column",
     gap: "8px",
-    // 380x680 — a MODEST shrink (was 440x800), not the reference build's
-    // full 280x560. That size was the widget's own original dimension
-    // before 2 earlier passes grew it (280x560 -> 400x720 -> 440x800)
-    // specifically because content looked cramped/broken at 280x560 once
-    // the current feature set (Customer/Project cascade, summary card,
-    // action drawer) was built against the larger box — going all the way
-    // back down risks reintroducing that exact overlap/cramping complaint.
-    // 380x680 keeps ~85% of the current footprint (visibly smaller,
-    // touchable target for "make it a bit smaller") while staying much
-    // closer to the size everything was actually built/tested at. No
-    // internal element in this file has a fixed width/min-width above
-    // 200px (the couple that exist are `max-width` on ellipsis-truncated
-    // text, which just truncates shorter — not an overlap risk), so
+    // 340x600 — second shrink pass (was 380x680, before that 440x800).
+    // Confirmed via a real screenshot (laptop, ~15") that 380x680 did NOT
+    // overlap/clip any content — it was just still visually "too big" for
+    // the screen — so this second cut is a plain size reduction, not a
+    // response to a layout bug. No internal element has a fixed
+    // width/min-width above 200px (the couple that exist are `max-width`
+    // on ellipsis-truncated text, which just truncates shorter), so
     // horizontal overflow is unlikely; vertically, .body's own
-    // overflow-y:auto (below) turns "less height" into "more scrolling",
-    // not clipped/overlapping content. Still: this has NOT been visually
-    // verified in a real browser — load it unpacked and check before
-    // shipping, and if anything looks cramped, that's real signal to
-    // revert closer to 440x800 rather than push smaller.
-    width: "380px",
-    // Capped relative to the viewport (not just a flat 680px) — matches the
+    // overflow-y:auto turns "less height" into "more scrolling", not
+    // clipped content. If this size starts looking cramped, step back up
+    // toward 380x680 rather than shrinking further.
+    width: "340px",
+    // Capped relative to the viewport (not just a flat 600px) — matches the
     // 24px top/bottom the fixed bottom:24px placement above already reserves,
     // so the box can never exceed the space actually available between the
     // bottom anchor and the top of the screen. .body's own overflow-y:auto
     // below absorbs whatever height this clamp takes away, so content still
     // scrolls instead of getting cut off.
-    height: "min(680px, calc(100vh - 48px))",
+    height: "min(600px, calc(100vh - 48px))",
     maxWidth: "calc(100vw - 48px)",
     boxSizing: "border-box",
     overflow: "hidden",
@@ -790,7 +782,7 @@ function injectWidget(toolName) {
          widget's fixed height leaves after the summary card above it —
          without this, a big empty gap opened up at the bottom of the
          widget since every card/list here was content-sized only, never
-         grow-to-fill. Still correct at the smaller 380x680 size (flex:1
+         grow-to-fill. Still correct at the smaller 340x600 size (flex:1
          is relative to whatever the widget's actual height ends up being,
          not a fixed number). */
       #markee-widget .card-grow{flex:1;min-height:0;display:flex;flex-direction:column;}
@@ -2705,67 +2697,161 @@ function injectWidget(toolName) {
     });
   }
 
-  // Adds a type-to-filter search box above a native <select> that was JUST
-  // populated (Customer/Project cascades) — a plain <select> can't search
-  // itself. Deliberately DOM-only (inserts a sibling <input>, never touches
-  // the widget's own HTML template strings, of which there are several
-  // separate Customer/Project cascades throughout this file) so this is
-  // safe to call once, right after populating any of them, without editing
-  // their markup. Call again after every repopulate — it reuses the same
-  // input if one is already there (checked via the `mk-select-search`
-  // class) instead of stacking a second one.
+  function mkEscapeHtml(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // Converts a native <select> that was JUST populated (Customer/Project
+  // cascades) into a real COMBOBOX: click/focus it and a search box +
+  // filtered dropdown list appear immediately below, type to filter, click
+  // (or arrow keys + Enter) to pick — matches "search right inside the
+  // dropdown", not a separate box sitting above it.
   //
-  // The current selection is NEVER dropped by typing a filter that doesn't
-  // match it — the selected option always stays in the rendered list even
-  // when filtered out of view, so no `change` event needs to (or does)
-  // fire just from searching, and every existing cascade wired off this
-  // select's `change` listener keeps working unmodified.
+  // The original <select> is kept in the DOM (visually hidden, 0x0) rather
+  // than removed — every existing Customer/Project cascade in this file
+  // was wired against `selectEl.addEventListener("change", ...)` /
+  // `selectEl.value`, so picking an item here just sets the real select's
+  // `.value` and dispatches a real `change` event, and every one of those
+  // already-working cascades keeps running completely unmodified.
+  //
+  // Safe to call again after every repopulate (GET_CUSTOMERS/
+  // GET_PROJECTS_BY_CUSTOMER re-running) — detects it already converted
+  // this select (`_mkCombo` flag) and just refreshes the cached option
+  // list + displayed text instead of building a second combobox around it.
   function enableSelectSearch(selectEl, placeholderText) {
     if (!selectEl) return;
     const fullOptions = Array.from(selectEl.options).map((o) => ({ value: o.value, text: o.textContent }));
     selectEl._mkFullOptions = fullOptions;
 
-    const prev = selectEl.previousElementSibling;
-    let input = prev && prev.classList && prev.classList.contains("mk-select-search") ? prev : null;
-    if (input) {
-      input.placeholder = placeholderText || input.placeholder;
+    if (selectEl._mkCombo) {
+      const input = selectEl._mkCombo.input;
+      if (placeholderText) input.placeholder = placeholderText;
+      if (document.activeElement !== input) {
+        const cur = fullOptions.find((o) => o.value === selectEl.value);
+        input.value = cur && cur.value !== "" ? cur.text : "";
+      }
       return;
     }
 
-    input = document.createElement("input");
+    const wrap = document.createElement("div");
+    wrap.className = "mk-combo-wrap";
+    wrap.style.cssText = "position:relative;width:100%;";
+    selectEl.parentNode.insertBefore(wrap, selectEl);
+    wrap.appendChild(selectEl);
+    // Kept functional (still receives .value sets + fires "change" for
+    // every existing cascade listener) but visually gone — 0-size instead
+    // of display:none so it never becomes an unfocusable dead end for
+    // anything that still expects to measure/see it.
+    selectEl.style.cssText = "position:absolute;width:0;height:0;padding:0;border:0;opacity:0;pointer-events:none;";
+    selectEl.tabIndex = -1;
+
+    const input = document.createElement("input");
     input.type = "text";
-    input.className = "mk-select-search";
+    input.className = "mk-combo-input";
     input.placeholder = placeholderText || "Tìm kiếm...";
     input.autocomplete = "off";
-    input.style.cssText = "width:100%;height:26px;border:1px solid rgba(88,95,255,.38);border-radius:7px;background:#12172a;color:#eef2ff;padding:0 8px;outline:none;font-size:10.6px;font-weight:700;margin-bottom:4px;box-sizing:border-box;";
-    if (selectEl.parentNode) selectEl.parentNode.insertBefore(input, selectEl);
+    input.style.cssText = "width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;cursor:pointer;";
+    wrap.appendChild(input);
 
-    input.addEventListener("click", (e) => e.stopPropagation());
-    input.addEventListener("input", () => {
+    const list = document.createElement("div");
+    list.className = "mk-combo-list";
+    list.style.cssText = "position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:180px;overflow-y:auto;background:#111629;border:1px solid #4e46dc;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.6);z-index:1000000;display:none;";
+    wrap.appendChild(list);
+
+    let highlighted = -1;
+
+    function currentFiltered() {
       const q = input.value.trim().toLowerCase();
       const opts = selectEl._mkFullOptions || [];
-      const keepValue = selectEl.value;
-      selectEl.innerHTML = "";
-      const seen = new Set();
-      opts.forEach((o, idx) => {
-        // Not every cascade seeds a "-- Chọn ... --" placeholder option
-        // (some start straight from the real item list) — matching on an
-        // empty value rather than "index 0" means this only pins an
-        // actual placeholder when one exists, instead of always exempting
-        // whatever the first REAL item happens to be from filtering.
-        const isPlaceholder = o.value === "";
-        const isCurrentSelection = keepValue !== "" && o.value === keepValue;
-        const matches = !q || o.text.toLowerCase().includes(q);
-        if ((isPlaceholder || isCurrentSelection || matches) && !seen.has(o.value)) {
-          seen.add(o.value);
-          const opt = document.createElement("option");
-          opt.value = o.value;
-          opt.textContent = o.text;
-          selectEl.appendChild(opt);
-        }
+      const real = opts.filter((o) => o.value !== "");
+      return q ? real.filter((o) => o.text.toLowerCase().includes(q)) : real;
+    }
+
+    function renderList() {
+      const filtered = currentFiltered();
+      highlighted = -1;
+      list.innerHTML = filtered.length
+        ? filtered.map((o, i) => `<div class="mk-combo-item" data-idx="${i}" data-value="${mkEscapeHtml(o.value)}" style="padding:7px 9px;font-size:10.8px;color:#eef2ff;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;${String(o.value) === String(selectEl.value) ? "background:#23294b;" : ""}">${mkEscapeHtml(o.text)}</div>`).join("")
+        : `<div style="padding:9px;color:#8b98bd;font-size:10px;text-align:center;">Không tìm thấy</div>`;
+      list.querySelectorAll(".mk-combo-item").forEach((el) => {
+        el.addEventListener("mouseenter", () => setHighlight(Number(el.dataset.idx), filtered, false));
+        el.addEventListener("mousedown", (e) => {
+          // mousedown (not click) fires BEFORE the input's blur — picking
+          // this way still works even though blur closes the list.
+          e.preventDefault();
+          pick(el.dataset.value, filtered);
+        });
       });
-      selectEl.value = keepValue;
+    }
+
+    function setHighlight(idx, filtered, scroll) {
+      list.querySelectorAll(".mk-combo-item").forEach((el, i) => {
+        el.style.background = i === idx ? "#1b2038" : (String(filtered[i] && filtered[i].value) === String(selectEl.value) ? "#23294b" : "transparent");
+      });
+      highlighted = idx;
+      if (scroll) {
+        const el = list.children[idx];
+        if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+      }
+    }
+
+    function pick(value, filtered) {
+      const found = (filtered || currentFiltered()).find((o) => String(o.value) === String(value))
+        || (selectEl._mkFullOptions || []).find((o) => String(o.value) === String(value));
+      selectEl.value = value;
+      input.value = found && found.value !== "" ? found.text : "";
+      closeList();
+      selectEl.dispatchEvent(new Event("change"));
+    }
+
+    function openList() {
+      renderList();
+      list.style.display = "block";
+    }
+    function closeList() {
+      list.style.display = "none";
+      highlighted = -1;
+    }
+
+    input.addEventListener("focus", () => {
+      input.value = "";
+      openList();
     });
+    input.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (list.style.display === "none") openList();
+    });
+    input.addEventListener("input", openList);
+    input.addEventListener("blur", () => {
+      // Slight delay so a click/mousedown on a list item (handled above)
+      // still lands before the list disappears.
+      setTimeout(() => {
+        closeList();
+        const cur = (selectEl._mkFullOptions || []).find((o) => o.value === selectEl.value);
+        input.value = cur && cur.value !== "" ? cur.text : "";
+      }, 120);
+    });
+    input.addEventListener("keydown", (e) => {
+      const filtered = currentFiltered();
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        if (list.style.display === "none") { openList(); return; }
+        setHighlight(Math.min(highlighted + 1, filtered.length - 1), filtered, true);
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setHighlight(Math.max(highlighted - 1, 0), filtered, true);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (highlighted >= 0 && filtered[highlighted]) pick(filtered[highlighted].value, filtered);
+      } else if (e.key === "Escape") {
+        closeList();
+        input.blur();
+      }
+    });
+
+    selectEl._mkCombo = { input, list };
+    const current = fullOptions.find((o) => o.value === selectEl.value);
+    input.value = current && current.value !== "" ? current.text : "";
   }
 
   function loadPushDepartments(selectedDepartmentId = null, selectedTeamId = null) {

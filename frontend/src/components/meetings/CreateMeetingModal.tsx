@@ -141,7 +141,13 @@ function WheelColumn<T>({ items, selectedIndex, onSelect, renderItem, width }: {
     <div
       ref={containerRef}
       onScroll={handleScroll}
-      className="overflow-y-auto snap-y snap-mandatory no-scrollbar"
+      // `relative` (chốt 2026-09-22 fix): without an explicit position, this
+      // column paints BELOW the highlight band next door — which is
+      // `absolute` — regardless of DOM order (positioned elements always
+      // paint over static in-flow content), hiding the selected row's text
+      // behind the opaque highlight. Being positioned + later in the DOM
+      // than the highlight puts this column's text on top instead.
+      className="relative overflow-y-auto snap-y snap-mandatory no-scrollbar"
       style={{ height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ROWS, width }}
     >
       <div style={{ height: WHEEL_ITEM_HEIGHT }} />
@@ -210,7 +216,7 @@ function DateTimeWheelPicker({ date, time, onChange, onConfirm }: {
           )}
           width={44}
         />
-        <div className="flex items-center justify-center text-sm font-black text-[#565e74]" style={{ height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ROWS }}>:</div>
+        <div className="relative flex items-center justify-center text-sm font-black text-[#565e74]" style={{ height: WHEEL_ITEM_HEIGHT * WHEEL_VISIBLE_ROWS }}>:</div>
         <WheelColumn
           items={MINUTE_OPTIONS}
           selectedIndex={minuteIndex}
