@@ -225,6 +225,42 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
     }
 
 
+def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional[str]):
+    """Narrow an already project_query_for_user()-filtered Project query to
+    one specific Workspace — factored out of list_projects() (chốt
+    2026-09-22, feature 010's "no project selected -> scope to current
+    Workspace" fallback also needs this exact rule; keeping it in one place
+    stops the two from drifting apart). Falsy/"all" business_unit means no
+    narrowing — every accessible project across every Workspace."""
+    target_b = (business_unit or "").strip().lower()
+    if not target_b or target_b == "all":
+        return q
+    # A project the caller is explicitly assigned to (project_members) always
+    # stays visible under the current Workspace tab, even when its own
+    # business/data_scope belongs to a different Workspace — mirrors the
+    # membership-overrides-Workspace rule in access.py's can_access_project.
+    member_id = getattr(current_user, "member_id", None)
+    assigned_project_ids = (
+        db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
+        if member_id else None
+    )
+    ws = resolve_workspace(db, target_b)
+    if ws:
+        b_val = ws.name
+        filters = [
+            Project.business == b_val,
+            Project.business == "All",
+            and_(Project.business.is_(None), Project.data_scope == target_b),
+            and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
+        ]
+        if assigned_project_ids is not None:
+            filters.append(Project.id.in_(assigned_project_ids))
+        return q.filter(or_(*filters))
+    if assigned_project_ids is not None:
+        return q.filter(Project.id.in_(assigned_project_ids))
+    return q.filter(Project.id == -1)
+
+
 @router.get("/projects")
 def list_projects(
     business: Optional[str] = None,
@@ -257,33 +293,7 @@ def list_projects(
     # and the customer-name branch below use it as documentation.
     base_query = project_query_for_user(db, current_user)
     q = base_query.options(joinedload(Project.customer))
-    target_b = (business or business_unit or "").strip().lower()
-    if target_b and target_b != "all":
-        # A project the caller is explicitly assigned to (project_members) always
-        # stays visible under the current Workspace tab, even when its own
-        # business/data_scope belongs to a different Workspace — mirrors the
-        # membership-overrides-Workspace rule in access.py's can_access_project.
-        member_id = getattr(current_user, "member_id", None)
-        assigned_project_ids = (
-            db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
-            if member_id else None
-        )
-        ws = resolve_workspace(db, target_b)
-        if ws:
-            b_val = ws.name
-            filters = [
-                Project.business == b_val,
-                Project.business == "All",
-                and_(Project.business.is_(None), Project.data_scope == target_b),
-                and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
-            ]
-            if assigned_project_ids is not None:
-                filters.append(Project.id.in_(assigned_project_ids))
-            q = q.filter(or_(*filters))
-        elif assigned_project_ids is not None:
-            q = q.filter(Project.id.in_(assigned_project_ids))
-        else:
-            q = q.filter(Project.id == -1)
+    q = _apply_workspace_scope(db, current_user, q, business or business_unit)
 
     # Filter: pm_ids
     if pm_ids:
@@ -1007,11 +1017,25 @@ def bulk_delete_projects(body: dict, db: Session = Depends(get_db), current_user
 # ═══════════════════════════════════════════════════════════
 
 @router.get("/projects/members")
-def list_members_for_projects(project_ids: str = "", db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def list_members_for_projects(
+    project_ids: str = "",
+    business_unit: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
     """Union of project_members across several projects (chốt 2026-09-22,
     feature 010 — Meeting form's "Thành viên tham gia" must be scoped to the
     "Dự án liên quan" currently selected, not show every Member in the
     system). `project_ids` is a comma-separated list, e.g. "1,2,3".
+
+    No project selected (`project_ids` empty) — chốt 2026-09-22 follow-up —
+    falls back to every Member reachable via project_members across the
+    projects in `business_unit` (the currently selected Workspace tab), or
+    across EVERY accessible project if `business_unit` is empty/"all" (no
+    Workspace narrowing). Never falls back to "every Member in the system"
+    regardless of the caller's project/Workspace access — same
+    project_query_for_user()-based access floor as the explicit-selection
+    branch below.
 
     Access is re-checked here rather than trusted from the caller (chốt: FE
     must never be able to widen this by sending a project_id outside its
@@ -1020,12 +1044,14 @@ def list_members_for_projects(project_ids: str = "", db: Session = Depends(get_d
     doesn't apply to it; project_query_for_user() is the same accessible-
     projects filter list_projects() itself uses."""
     ids = [int(x) for x in project_ids.split(",") if x.strip().isdigit()]
-    if not ids:
-        return []
-    accessible_ids = [
-        pid for (pid,) in project_query_for_user(db, current_user)
-        .filter(Project.id.in_(ids)).with_entities(Project.id).all()
-    ]
+    if ids:
+        accessible_ids = [
+            pid for (pid,) in project_query_for_user(db, current_user)
+            .filter(Project.id.in_(ids)).with_entities(Project.id).all()
+        ]
+    else:
+        scoped_q = _apply_workspace_scope(db, current_user, project_query_for_user(db, current_user), business_unit)
+        accessible_ids = [pid for (pid,) in scoped_q.with_entities(Project.id).all()]
     if not accessible_ids:
         return []
     rows = (

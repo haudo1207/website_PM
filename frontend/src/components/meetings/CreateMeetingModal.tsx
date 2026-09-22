@@ -480,13 +480,16 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData, formData.project_ids.join(','), hostManuallySet]);
 
-  // Thành viên tham gia phải luôn nằm trong scope của Dự án liên quan đang
-  // chọn (chốt 2026-09-22, feature 010) — không còn load toàn bộ Member hệ
-  // thống. Đổi project_ids -> refetch union member của các project đó; đổi
-  // Workspace -> projectsList đổi theo (effect ở trên) -> project_ids không
-  // còn hợp lệ ở workspace mới sẽ tự kéo theo membersList đổi qua đây. Chưa
-  // chọn project nào -> không có scope -> danh sách rỗng, không gọi API.
+  // Thành viên tham gia phải luôn nằm trong scope hiện tại (chốt
+  // 2026-09-22, feature 010 + follow-up): chưa chọn project nào -> scope
+  // theo Workspace đang chọn (hoặc mọi project user có quyền, nếu đang ở
+  // "Tất cả Workspace"), không còn trả về rỗng — không còn load toàn bộ
+  // Member hệ thống trong mọi trường hợp. Đổi project_ids -> refetch union
+  // member của các project đó; đổi Workspace -> projectsList đổi theo
+  // (effect ở trên) và businessUnit đổi theo đây, cả hai cùng kéo
+  // membersList đổi theo scope mới.
   useEffect(() => {
+    if (!isOpen) return;
     const prevIds = prevProjectIdsRef.current;
     const currentIds = formData.project_ids;
     // Chỉ prune member_ids khi có project THỰC SỰ bị bỏ chọn — không phải
@@ -497,7 +500,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     const aProjectWasRemoved = prevIds.some(id => !currentIds.includes(id));
     prevProjectIdsRef.current = currentIds;
     let cancelled = false;
-    getMembersForProjects(currentIds).then((res: any) => {
+    // Cùng rule workspace-narrowing với projectsList ở effect trên: chỉ áp
+    // dụng lúc CREATE, không áp dụng lúc EDIT.
+    const businessUnitScope = !initialData && workspaceCode ? workspaceCode : undefined;
+    getMembersForProjects(currentIds, businessUnitScope).then((res: any) => {
       if (cancelled) return;
       const items = Array.isArray(res) ? res : (res?.data || []);
       setMembersList(items);
@@ -513,7 +519,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     }).catch(() => { if (!cancelled) setMembersList([]); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [formData.project_ids.join(',')]);
+  }, [isOpen, initialData, workspaceCode, formData.project_ids.join(',')]);
 
   // Tên cuộc họp tự gợi ý từ dự án đã chọn + mục tiêu — chỉ khi người dùng
   // chưa tự sửa tay, để không đè lên nội dung họ đang gõ.
@@ -626,12 +632,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // "Cả team" phải dùng chính membersList đang hiển thị trong dropdown (đã
   // scope theo project_ids qua effect ở trên, chốt feature 010) — không tự
   // fetch riêng, để không thể lệch khỏi danh sách người dùng đang thấy.
+  // membersList luôn có dữ liệu (scope theo project đã chọn, hoặc theo
+  // Workspace nếu chưa chọn project nào — chốt 2026-09-22 follow-up), nên
+  // không còn cần chặn khi project_ids rỗng.
   const handleFillTeam = () => {
-    if (formData.project_ids.length === 0) {
-      setError('Vui lòng chọn dự án trước khi bấm "Cả team"');
-      return;
-    }
-    setError('');
     const union = new Set(formData.member_ids);
     membersList.forEach((m: any) => { if (m && m.id) union.add(m.id); });
     setFormData(prev => ({ ...prev, member_ids: Array.from(union) }));
@@ -1024,7 +1028,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên của dự án đã chọn.</p>
+                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên đang hiển thị (theo dự án đã chọn, hoặc theo Workspace nếu chưa chọn dự án).</p>
               </div>
 
               {/* HOST * (chốt 2026-09-14): auto-selected by project's Workspace on
