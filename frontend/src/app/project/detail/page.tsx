@@ -382,9 +382,27 @@ function ProjectDetailContent() {
     window.addEventListener('resize', scheduleRecompute);
     const observer = new ResizeObserver(scheduleRecompute);
     observer.observe(document.body);
+    // Safety net for the "sometimes I can scroll the table, sometimes I
+    // can't" report — root cause: the app shell above this card is itself
+    // `h-screen overflow-hidden` (see the outer layout div), so
+    // `document.body`'s OWN measured box stays pinned at ~window height no
+    // matter what happens INSIDE that shell. ResizeObserver only reports
+    // size changes of the element it's watching — it can't see an internal
+    // reflow that shifts THIS card's own `top` (the phase toolbar wrapping
+    // to 2 lines, a banner appearing above it, a long project/phase name
+    // wrapping differently) without body's own outer box ever changing
+    // size, so the explicit height written below can go stale and never
+    // get corrected by the observer at all. Re-running the same cheap,
+    // already-idempotent recompute on a short interval (skips the DOM
+    // write whenever the height hasn't actually drifted — see the
+    // Math.abs check above) self-heals that drift within ~1s regardless
+    // of what caused it, instead of needing to enumerate every possible
+    // trigger.
+    const intervalId = window.setInterval(scheduleRecompute, 1000);
     return () => {
       window.removeEventListener('resize', scheduleRecompute);
       observer.disconnect();
+      window.clearInterval(intervalId);
       if (rafId != null) cancelAnimationFrame(rafId);
     };
   }, [activeMainTab]);
@@ -4333,13 +4351,20 @@ function ProjectDetailContent() {
         // project/task loads, phase switch above re-triggering layout) and
         // land on nothing to scroll, with no retry. Poll instead so it keeps
         // trying until the row actually exists and settles.
+        // Scrolls exactly ONCE, the first time the row actually exists in the
+        // DOM — this used to keep re-calling scrollIntoView up to 3 times
+        // (every 400ms) even after the row was already found and already
+        // centered, which fought any scroll the person made by hand right
+        // after landing (their own scroll kept getting snapped back to
+        // center by the next scheduled call). The retry loop below still
+        // polls until the row exists (a freshly un-collapsed Group's row
+        // isn't in the DOM immediately), it just stops dead once it does.
         let attempts = 0;
         const tryScroll = () => {
           attempts += 1;
           const el = document.getElementById(`task-row-${taskId}`);
           if (el) {
             el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            if (attempts < 3) setTimeout(tryScroll, 400);
           } else if (attempts < 10) {
             setTimeout(tryScroll, 300);
           }
