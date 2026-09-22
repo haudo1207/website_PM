@@ -7,6 +7,8 @@ import logging
 
 from ..database import get_db
 from ..models.leave_request import LeaveRequest
+from ..models.member import Member
+from ..models.notification import Notification
 from ..models.user import User
 from ..utils.auth import get_current_user, require_admin
 from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER, ALL_SCOPE, user_allowed_scopes
@@ -144,12 +146,54 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
         ward=body.get('ward', ''),
         address=body.get('address'),
         reason=body.get('reason', ''),
-        status=body.get('status', 'Pending'),
+        # Auto-approve: every authenticated user who is currently allowed to
+        # POST /leave-requests gets the new Leave saved as Approved immediately.
+        # The body's `status` is intentionally ignored — the backend is the
+        # authoritative enforcement point (project.md §1A, §4). Existing
+        # authorization is unchanged: there is still no extra role gate on
+        # create, so this applies to whichever roles the endpoint already
+        # accepts (member/leader/super_admin/viewer).
+        status='Approved',
     )
     db.add(leave_request)
     db.commit()
     db.refresh(leave_request)
     lr = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member)).filter(LeaveRequest.id == leave_request.id).first()
+
+    # ── In-app Notification Bell (recipient = creator's direct Leader) ──
+    # Reuses the existing `notifications` table + /api/notifications/inbox +
+    # Navbar bell. Resolves the direct Leader through the canonical
+    # organizational chain: LeaveRequest.user_id -> User -> User.member_id ->
+    # Member -> Member.leader_member_id -> Leader Member -> Leader User.
+    # Best-effort: any failure here (no member link, no leader, no leader user
+    # account) is logged and swallowed — it must never fail or roll back a
+    # successfully created Leave Request, and we never invent a fallback
+    # recipient.
+    try:
+        creator_member_id = getattr(current_user, "member_id", None)
+        creator_member = db.query(Member).filter(Member.id == creator_member_id).first() if creator_member_id else None
+        leader_member_id = getattr(creator_member, "leader_member_id", None) if creator_member else None
+        leader_user = (
+            db.query(User).filter(User.member_id == leader_member_id).first()
+            if leader_member_id else None
+        )
+        if leader_user:
+            creator_name = current_user.full_name or current_user.email or f"user-{current_user.id}"
+            date_text = (
+                lr.start_date
+                if lr.start_date == lr.end_date
+                else f"{lr.start_date} → {lr.end_date}"
+            )
+            db.add(Notification(
+                recipient_id=leader_user.id,
+                sender_id=current_user.id,
+                message=f"🔔 {creator_name} đã tạo đơn nghỉ phép {date_text}. Đơn đã được tự động Duyệt.",
+                notification_type="leave_request_created",
+                is_read=False,
+            ))
+            db.commit()
+    except Exception as exc:
+        logger.error("In-app Leave notification failed for Leave Request #%s: %s", lr.id, exc)
 
     # ── Telegram notification (non-blocking) ─────────────────────────
     # The Leave Request is already saved successfully. Notifying admins is an
