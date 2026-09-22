@@ -603,7 +603,7 @@ def rename_google_meet_event_tag(db, google_event_id: str, meeting_id: int, titl
         logger.warning(f"rename_google_meet_event_tag failed (non-fatal): {e}")
 
 
-def sync_google_meet_attendees(db, google_event_id: str, attendee_emails: list, workspace_id: int = None) -> None:
+def sync_google_meet_attendees(db, google_event_id: str, attendee_emails: list, workspace_id: int = None) -> bool:
     """
     Replace a Calendar event's attendees with the current participant list
     (chốt 2026-09-14: Participant == Calendar Guest — organizer/Host must
@@ -615,9 +615,14 @@ def sync_google_meet_attendees(db, google_event_id: str, attendee_emails: list, 
     as rename_google_meet_event_tag/cancel_google_meet_event: any failure is
     logged and swallowed, never raised, so a Calendar API hiccup can't block
     adding/removing a meeting member.
+
+    Returns True on success (or when there's nothing to sync), False on any
+    failure (chốt 2026-09-22, feature 009) — callers that need to surface a
+    sync failure to the client (e.g. add_meeting_member on an ONGOING
+    meeting) can check this; callers that don't care can keep ignoring it.
     """
     if not google_event_id:
-        return
+        return True
     try:
         token = get_workspace_google_access_token(db, workspace_id)
         resp = requests.patch(
@@ -629,8 +634,11 @@ def sync_google_meet_attendees(db, google_event_id: str, attendee_emails: list, 
         )
         if not resp.ok:
             logger.warning(f"sync_google_meet_attendees failed (non-fatal): {resp.status_code} {resp.text}")
+            return False
+        return True
     except Exception as e:
         logger.warning(f"sync_google_meet_attendees failed (non-fatal): {e}")
+        return False
 
 
 def cancel_google_meet_event(db, google_event_id: str, workspace_id: int = None) -> None:
