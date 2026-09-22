@@ -494,7 +494,7 @@ def _get_active_meeting(db: Session, id: int) -> Meeting:
     return m
 
 
-def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
+def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> bool:
     """Push the meeting's current participant list to Google Calendar as
     attendees (chốt 2026-09-14: Participant == Calendar Guest; organizer/Host
     is NEVER included here — resolved separately via organizer_google_email
@@ -502,9 +502,14 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
     change to a meeting's MeetingMember rows (add/remove/replace) so Calendar
     guests stay in sync with member_ids. Best-effort: never raises, matching
     sync_google_meet_attendees' own swallow-and-log contract, so a Calendar
-    API hiccup can't block adding/removing a meeting member."""
+    API hiccup can't block adding/removing a meeting member.
+
+    Returns True/False the same way sync_google_meet_attendees does (chốt
+    2026-09-22, feature 009) — most callers still ignore the return value on
+    purpose (fire-and-forget); add_meeting_member is the one caller that
+    reads it, and only when the meeting is ONGOING."""
     if not m.google_event_id:
-        return
+        return True
     try:
         from ..services.meeting_sync import sync_google_meet_attendees
         # Account (User) email is the primary source (chốt 2026-09-15) — it's
@@ -522,9 +527,10 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> None:
         )
         emails = list({(user_email or member_email) for member_email, user_email in rows if (member_email or user_email)})
         workspace_id = _host_workspace_id_for_meeting(db, m)
-        sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
+        return sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
     except Exception as e:
         logger.warning(f"_sync_meeting_calendar_attendees failed for meeting {m.id} (non-fatal): {e}")
+        return False
 
 
 def _host_workspace_id_for_meeting(db: Session, m: Meeting) -> Optional[int]:
@@ -1820,10 +1826,13 @@ def save_meeting_attendance(id: int, body: dict, db: Session = Depends(get_db), 
 def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Edit lifecycle lock (chốt 2026-09-14): participants follow the exact
-    # same rule as the generic PUT — only a not-yet-started UPCOMING meeting
-    # may have its member list touched at all.
-    if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
+    # Edit lifecycle lock (chốt 2026-09-22, feature 009 — supersedes the
+    # 2026-09-14 rule for THIS endpoint only): Add is now also allowed while
+    # ONGOING (a meeting that's already started can still gain a member);
+    # only DONE/CANCELLED block it. remove_meeting_member and the generic
+    # PUT member_ids path deliberately keep the old UPCOMING-only rule.
+    is_ongoing = compute_display_status(m) == "ĐANG DIỄN RA"
+    if m.status in ("DONE", "CANCELLED"):
         raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 
     member_id = body.get("member_id")
@@ -1860,7 +1869,17 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
         description=f"Thêm '{member.display_name}' vào cuộc họp '{m.title}' (vai trò {role})"
     )
     db.commit()
-    _sync_meeting_calendar_attendees(db, m)
+
+    # Chốt 2026-09-22 (feature 009): only the ONGOING case needs the client
+    # to know whether Calendar sync actually landed — the member joining an
+    # already-running meeting depends on it right away. UPCOMING keeps the
+    # existing silent best-effort behavior (fire-and-forget, no response
+    # fields), unchanged on purpose to avoid widening that path's risk.
+    calendar_synced = None
+    if is_ongoing:
+        calendar_synced = _sync_meeting_calendar_attendees(db, m)
+    else:
+        _sync_meeting_calendar_attendees(db, m)
 
     # Re-fetch full meeting
     m = db.query(Meeting).options(
@@ -1869,14 +1888,24 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
         joinedload(Meeting.members).joinedload(MeetingMember.member)
     ).filter(Meeting.id == id).first()
 
-    return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
+    result = {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
+    if is_ongoing:
+        result["calendar_synced"] = calendar_synced
+        result["warning"] = None if calendar_synced else (
+            "Đã thêm thành viên vào hệ thống nhưng Google Calendar chưa được cập nhật. "
+            "Thành viên có thể chưa tham gia được cuộc họp ngay."
+        )
+    return result
 
 # ─── REMOVE MEMBER ───────────────────────────────────────
 @router.delete("/{id}/members/{member_id}")
 def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     m = _get_active_meeting(db, id)
 
-    # Edit lifecycle lock (chốt 2026-09-14): same rule as add_meeting_member.
+    # Edit lifecycle lock (chốt 2026-09-14; deliberately NOT relaxed by
+    # feature 009 the way add_meeting_member was — removing someone who may
+    # actually be in the ongoing call risks desyncing Attendance/membership,
+    # see specs/009-ongoing-add-member/spec.md). Only UPCOMING may remove.
     if m.status != "UPCOMING" or compute_display_status(m) == "ĐANG DIỄN RA":
         raise HTTPException(400, f"Không thể thay đổi người tham gia của cuộc họp ở trạng thái {compute_display_status(m)}.")
 

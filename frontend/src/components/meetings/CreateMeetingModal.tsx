@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
-import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembers, getProjectMembers, getMeetingHosts, getApiErrorMessage } from '@/lib/api';
+import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembersForProjects, getMeetingHosts, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -308,7 +308,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
-  const [isFillingTeam, setIsFillingTeam] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
   const [manualTitleEdit, setManualTitleEdit] = useState(false);
@@ -334,6 +333,16 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // retry-link regeneration.
   const originalHostWorkspaceIdRef = useRef<number | null>(null);
   const hostAlreadyResolvedRef = useRef(false);
+  // A meeting being edited can already have a participant who isn't a
+  // formal project_members row of any currently-selected project (an
+  // outside guest invited just for this meeting) — feature 010 scopes
+  // membersList to the selected projects, so that person's name/avatar
+  // would otherwise disappear from the picker/chips the moment the modal
+  // opens, even though they deliberately stay selected (pruning only fires
+  // on an actual project deselection, see the membersList effect below).
+  // Seeded once from initialData.members at open time, used as a fallback
+  // for options/name lookups only — never sent to "+ Cả team".
+  const extraMemberInfoRef = useRef<Record<number, { id: number; display_name: string }>>({});
 
   useEffect(() => {
     if (!showTimePicker) return;
@@ -379,6 +388,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           ? initialData.notify_channels
           : ['App']
       });
+      extraMemberInfoRef.current = {};
+      (initialData.members || []).forEach((mm: any) => {
+        if (mm && mm.member_id != null) {
+          extraMemberInfoRef.current[mm.member_id] = { id: mm.member_id, display_name: mm.display_name };
+        }
+      });
       // Editing an existing meeting: keep its title as-is, don't auto-overwrite.
       setManualTitleEdit(true);
       // Host starts at whatever this meeting is already using — resolved
@@ -409,6 +424,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       });
       setManualTitleEdit(false);
       setHostManuallySet(false);
+      extraMemberInfoRef.current = {};
     }
     prevProjectIdsRef.current = openedProjectIds;
     setError('');
@@ -428,10 +444,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     getProjects(!initialData && workspaceCode ? { business_unit: workspaceCode } : undefined).then((res: any) => {
       const items = res?.data || res || [];
       if (Array.isArray(items)) setProjectsList(items);
-    }).catch(() => {});
-    getMembers().then((res: any) => {
-      const items = res?.data || res || [];
-      if (Array.isArray(items)) setMembersList(items);
     }).catch(() => {});
   }, [isOpen, initialData, workspaceCode]);
 
@@ -468,39 +480,37 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, initialData, formData.project_ids.join(','), hostManuallySet]);
 
-  // Bỏ chọn 1 dự án -> tự bỏ luôn các thành viên CHỈ thuộc dự án đó (thành
-  // viên nào vẫn còn thuộc 1 dự án khác đang được chọn thì giữ nguyên).
+  // Thành viên tham gia phải luôn nằm trong scope của Dự án liên quan đang
+  // chọn (chốt 2026-09-22, feature 010) — không còn load toàn bộ Member hệ
+  // thống. Đổi project_ids -> refetch union member của các project đó; đổi
+  // Workspace -> projectsList đổi theo (effect ở trên) -> project_ids không
+  // còn hợp lệ ở workspace mới sẽ tự kéo theo membersList đổi qua đây. Chưa
+  // chọn project nào -> không có scope -> danh sách rỗng, không gọi API.
   useEffect(() => {
     const prevIds = prevProjectIdsRef.current;
     const currentIds = formData.project_ids;
-    const removedIds = prevIds.filter(id => !currentIds.includes(id));
+    // Chỉ prune member_ids khi có project THỰC SỰ bị bỏ chọn — không phải
+    // mỗi lần effect chạy, vì lần đầu mở modal Edit prevIds === currentIds
+    // (set bởi effect reset ở trên) và initialData.members có thể chứa
+    // người không nằm trong project_members chính thức (khách mời ngoài dự
+    // án) mà việc mở modal không được phép âm thầm xoá họ khỏi form.
+    const aProjectWasRemoved = prevIds.some(id => !currentIds.includes(id));
     prevProjectIdsRef.current = currentIds;
-    if (removedIds.length === 0 || formData.member_ids.length === 0) return;
-
     let cancelled = false;
-    (async () => {
-      const [remainingRosters, removedRosters] = await Promise.all([
-        Promise.all(currentIds.map(pid => getProjectMembers(pid).catch(() => []))),
-        Promise.all(removedIds.map(pid => getProjectMembers(pid).catch(() => []))),
-      ]);
+    getMembersForProjects(currentIds).then((res: any) => {
       if (cancelled) return;
-
-      const toIdSet = (rosters: any[]) => {
-        const ids = new Set<number>();
-        rosters.forEach((res: any) => {
-          const arr = Array.isArray(res) ? res : (res?.data || []);
-          arr.forEach((m: any) => { if (m && m.id) ids.add(m.id); });
-        });
-        return ids;
-      };
-      const stillCoveredIds = toIdSet(remainingRosters);
-      const droppedProjectMemberIds = toIdSet(removedRosters);
-
+      const items = Array.isArray(res) ? res : (res?.data || []);
+      setMembersList(items);
+      if (!aProjectWasRemoved) return;
+      // Bỏ chọn 1 dự án -> tự bỏ luôn các thành viên không còn thuộc BẤT KỲ
+      // dự án nào đang chọn (thành viên vẫn thuộc 1 dự án khác đang chọn thì
+      // giữ nguyên — items đã LÀ union của toàn bộ project_ids hiện tại).
+      const eligibleIds = new Set(items.map((m: any) => m.id));
       setFormData(prev => {
-        const kept = prev.member_ids.filter(mid => !droppedProjectMemberIds.has(mid) || stillCoveredIds.has(mid));
+        const kept = prev.member_ids.filter(mid => eligibleIds.has(mid));
         return kept.length === prev.member_ids.length ? prev : { ...prev, member_ids: kept };
       });
-    })();
+    }).catch(() => { if (!cancelled) setMembersList([]); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [formData.project_ids.join(',')]);
@@ -594,6 +604,17 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
   if (!isOpen) return null;
 
+  // membersList is scoped to the selected projects (feature 010); a
+  // currently-selected participant outside that scope (edit mode's outside
+  // guest, see extraMemberInfoRef above) still needs to render with their
+  // real name instead of falling back to "#id" — merge them in for display
+  // only, never fed to "+ Cả team".
+  const displayMembersList = (() => {
+    const byId = new Map(membersList.map((m: any) => [m.id, m]));
+    Object.values(extraMemberInfoRef.current).forEach((m) => { if (!byId.has(m.id)) byId.set(m.id, m); });
+    return Array.from(byId.values());
+  })();
+
   const isEditingPastMeeting = !!initialData && !!formData.date && !!formData.time && toDateTimeMs(formData.date, formData.time) < Date.now();
   // Edit lifecycle lock (chốt 2026-09-14): mirrors the backend's own guard —
   // only a not-yet-started meeting (status "SẮP TỚI", the live display value
@@ -602,26 +623,18 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // only — the backend 400s regardless of what this modal lets through.
   const isLocked = !!initialData && initialData.status !== 'SẮP TỚI';
 
-  const handleFillTeam = async () => {
+  // "Cả team" phải dùng chính membersList đang hiển thị trong dropdown (đã
+  // scope theo project_ids qua effect ở trên, chốt feature 010) — không tự
+  // fetch riêng, để không thể lệch khỏi danh sách người dùng đang thấy.
+  const handleFillTeam = () => {
     if (formData.project_ids.length === 0) {
       setError('Vui lòng chọn dự án trước khi bấm "Cả team"');
       return;
     }
-    setIsFillingTeam(true);
     setError('');
-    try {
-      const results = await Promise.all(formData.project_ids.map((pid) => getProjectMembers(pid).catch(() => [])));
-      const union = new Set(formData.member_ids);
-      results.forEach((res: any) => {
-        const arr = Array.isArray(res) ? res : (res?.data || []);
-        arr.forEach((m: any) => { if (m && m.id) union.add(m.id); });
-      });
-      setFormData(prev => ({ ...prev, member_ids: Array.from(union) }));
-    } catch {
-      setError('Không thể lấy danh sách thành viên của dự án đã chọn');
-    } finally {
-      setIsFillingTeam(false);
-    }
+    const union = new Set(formData.member_ids);
+    membersList.forEach((m: any) => { if (m && m.id) union.add(m.id); });
+    setFormData(prev => ({ ...prev, member_ids: Array.from(union) }));
   };
 
   const handleGenerateLink = async () => {
@@ -958,10 +971,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     <button
                       type="button"
                       onClick={handleFillTeam}
-                      disabled={isFillingTeam}
                       className="text-[11px] font-bold text-[#0058be] hover:underline disabled:opacity-50"
                     >
-                      {isFillingTeam ? 'Đang tải...' : '+ Cả team'}
+                      + Cả team
                     </button>
                     <button
                       type="button"
@@ -988,14 +1000,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   showAvatar
                   isMulti
                   className="w-full"
-                  options={membersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}
+                  options={displayMembersList.map((m: any) => ({ id: m.id, name: m.display_name || m.full_name || `#${m.id}` }))}
                   value={formData.member_ids}
                   onChange={(ids: number[]) => setFormData({ ...formData, member_ids: ids })}
                 />
                 {formData.member_ids.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-2">
                     {formData.member_ids.map(id => {
-                      const m = membersList.find((mm: any) => mm.id === id);
+                      const m = displayMembersList.find((mm: any) => mm.id === id);
                       const name = m?.display_name || m?.full_name || `#${id}`;
                       return (
                         <span key={id} className="inline-flex items-center gap-1 bg-[#f0f2f5] text-[#334155] text-[11px] font-semibold pl-2 pr-1.5 py-1 rounded-full">

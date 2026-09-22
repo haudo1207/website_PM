@@ -114,6 +114,10 @@ export default function MeetingDetailModal({
   const [isAddingMember, setIsAddingMember] = useState(false);
 
   const [toastText, setToastText] = useState<string | null>(null);
+  // 'warning' covers add_meeting_member's calendar_synced=false case (feature
+  // 009) — Add still succeeded (DB is never rolled back for a Calendar
+  // hiccup), so this must read as a caveat, not a failure alert().
+  const [toastVariant, setToastVariant] = useState<'success' | 'warning'>('success');
 
   // Per-task project selection and check state
   const [taskProjectsMap, setTaskProjectsMap] = useState<Record<number, number>>({});
@@ -372,9 +376,12 @@ export default function MeetingDetailModal({
   const isN8nSource = meeting.ai_summary?.source === 'n8n_google_sheet' || meeting.ai_summary?.n8n_metadata;
   const n8nTime = meeting.ai_summary?.n8n_metadata?.received_at || meeting.updated_at || meeting.created_at;
 
-  const triggerToast = (msg: string) => {
+  const triggerToast = (msg: string, variant: 'success' | 'warning' = 'success') => {
     setToastText(msg);
-    setTimeout(() => setToastText(null), 3000);
+    setToastVariant(variant);
+    // Warning stays up longer — it's a caveat the user needs to actually read,
+    // not a fire-and-forget confirmation.
+    setTimeout(() => setToastText(null), variant === 'warning' ? 6000 : 3000);
   };
 
   const handleOpenAssignProject = async () => {
@@ -459,8 +466,15 @@ export default function MeetingDetailModal({
     try {
       const backendRole = MEMBER_ROLE_TO_BACKEND[memberRole] || 'PARTICIPANT';
       let latest: any = null;
+      // calendar_synced only appears on the response when the meeting is
+      // ONGOING (feature 009) — UPCOMING adds keep the old silent
+      // best-effort sync and never set this field. Adding several members
+      // in one submit means checking EVERY response, not just the last one:
+      // any single sync failure must still surface the warning.
+      let anyCalendarSyncFailed = false;
       for (const memberId of idsToAdd) {
         latest = await addMeetingMember(meeting.id, memberId, backendRole);
+        if (latest?.calendar_synced === false) anyCalendarSyncFailed = true;
       }
 
       if (customName) {
@@ -481,7 +495,18 @@ export default function MeetingDetailModal({
       setIsAddMemberOpen(false);
       setSelectedMemberIds([]);
       setCustomMemberInput('');
-      triggerToast(`✓ Đã thêm ${idsToAdd.length + (customName ? 1 : 0)} thành viên tham dự!`);
+      const addedCount = idsToAdd.length + (customName ? 1 : 0);
+      // calendar_synced=false is NOT a failure — the member IS added (DB is
+      // never rolled back for a Calendar hiccup, chốt feature 009), Calendar
+      // just hasn't caught up yet. Still says "đã thêm", adds a caveat.
+      if (anyCalendarSyncFailed) {
+        triggerToast(
+          `✓ Đã thêm ${addedCount} thành viên, nhưng Google Calendar chưa được cập nhật. Thành viên có thể chưa tham gia được cuộc họp ngay.`,
+          'warning'
+        );
+      } else {
+        triggerToast(`✓ Đã thêm ${addedCount} thành viên tham dự!`);
+      }
     } catch (err: any) {
       alert(err?.response?.data?.detail || 'Lỗi khi thêm thành viên');
     } finally {
@@ -1745,8 +1770,12 @@ export default function MeetingDetailModal({
 
       {/* Toast Notification Banner */}
       {toastText && (
-        <div className="fixed top-6 right-6 z-[99] bg-[#0b1c30] text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2 text-xs font-bold border border-slate-700 animate-in fade-in slide-in-from-top-3 duration-200">
-          <Check size={18} className="text-emerald-400" />
+        <div className="fixed top-6 right-6 z-[99] bg-[#0b1c30] text-white px-4 py-3 rounded-2xl shadow-2xl flex items-center gap-2 text-xs font-bold border border-slate-700 animate-in fade-in slide-in-from-top-3 duration-200 max-w-sm">
+          {toastVariant === 'warning' ? (
+            <Info size={18} className="text-amber-400 shrink-0" />
+          ) : (
+            <Check size={18} className="text-emerald-400 shrink-0" />
+          )}
           <span>{toastText}</span>
         </div>
       )}
