@@ -239,6 +239,17 @@ export const bulkDeleteProjects = (ids: number[]) =>
 
 // Project Members
 export const getProjectMembers = (pid: number) => api.get(`/projects/${pid}/members`).then(r => r.data);
+// Union of members across several projects — feature 010, scopes the Meeting
+// form's "Thành viên tham gia" dropdown to whatever's picked in "Dự án liên
+// quan" instead of every Member in the system. No project selected yet
+// (projectIds empty) -> backend falls back to every member reachable via
+// the current Workspace's projects (businessUnit), or every accessible
+// project if businessUnit is falsy/"all" (chốt 2026-09-22 follow-up —
+// never an empty dropdown just because no project is picked yet).
+export const getMembersForProjects = (projectIds: number[], businessUnit?: string) =>
+  api.get('/projects/members', {
+    params: { project_ids: projectIds.join(','), business_unit: businessUnit || undefined },
+  }).then(r => r.data);
 export const addProjectMember = (pid: number, memberId: number, role?: string) =>
   api.post(`/projects/${pid}/members`, { member_id: memberId, role: role || 'Member' }).then(r => r.data);
 export const removeProjectMember = (pid: number, memberId: number) =>
