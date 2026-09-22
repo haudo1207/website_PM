@@ -11,16 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import {
-  getDashboardCalendarEvents,
-  updateTask,
-  CalendarTask,
-  CalendarMeeting,
-  CalendarLeaveBlock,
-  getApiErrorMessage,
-  getMembers,
-  getMe,
-} from '@/lib/api';
+import { getDashboardCalendarEvents, updateTask, CalendarTask, CalendarMeeting, CalendarLeaveBlock, getApiErrorMessage, getLeaders } from '@/lib/api';
 import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
@@ -46,7 +37,6 @@ import {
   addDays,
   EVENT_HEIGHT,
 } from '@/components/calendar/dateUtils';
-import { getRole } from '@/lib/auth';
 
 export default function CalendarPage() {
   const [anchorDate, setAnchorDate] = useState(() => new Date());
@@ -68,28 +58,31 @@ export default function CalendarPage() {
   // on by default so the default view is unchanged from before this filter
   // existed.
   const [filters, setFilters] = useState<Set<EventTypeFilter>>(new Set<EventTypeFilter>(['meeting', 'assigned', 'support', 'leave']));
-  // Client-side only (spec: "Search hoàn toàn là presentation/filter
-  // layer") — filters whatever's already loaded for the current date
-  // range, same as the event-type Filter above. Never triggers a new
-  // /calendar/dashboard-events request; switching date range
-  // still fetches exactly as before.
   const [searchQuery, setSearchQuery] = useState('');
-  // Dashboard Calendar scope: Leaders may view a managed member; Super Admin
-  // may filter by team. These are request params, not presentation filters.
-  const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
-  const [selectedTeam, setSelectedTeam] = useState<string | null>('All');
-  const [availableTeams, setAvailableTeams] = useState<string[]>([]);
-  const [managedMembers, setManagedMembers] = useState<{ id: number; full_name?: string; display_name?: string; team?: string }[]>([]);
+  // Dashboard Calendar scope: Super Admin may filter by Leader's team.
+  const [selectedLeaderMemberId, setSelectedLeaderMemberId] = useState<number | null>(null);
+  const [availableLeaders, setAvailableLeaders] = useState<{ member_id: number; name: string }[]>([]);
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
-  // dnd-kit repositions blocks with a CSS transform, not a DOM move, so the
-  // browser still fires a native click on the same element right after a
-  // real drag-and-drop. Suppress that one synthetic click so finishing a
-  // drag doesn't also pop the detail drawer open.
   const suppressClickRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
   );
+
+  // Load current role and available leaders for Super Admin.
+  useEffect(() => {
+    const role = (typeof window !== 'undefined' ? localStorage.getItem('role') : '') || '';
+    setCurrentUserRole(role);
+    if (role === 'super_admin') {
+      getLeaders().then((res: any[]) => {
+        setAvailableLeaders(
+          (res || [])
+            .filter((l: any) => l.member_id)
+            .map((l: any) => ({ member_id: l.member_id, name: l.name }))
+        );
+      }).catch(() => {});
+    }
+  }, []);
 
   // Day: single day (buildRangeDays(anchor,1) — same engine as 4-day/7-day,
   // just length 1, no new rendering code). 4-day: rolling window from the
@@ -118,39 +111,10 @@ export default function CalendarPage() {
     return formatRangeLabel(days);
   }, [viewMode, anchorDate, days]);
 
-  // Load current role + member_id once, plus the selectable scopes for Leaders/Super Admin.
-  useEffect(() => {
-    const role = getRole() || '';
-    setCurrentUserRole(role);
-    getMe().then((me: any) => {
-      const currentMemberId = me?.member_id ?? null;
-      if (role === 'leader' && currentMemberId) {
-        getMembers({ light: true }).then((res: any[]) => {
-          const list = (res || [])
-            .filter((m: any) => m.leader_member_id === currentMemberId)
-            .map((m: any) => ({
-              id: m.id,
-              full_name: m.full_name,
-              display_name: m.display_name,
-              team: m.team,
-            }));
-          setManagedMembers(list);
-        }).catch(() => {});
-      }
-      if (role === 'super_admin') {
-        getMembers({ light: true }).then((res: any[]) => {
-          const teams = Array.from(new Set((res || []).map((m: any) => m.team).filter(Boolean))).sort();
-          setAvailableTeams(['All', ...teams]);
-        }).catch(() => {});
-      }
-    }).catch(() => {});
-  }, []);
-
   const { data: dashboardData, isFetching, error, refetch } = useQuery({
-    queryKey: ['calendar-dashboard-events', from, to, selectedMemberId, selectedTeam, currentUserRole],
+    queryKey: ['calendar-dashboard-events', from, to, selectedLeaderMemberId, currentUserRole],
     queryFn: () => getDashboardCalendarEvents(from, to, {
-      ...(currentUserRole === 'leader' && selectedMemberId ? { member_id: selectedMemberId } : {}),
-      ...(currentUserRole === 'super_admin' && selectedTeam ? { team: selectedTeam } : {}),
+      ...(currentUserRole === 'super_admin' && selectedLeaderMemberId ? { leader_member_id: selectedLeaderMemberId } : {}),
     }),
     staleTime: 30_000,
   });
@@ -163,9 +127,6 @@ export default function CalendarPage() {
     () => (tasks || []).map(t => (t.id in overrides ? { ...t, scheduled_at: overrides[t.id] } : t)),
     [tasks, overrides]
   );
-  // UI-only filter (spec: "Filter chỉ xử lý ở UI, không thay đổi scope của
-  // API") — applied on top of whatever the server already scoped to this
-  // member, never sent as a request param.
   const roleFilteredTasks = useMemo(
     () => displayTasks.filter(t => filters.has(t.calendar_role)),
     [displayTasks, filters]
@@ -294,7 +255,7 @@ export default function CalendarPage() {
     }
     map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
     return map;
-  }, [viewMode, searchedTasks, searchedMeetings]);
+  }, [viewMode, searchedTasks, searchedMeetings, searchedLeaveBlocks]);
 
   const goToday = () => setAnchorDate(new Date());
   // Day: ±1. 4-day: ±4. 7-day (Tuần): ±7 (a full week — startOfWeekMonday
@@ -433,47 +394,24 @@ export default function CalendarPage() {
         <div className="flex-1 min-h-0 p-3 flex flex-col">
           <SummaryCards stats={summaryStats} />
           <div className="bg-white rounded-2xl border border-[#c2c6d6]/60 shadow-sm overflow-hidden flex-1 min-h-0 flex flex-col">
-            {/* Dashboard Calendar scope selectors — Leader/Super Admin only. */}
-            {(currentUserRole === 'leader' || currentUserRole === 'super_admin') && (
-              <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
-                {currentUserRole === 'leader' && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-semibold text-slate-500">Thành viên</span>
-                    <select
-                      value={selectedMemberId ?? ''}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setSelectedMemberId(val ? Number(val) : null);
-                        setSelectedTeam(null);
-                      }}
-                      className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
-                    >
-                      <option value="">Của tôi</option>
-                      {managedMembers.map(m => (
-                        <option key={m.id} value={m.id}>{m.full_name || m.display_name}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {currentUserRole === 'super_admin' && (
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-[11px] font-semibold text-slate-500">Team</span>
-                    <select
-                      value={selectedTeam ?? 'All'}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setSelectedTeam(val || 'All');
-                        setSelectedMemberId(null);
-                      }}
-                      className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
-                    >
-                      <option value="All">Tất cả</option>
-                      {availableTeams.filter(t => t !== 'All').map(t => (
-                        <option key={t} value={t}>{t}</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
+            {/* Super Admin Team filter — uses canonical Leader list from the
+                same source as Dashboard Overview Leader Cards. */}
+            {currentUserRole === 'super_admin' && availableLeaders.length > 0 && (
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50/50">
+                <span className="text-[11px] font-semibold text-slate-500">Team</span>
+                <select
+                  value={selectedLeaderMemberId ?? ''}
+                  onChange={e => {
+                    const val = e.target.value;
+                    setSelectedLeaderMemberId(val ? Number(val) : null);
+                  }}
+                  className="h-8 text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
+                >
+                  <option value="">Tất cả</option>
+                  {availableLeaders.map(l => (
+                    <option key={l.member_id} value={l.member_id}>{l.name}</option>
+                  ))}
+                </select>
               </div>
             )}
             <CalendarToolbar

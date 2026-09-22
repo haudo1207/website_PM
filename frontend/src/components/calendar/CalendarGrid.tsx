@@ -59,11 +59,11 @@ function DayHeaderCell({ day, isToday }: { day: Date; isToday: boolean }) {
 function LeaveBlockChip({ block }: { block: CalendarLeaveBlock }) {
   return (
     <div
-      className="flex items-center gap-1 px-1.5 py-[2px] rounded text-[10px] leading-[15px] bg-rose-100 text-rose-700 font-semibold mb-1"
-      title={`${block.member_name} — ${block.title}`}
+      className="flex items-center gap-1 px-1.5 py-[2px] rounded text-[10px] leading-[15px] bg-gray-200 text-gray-700 font-semibold mb-1"
+      title={block.title}
     >
-      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-rose-500" />
-      <span className="truncate">{block.member_name || block.title}</span>
+      <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
+      <span className="truncate">{block.title}</span>
     </div>
   );
 }
