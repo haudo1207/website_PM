@@ -17,9 +17,50 @@ import {
   MONTH_WEEKS_COUNT,
   getWeekOfMonth,
   checkTaskInPeriod,
-  CYCLE_TEMPLATE,
+  isTaskDoneInPeriod,
   calculateDaysLate
 } from '@/app/dashboard/constants';
+
+// Real completed-KPI formula — reads the backend-computed kpi_assigned /
+// kpi_support / kpi_final / kpi_base fields that `kpi_engine.py` only
+// populates once a task reaches Done (verbatim copy of
+// MemberDetailModal.tsx's `getTaskKpiForMember`, the source of truth Team
+// Load / Overview's member drill-down uses). Report previously computed its
+// "Điểm KPI" card by gating the STATUS-AGNOSTIC `getKpiGiaoForMember`
+// potential formula (priority_kpi_base × manday_est) on isDone instead —
+// that helper's own file header explicitly says it must NOT be used for HT
+// ("this helper is ONLY for Giao... HT must continue to come from
+// getTaskKpiForMember") — so Report's completed-KPI number could silently
+// diverge from what a Leader sees for the same person in Team Load/Overview.
+const getTaskKpiForMember = (t: any, memberId: any) => {
+  const isDone = t.status === 'Done' || t.status === 'done';
+  if (!isDone) return 0;
+  // Strictly match Backend /api/members KPI requirement: task MUST have an actual end date
+  if (!t.end_date_actual) return 0;
+
+  const isAssigned = t.assigned_id != null && String(t.assigned_id) === String(memberId);
+  const isSupport = t.support_id != null && String(t.support_id) === String(memberId);
+
+  if (isAssigned && isSupport) {
+    if (typeof t.kpi_assigned === 'number' && typeof t.kpi_support === 'number') {
+      return t.kpi_assigned + t.kpi_support;
+    }
+    return t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+  }
+  if (isAssigned) {
+    if (typeof t.kpi_assigned === 'number') return t.kpi_assigned;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_assign != null ? t.kpi_ratio_assign : (t.support_id != null ? 90 : 100);
+    return kpiVal * (ratio / 100);
+  }
+  if (isSupport) {
+    if (typeof t.kpi_support === 'number') return t.kpi_support;
+    const kpiVal = t.kpi_final != null ? t.kpi_final : (t.kpi_base || 0);
+    const ratio = t.kpi_ratio_support != null ? t.kpi_ratio_support : 10;
+    return kpiVal * (ratio / 100);
+  }
+  return 0;
+};
 
 const formatVNDate = (dStr: string) => {
   if (!dStr) return '—';
@@ -230,47 +271,47 @@ export default function ReportTab() {
     return getKpiGiaoForMember(fake, memberId);
   }, [realMemberData]);
 
+  // Completed KPI ("HT") — MUST use the real getTaskKpiForMember formula
+  // (backend kpi_assigned/kpi_support/kpi_final), never getTaskKpiWeighted
+  // (that one is the status-agnostic Giao/potential estimate — see the
+  // getKpiGiaoForMember file header). Using the estimate here was the bug:
+  // it made Report's own "Điểm KPI" diverge from what Team Load/Overview's
+  // member drill-down (MemberDetailModal) shows for the exact same person.
   const getMyTaskKpi = useCallback((t: any) => {
-    const isDone = t.status === 'Done' || t.status === 'done';
-    return isDone ? getTaskKpiWeighted(t) : 0;
-  }, [getTaskKpiWeighted]);
+    return getTaskKpiForMember(t, realMemberData?.id);
+  }, [realMemberData]);
 
   const { chartStats, chartWeeklyProgress, chartMonthlyProgress } = useMemo(() => {
-    let dCount = 0, iCount = 0, oCount = 0, cKpi = 0;
+    let dCount = 0, iCount = 0, oCount = 0;
 
-    const cTasks = rawMyTasks.filter((t: any) => {
-      const isDone = t.status === 'Done' || t.status === 'done';
-      const tDateStr = isDone ? (t.end_date_actual || t.end_date_est || t.created_at) : (t.end_date_est || t.created_at);
-      if (!tDateStr) return true;
-      const d = new Date(tDateStr);
-      if (isNaN(d.getTime())) return true;
-
-      if (selectedYear !== 'all' && typeof selectedYear === 'number' && d.getFullYear() !== selectedYear) return false;
-
-      if (selectedMonth !== 'all' && typeof selectedMonth === 'number') {
-        const cycle = CYCLE_TEMPLATE[selectedMonth];
-        if (cycle) {
-          const yr = (selectedYear !== 'all' && typeof selectedYear === 'number') ? selectedYear : d.getFullYear();
-          const startDt = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
-          const endDt = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
-          if (d < startDt || d > endDt) return false;
-        } else {
-          if ((d.getMonth() + 1) !== selectedMonth) return false;
-        }
-      }
-
-      if (selectedWeek !== 'all' && getWeekOfMonth(d) !== selectedWeek) return false;
-      return true;
-    });
+    // Was a second, hand-rolled period filter independent from
+    // `checkTaskInPeriod` below (different window logic — no OR-fallback,
+    // no overdue-relative-to-period-end rule) — the pie/bar charts here
+    // could disagree with the KPI cards and tables further down the SAME
+    // page for the SAME filter selection. Now shares the one filter used
+    // everywhere else on this page.
+    const cTasks = rawMyTasks.filter((t: any) =>
+      checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)
+    );
 
     cTasks.forEach((t: any) => {
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
       const daysLateNum = calculateDaysLate(t);
       const isOverdue = daysLateNum > 0;
-      if (isDone) { dCount++; cKpi += getMyTaskKpi(t); }
+      if (isDone) { dCount++; }
       else if (!isCancel) { iCount++; if (isOverdue) oCount++; }
     });
+
+    // HT/KPI is summed over the STRICT isTaskDoneInPeriod set (end_date_actual
+    // falls inside the period), not over `cTasks` (lenient planned-window
+    // overlap) — same "count once, into the period it actually finished"
+    // rule MemberDetailModal's localKpi uses, so this can't drift from what
+    // a Leader sees for this same person in Team Load/Overview.
+    const doneInPeriod = rawMyTasks.filter((t: any) =>
+      isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)
+    );
+    const cKpi = doneInPeriod.reduce((acc: number, t: any) => acc + getMyTaskKpi(t), 0);
 
     const targetMonth = selectedMonth !== 'all' ? selectedMonth : (new Date().getMonth() + 1);
     const numWeeks = typeof targetMonth === 'number' && MONTH_WEEKS_COUNT[targetMonth] ? MONTH_WEEKS_COUNT[targetMonth] : 5;
@@ -282,8 +323,12 @@ export default function ReportTab() {
         const d = new Date(t.end_date_est);
         return !isNaN(d.getTime()) && getWeekOfMonth(d) === wNum;
       });
-      const wDone = wTasks.filter((t: any) => t.status === 'Done' || t.status === 'done');
-      const wKpi = wDone.reduce((acc: number, t: any) => acc + getMyTaskKpi(t), 0);
+      const wDoneInPeriod = doneInPeriod.filter((t: any) => {
+        if (!t.end_date_actual) return false;
+        const d = new Date(t.end_date_actual);
+        return !isNaN(d.getTime()) && getWeekOfMonth(d) === wNum;
+      });
+      const wKpi = wDoneInPeriod.reduce((acc: number, t: any) => acc + getMyTaskKpi(t), 0);
       return {
         name: `Tuần ${wNum}`,
         kpi: Math.round(wKpi),
@@ -296,7 +341,7 @@ export default function ReportTab() {
       chartWeeklyProgress: wProgress,
       chartMonthlyProgress: [{ name: selectedMonth !== 'all' ? `Tháng ${selectedMonth}` : 'Tất cả', kpi: Math.round(cKpi), tasks: cTasks.length }]
     };
-  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, getMyTaskKpi]);
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, getMyTaskKpi]);
 
   // Derived state based on filters
   const {
@@ -320,10 +365,14 @@ export default function ReportTab() {
     const now = new Date();
 
     const filteredTasks = rawMyTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
+    // Strict "count once, into the period it actually finished" set for
+    // HT/KPI sums — see the chartStats useMemo above for the full rationale.
+    const doneInPeriodTasks = rawMyTasks.filter(t => isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
+    doneInPeriodTasks.forEach((t: any) => { dynamicKpi += getMyTaskKpi(t); });
 
     filteredTasks.forEach((t: any) => {
       mandayTotal += getMyTaskManday(t);
-      
+
       const isDone = t.status === 'Done' || t.status === 'done';
       const isCancel = t.status === 'Cancel' || t.status === 'cancel';
       const daysLateNum = calculateDaysLate(t);
@@ -332,7 +381,6 @@ export default function ReportTab() {
 
       if (isDone) {
         doneCount++;
-        dynamicKpi += getMyTaskKpi(t);
         acts.push({ action: `Hoàn thành: ${t.name}`, time: 'Đã hoàn thành', type: 'done' });
       } else if (isCancel) {
         acts.push({ action: `Đã hủy: ${t.name}`, time: 'Hủy tác vụ', type: 'cancel' });
@@ -375,9 +423,20 @@ export default function ReportTab() {
       p.kpiTarget += getTaskKpiWeighted(t);
       if (t.status === 'Done' || t.status === 'done') {
         p.done++;
-        p.kpi += getMyTaskKpi(t);
         p.mandayActual += getMyTaskManday(t);
       }
+    });
+    // HT/KPI per project — summed over the strict `doneInPeriodTasks` set
+    // above, not the lenient Done rows in `filteredTasks`, for the same
+    // reason as `dynamicKpi`. Creates the project entry too, in case none
+    // of that project's other tasks fell into this period's lenient window.
+    doneInPeriodTasks.forEach((t: any) => {
+      const pName = t.projectName || 'Không có';
+      const cName = t.customerName || t.customer_name || 'Không có';
+      if (!myProjectsMap.has(pName)) {
+        myProjectsMap.set(pName, { id: t.project_id, name: pName, customerName: cName, tasks: 0, done: 0, kpi: 0, kpiTarget: 0, mandayActual: 0, mandayPlanned: 0 });
+      }
+      myProjectsMap.get(pName).kpi += getMyTaskKpi(t);
     });
     const topProjects = Array.from(myProjectsMap.values())
       .sort((a, b) => b.kpi - a.kpi)
@@ -398,8 +457,21 @@ export default function ReportTab() {
     const kpiTargetTotal = Math.round(topProjects.reduce((s, p) => s + p.kpiTarget, 0) * 10) / 10;
     const avgProgress = topProjects.length ? Math.round(topProjects.reduce((s, p) => s + p.progress, 0) / topProjects.length) : 0;
 
-    const finalManday = typeof realMemberData?.manday_total === 'number' ? Math.round(realMemberData.manday_total * 10) / 10 : Math.round(mandayTotal * 10) / 10;
-    const finalKpi = typeof realMemberData?.kpi_total === 'number' ? Math.round(realMemberData.kpi_total * 10) / 10 : Math.round(dynamicKpi * 10) / 10;
+    // Was: fall back to `realMemberData.kpi_total`/`manday_total` from
+    // `/api/members` whenever present. Dropped entirely — verified live
+    // against the dev DB that this is unsafe: backend's SQL there is a
+    // bare `SUM(Task.kpi_assigned)` / `SUM(Task.kpi_support)` with NO
+    // fallback to `kpi_base` (unlike `getTaskKpiForMember` above, and
+    // unlike MemberDetailModal, which NEVER uses this fallback — it always
+    // recomputes locally). Confirmed member 306's real Done tasks all have
+    // kpi_assigned/kpi_support/kpi_final = NULL (kpi_base populated
+    // instead), so that endpoint's kpi_total resolves to 0 for them while
+    // the correct, kpi_base-aware total is nonzero — i.e. the fallback
+    // could silently show "0" on the headline card even with real
+    // completed work. Always using the local recompute matches
+    // MemberDetailModal exactly and removes this whole failure mode.
+    const finalManday = Math.round(mandayTotal * 10) / 10;
+    const finalKpi = Math.round(dynamicKpi * 10) / 10;
 
     const stats = {
       total: filteredTasks.length,
@@ -434,7 +506,7 @@ export default function ReportTab() {
       monthlyProgress: mProg,
       topRealProjects: topProjects
     };
-  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, realMemberData, getMyTaskManday, getMyTaskKpi, getTaskKpiWeighted]);
+  }, [rawMyTasks, selectedYear, selectedMonth, selectedWeek, activeQuickFilter, realMemberData, getMyTaskManday, getMyTaskKpi, getTaskKpiWeighted]);
 
   const reportKpiCards = [
     { label: 'Tasks Được Giao', value: realTaskStats.total, icon: 'tasks',     border: 'border-l-[#0058be]', text: 'text-[#0058be]', trend: selectedWeek === 'all' ? 'Trong tháng' : 'Trong tuần' },

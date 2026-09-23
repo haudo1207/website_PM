@@ -1126,24 +1126,56 @@ async function autoScrapeAIFiles() {
         textContent = lastCodeBlock.innerText || lastCodeBlock.textContent || "";
 
         const className = lastCodeBlock.className || "";
-        if (className.includes("html") || className.includes("xml")) {
-          finalName = "ai_output.html";
-          finalMime = "text/html";
-        } else if (className.includes("javascript") || className.includes("js")) {
-          finalName = "ai_output.js";
-          finalMime = "application/javascript";
-        } else if (className.includes("python") || className.includes("py")) {
-          finalName = "ai_output.py";
-          finalMime = "text/x-python";
-        } else if (className.includes("css")) {
-          finalName = "ai_output.css";
-          finalMime = "text/css";
-        } else if (className.includes("json")) {
-          finalName = "ai_output.json";
-          finalMime = "application/json";
-        } else if (className.includes("csv")) {
-          finalName = "ai_output.csv";
-          finalMime = "text/csv";
+        // Syntax highlighters (highlight.js, Prism, etc.) tag the actual
+        // language as a `language-xxx`/`lang-xxx` class token — pull that
+        // out explicitly instead of loose substring checks on the WHOLE
+        // class string. The old `className.includes("js")` matched
+        // highlight.js's own near-universal marker class "hljs" (which
+        // CONTAINS "js"), so every Python/CSS/JSON/etc. block highlighted
+        // via highlight.js got misclassified and saved as ai_output.js —
+        // same class of bug as the markdown auto-scrape guard fixed above,
+        // just here on Claude/Gemini too, not only ChatGPT.
+        const langMatch = className.match(/(?:^|\s)(?:language|lang)-([a-z0-9+#]+)/i);
+        const lang = (langMatch ? langMatch[1] : "").toLowerCase();
+        const LANG_MAP = {
+          html: { ext: "html", mime: "text/html" }, xml: { ext: "html", mime: "text/html" },
+          js: { ext: "js", mime: "application/javascript" }, javascript: { ext: "js", mime: "application/javascript" },
+          jsx: { ext: "jsx", mime: "application/javascript" },
+          ts: { ext: "ts", mime: "application/typescript" }, typescript: { ext: "ts", mime: "application/typescript" },
+          tsx: { ext: "tsx", mime: "application/typescript" },
+          py: { ext: "py", mime: "text/x-python" }, python: { ext: "py", mime: "text/x-python" },
+          css: { ext: "css", mime: "text/css" },
+          json: { ext: "json", mime: "application/json" },
+          csv: { ext: "csv", mime: "text/csv" },
+        };
+        const hit = LANG_MAP[lang];
+        if (hit) {
+          finalName = `ai_output.${hit.ext}`;
+          finalMime = hit.mime;
+        } else if (!lang) {
+          // No explicit `language-xxx` token found at all (older/plainer
+          // highlighters) — fall back to the previous loose matching, but
+          // only for tokens specific enough not to false-positive on an
+          // unrelated highlighter marker class.
+          if (className.includes("html") || className.includes("xml")) {
+            finalName = "ai_output.html";
+            finalMime = "text/html";
+          } else if (className.includes("javascript")) {
+            finalName = "ai_output.js";
+            finalMime = "application/javascript";
+          } else if (className.includes("python")) {
+            finalName = "ai_output.py";
+            finalMime = "text/x-python";
+          } else if (className.includes("css")) {
+            finalName = "ai_output.css";
+            finalMime = "text/css";
+          } else if (className.includes("json")) {
+            finalName = "ai_output.json";
+            finalMime = "application/json";
+          } else if (className.includes("csv")) {
+            finalName = "ai_output.csv";
+            finalMime = "text/csv";
+          }
         }
       }
 
@@ -1151,16 +1183,22 @@ async function autoScrapeAIFiles() {
         textContent = lastAIMessage.innerText || lastAIMessage.textContent || "";
       }
 
-      let isMarkdownBlock = false;
-      if (codeBlocks.length > 0) {
-        const lastClass = (codeBlocks[codeBlocks.length - 1].className || "").toLowerCase();
-        if (lastClass.includes("markdown") || lastClass.includes("md")) {
-          isMarkdownBlock = true;
-        }
-      }
-
-      if (isMarkdownBlock || textContent.includes("# WIP:") || textContent.includes("MỤC ĐÍCH: Lưu trạng thái")) {
-        console.log("[Markee AutoScrape] 🚫 Đã chặn: Bỏ qua tạo file do nội dung là Markdown hoặc chứa text WIP.");
+      // Was ALSO blocking on `lastClass.includes("markdown") ||
+      // lastClass.includes("md")` — that class-name check is what silently
+      // ate every genuine Markdown deliverable ChatGPT produced (asked to
+      // "get code markdown", the auto-scrape found the code block, then
+      // discarded it right here) instead of the WIP-note text it was meant
+      // to filter out. `.includes("md")` is also a dangerously broad
+      // substring match on its own — it matches any class containing "md"
+      // ANYWHERE (e.g. a coincidental "md5"/"amd64"/Tailwind `md:` utility
+      // fragment in a hashed class name), not just an intentional
+      // "markdown"/"language-markdown" class. The two content-based checks
+      // below already catch the actual WIP-note case by what the text SAYS
+      // (its own literal markers), so the class-based check was redundant
+      // for that case and over-broad for every other one — dropping it
+      // only removes the over-blocking, the WIP guard itself is unchanged.
+      if (textContent.includes("# WIP:") || textContent.includes("MỤC ĐÍCH: Lưu trạng thái")) {
+        console.log("[Markee AutoScrape] 🚫 Đã chặn: Bỏ qua tạo file do nội dung chứa text WIP.");
         textContent = "";
       }
 

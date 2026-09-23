@@ -599,6 +599,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.action === "GET_FAVORITE_PROJECT_IDS") {
+    // Feeds the ☆/★ star next to each row in openSingleSelectModal's "📁
+    // Tất cả" list (the star icon shown for every item, not just the
+    // separate "⭐ Ưu thích" filtered tab, which already works via
+    // GET_FAVORITE_PROJECTS below) — had no handler at all, so every item
+    // in that list always rendered as un-favorited (☆) regardless of the
+    // real stored state. Same storage key TOGGLE_FAVORITE_PROJECT/
+    // GET_FAVORITE_PROJECTS already use, just returned as bare ids.
+    chrome.storage.local.get(["markee_favorite_project_ids"], (stored) => {
+      sendResponse({ favoriteProjectIds: (stored.markee_favorite_project_ids || []).map(Number) });
+    });
+    return true;
+  }
+
   if (message.action === "GET_CUSTOMERS") {
     // Was previously not wired up at all (no handler existed for this
     // action), so every "Khách hàng" dropdown fed by it could never
@@ -766,6 +780,43 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       } catch (err) {
         console.log("🔴 [ERROR] GET_PROJECT_FEATURES:", err.message);
         sendResponse({ features: [] });
+      }
+    })();
+    return true;
+  }
+
+  if (message.action === "GET_SUMMARIES") {
+    // "Kho Tri Thức" (Knowledge base) list in the Download/Pull flow — no
+    // handler existed for this action at all, so the list was permanently
+    // empty (chrome.runtime.sendMessage silently resolves with `undefined`
+    // when nothing responds; ui.js's own fallback then rendered "no
+    // summaries" every time, not an error). WIP/Tóm tắt content saved via
+    // SAVE_SCRAPED_MARKDOWN's isWipMode branch is written to a project's
+    // Feature Logs (POST /api/projects/{id}/features/{fid}/logs), so this
+    // reads it back from the matching list endpoint — GET
+    // /api/projects/{id}/feature-logs (all logs for the whole project,
+    // not scoped to one Feature), which is the real symmetric read-side of
+    // that same write path. Prefers each log's own AI-generated
+    // `ai_summary` (backend auto-summarizes every new WIP log as a
+    // background task) over the raw pasted `content` when it's ready —
+    // ui.js's own click handler already falls back through
+    // `s.content || s.markdown_content || ...` if this ever comes back
+    // empty for an older/not-yet-summarized log.
+    (async () => {
+      const projectId = message.projectId;
+      if (!projectId) return sendResponse({ summaries: [] });
+      try {
+        const r = await apiFetch(`/api/projects/${projectId}/feature-logs`);
+        const logs = await r.json();
+        const summaries = (Array.isArray(logs) ? logs : []).map((l) => ({
+          id: l.id,
+          title: l.title || "Không tiêu đề",
+          content: l.ai_summary || l.content || "",
+        }));
+        sendResponse({ summaries });
+      } catch (err) {
+        console.log("🔴 [ERROR] GET_SUMMARIES:", err.message);
+        sendResponse({ summaries: [] });
       }
     })();
     return true;
