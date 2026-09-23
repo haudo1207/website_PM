@@ -457,22 +457,21 @@ export default function ReportTab() {
     const kpiTargetTotal = Math.round(topProjects.reduce((s, p) => s + p.kpiTarget, 0) * 10) / 10;
     const avgProgress = topProjects.length ? Math.round(topProjects.reduce((s, p) => s + p.progress, 0) / topProjects.length) : 0;
 
-    // `realMemberData.kpi_total`/`manday_total` come from `/api/members`,
-    // which `fetchReportData` above calls with `month`/`year` params (or
-    // neither, for true all-time) — backend/app/routers/members.py sums
-    // them with the exact same CYCLE_TEMPLATE month window and Done+
-    // end_date_actual gate as `isTaskDoneInPeriod`, so they're a valid,
-    // authoritative stand-in for the month/year/all-time granularities.
-    // But that endpoint has no concept of WEEK — it was used unconditionally
-    // regardless of filter, so whenever a week-level filter was active
-    // (selectedWeek, or a "Tuần…" quick filter — true by default on page
-    // load), the headline "Điểm KPI"/"Manday" cards silently showed the
-    // whole month's total instead of the selected week's, never matching
-    // what a Leader sees for the same person/week in Team Load/Overview's
-    // member drill-down.
-    const weekFilterActive = selectedWeek !== 'all' || !!(activeQuickFilter && activeQuickFilter.startsWith('Tuần'));
-    const finalManday = !weekFilterActive && typeof realMemberData?.manday_total === 'number' ? Math.round(realMemberData.manday_total * 10) / 10 : Math.round(mandayTotal * 10) / 10;
-    const finalKpi = !weekFilterActive && typeof realMemberData?.kpi_total === 'number' ? Math.round(realMemberData.kpi_total * 10) / 10 : Math.round(dynamicKpi * 10) / 10;
+    // Was: fall back to `realMemberData.kpi_total`/`manday_total` from
+    // `/api/members` whenever present. Dropped entirely — verified live
+    // against the dev DB that this is unsafe: backend's SQL there is a
+    // bare `SUM(Task.kpi_assigned)` / `SUM(Task.kpi_support)` with NO
+    // fallback to `kpi_base` (unlike `getTaskKpiForMember` above, and
+    // unlike MemberDetailModal, which NEVER uses this fallback — it always
+    // recomputes locally). Confirmed member 306's real Done tasks all have
+    // kpi_assigned/kpi_support/kpi_final = NULL (kpi_base populated
+    // instead), so that endpoint's kpi_total resolves to 0 for them while
+    // the correct, kpi_base-aware total is nonzero — i.e. the fallback
+    // could silently show "0" on the headline card even with real
+    // completed work. Always using the local recompute matches
+    // MemberDetailModal exactly and removes this whole failure mode.
+    const finalManday = Math.round(mandayTotal * 10) / 10;
+    const finalKpi = Math.round(dynamicKpi * 10) / 10;
 
     const stats = {
       total: filteredTasks.length,
