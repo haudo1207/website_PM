@@ -10,6 +10,7 @@ import {
   getProjectFeatureLogs, createProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
   uploadFeatureLogAttachment, createProjectShareLink,
   getProjectKnowledgeItems, createProjectKnowledgeItem, updateProjectKnowledgeItem, deleteProjectKnowledgeItem,
+  getProjectAiSessions, getAiSessionAttachmentBlob,
 } from '@/lib/api';
 import WipLogDetailModal from './WipLogDetailModal';
 import EditWipLogModal from './EditWipLogModal';
@@ -63,6 +64,29 @@ export interface FeatureLog {
   attached_files: AttachedFile[];
   ai_summary?: string | null;
   ai_tasks?: AiTask[];
+}
+
+export interface AiSessionAttachment {
+  id: number;
+  file_name: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+}
+
+// "Nhật ký hoạt động" — one row per message AUTO_LOG'd by the extension
+// while on ChatGPT/Claude/Gemini with this project selected. Separate from
+// FeatureLog (explicit "Push Tóm tắt" saves) — this is the PASSIVE capture,
+// mirrors markee-dashboard's ProjectDetailContent.tsx timeline entries.
+export interface AiSessionEntry {
+  id: number;
+  ai_tool: string;
+  project_id: number | null;
+  task_type: string | null;
+  prompt_content: string | null;
+  tokens_used: number | null;
+  author: string | null;
+  created_at: string | null;
+  attachments: AiSessionAttachment[];
 }
 
 interface KnowledgeItem {
@@ -130,7 +154,7 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
   // "Lịch sử dự án" (WIP timeline) vs "Knowledge Hub" (curated notes) — mirrors
   // markee-dashboard's two-tab "Lịch sử làm việc" modal, kept as a sub-tab
   // inside pm-new's existing Prototype tab rather than a separate overlay.
-  const [mainSubTab, setMainSubTab] = useState<'timeline' | 'knowledge'>('timeline');
+  const [mainSubTab, setMainSubTab] = useState<'timeline' | 'knowledge' | 'activity'>('timeline');
 
   // "Thành viên hoạt động" — distinct WIP-log authors on this project, purely
   // derived client-side from `logs` (no dedicated backend aggregation exists,
@@ -151,6 +175,13 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
   const [editKnowledgeTitle, setEditKnowledgeTitle] = useState('');
   const [editKnowledgeContent, setEditKnowledgeContent] = useState('');
   const [expandedKnowledgeIds, setExpandedKnowledgeIds] = useState<Set<number>>(new Set());
+
+  // "Nhật ký hoạt động" state — passive AUTO_LOG rows from the extension.
+  const [activitySessions, setActivitySessions] = useState<AiSessionEntry[]>([]);
+  const [activityLoaded, setActivityLoaded] = useState(false);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityToolFilter, setActivityToolFilter] = useState<string | null>(null);
+  const [expandedActivityIds, setExpandedActivityIds] = useState<Set<number>>(new Set());
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -197,6 +228,46 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
   useEffect(() => {
     if (mainSubTab === 'knowledge' && !knowledgeLoaded) loadKnowledge();
   }, [mainSubTab, knowledgeLoaded, loadKnowledge]);
+
+  const loadActivity = useCallback(async () => {
+    setActivityLoading(true);
+    try {
+      const sessions = await getProjectAiSessions(projectId);
+      setActivitySessions(sessions);
+      setActivityLoaded(true);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Không tải được Nhật ký hoạt động');
+    } finally {
+      setActivityLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (mainSubTab === 'activity' && !activityLoaded) loadActivity();
+  }, [mainSubTab, activityLoaded, loadActivity]);
+
+  function toggleExpandActivity(id: number) {
+    setExpandedActivityIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleDownloadActivityAttachment(sessionId: number, attachmentId: number, fileName: string) {
+    try {
+      const blob = await getAiSessionAttachmentBlob(sessionId, attachmentId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Lỗi khi tải file đính kèm');
+    }
+  }
 
   async function handleCreateFeature(e: React.FormEvent) {
     e.preventDefault();
@@ -504,6 +575,14 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
             }`}
           >
             <BookOpen className="w-3.5 h-3.5" /> Knowledge Hub ({knowledgeItems.length})
+          </button>
+          <button
+            onClick={() => setMainSubTab('activity')}
+            className={`flex items-center gap-1.5 px-3 py-2 text-[12.5px] font-bold rounded-t-lg border-b-2 transition-colors ${
+              mainSubTab === 'activity' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
+            }`}
+          >
+            <Brain className="w-3.5 h-3.5" /> Nhật ký hoạt động {activityLoaded ? `(${activitySessions.length})` : ''}
           </button>
         </div>
 
@@ -814,7 +893,7 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
               )}
             </div>
           </div>
-          ) : (
+          ) : mainSubTab === 'knowledge' ? (
           <div className="p-4">
             <div className="flex items-center justify-between border-b border-slate-200 mb-4 pb-2">
               <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#0058be]">
@@ -946,6 +1025,109 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
                 {knowledgeItems.length === 0 && (
                   <div className="text-center py-10 text-[12.5px] text-slate-400">
                     Chưa có mục Knowledge Hub nào — bấm "Thêm mục" để lưu lại tri thức đầu tiên.
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          ) : (
+          <div className="p-4">
+            <div className="flex items-center justify-between border-b border-slate-200 mb-4 pb-2">
+              <span className="flex items-center gap-1.5 text-[12px] font-semibold text-[#0058be]">
+                <Brain className="w-3.5 h-3.5" /> Nhật ký hoạt động
+              </span>
+              <div className="flex items-center gap-1">
+                {[null, 'chatgpt', 'claude', 'gemini'].map((tool) => (
+                  <button
+                    key={tool ?? 'all'}
+                    onClick={() => setActivityToolFilter(tool)}
+                    className={`text-[11px] font-semibold px-2.5 py-1 rounded-full border transition-colors ${
+                      activityToolFilter === tool
+                        ? 'bg-[#0058be] text-white border-[#0058be]'
+                        : 'text-slate-500 border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    {tool === null ? 'Tất cả' : tool === 'chatgpt' ? 'ChatGPT' : tool === 'claude' ? 'Claude' : 'Gemini'}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-[11.5px] text-slate-400 mb-3">
+              Mỗi dòng là một tin nhắn được extension "KPI Prototype" tự động ghi lại khi dự án này đang được chọn trên ChatGPT/Claude/Gemini.
+            </p>
+
+            {activityLoading ? (
+              <div className="flex items-center justify-center py-10 text-slate-400 gap-2 text-[12.5px]">
+                <Loader2 className="w-4 h-4 animate-spin" /> Đang tải Nhật ký hoạt động...
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activitySessions
+                  .filter((s) => !activityToolFilter || s.ai_tool === activityToolFilter)
+                  .map((s) => {
+                    const authorName = s.author || 'Ẩn danh';
+                    const content = s.prompt_content || '';
+                    const isLong = content.length > CONTENT_TRUNCATE_LENGTH;
+                    const isExpanded = expandedActivityIds.has(s.id);
+                    const shown = isLong && !isExpanded ? content.slice(0, CONTENT_TRUNCATE_LENGTH).trimEnd() + '…' : content;
+                    return (
+                      <div key={s.id} className="border border-slate-200 rounded-lg p-3.5 hover:border-slate-300 transition-colors">
+                        <div className="flex items-start justify-between gap-3 mb-1.5">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
+                              style={{ backgroundColor: colorFor(authorName) }}
+                            >
+                              {initialsFor(authorName)}
+                            </span>
+                            <div className="min-w-0">
+                              <div className="text-[12.5px] font-semibold text-slate-700 truncate">{authorName}</div>
+                              <div className="text-[11px] text-slate-400">{formatDate(s.created_at)}</div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[10.5px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full bg-[#0058be]/10 text-[#0058be]">
+                              {s.ai_tool}
+                            </span>
+                            {!!s.tokens_used && (
+                              <span className="text-[10.5px] text-slate-400">{s.tokens_used} tokens</span>
+                            )}
+                          </div>
+                        </div>
+                        {s.task_type && (
+                          <div className="text-[11px] text-slate-400 mb-1">{s.task_type}</div>
+                        )}
+                        <p className="text-[12.5px] text-slate-600 leading-relaxed whitespace-pre-wrap">{shown}</p>
+                        {isLong && (
+                          <button
+                            onClick={() => toggleExpandActivity(s.id)}
+                            className="mt-1 text-[11.5px] font-semibold text-[#0058be] hover:underline"
+                          >
+                            {isExpanded ? 'Thu gọn ↑' : 'Xem thêm ↓'}
+                          </button>
+                        )}
+                        {s.attachments.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {s.attachments.map((file) => (
+                              <button
+                                key={file.id}
+                                onClick={() => handleDownloadActivityAttachment(s.id, file.id, file.file_name)}
+                                className="flex items-center gap-1 text-[11px] text-slate-500 border border-slate-200 rounded-full px-2.5 py-1 hover:border-[#0058be] hover:text-[#0058be] transition-colors"
+                              >
+                                <Paperclip className="w-3 h-3" />
+                                <span className="max-w-[140px] truncate">{file.file_name}</span>
+                                <span className="text-slate-400 shrink-0">{formatBytes(file.size_bytes)}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                {activitySessions.filter((s) => !activityToolFilter || s.ai_tool === activityToolFilter).length === 0 && (
+                  <div className="text-center py-10 text-[12.5px] text-slate-400">
+                    Chưa có hoạt động nào được ghi lại cho dự án này — cài extension "KPI Prototype" và chọn dự án này khi chat với ChatGPT/Claude/Gemini.
                   </div>
                 )}
               </div>

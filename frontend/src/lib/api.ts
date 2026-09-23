@@ -797,6 +797,16 @@ export const updateProjectKnowledgeItem = (projectId: number, itemId: number, bo
 export const deleteProjectKnowledgeItem = (projectId: number, itemId: number) =>
   api.delete(`/projects/${projectId}/knowledge-items/${itemId}`).then(r => r.data);
 
+// "Nhật ký hoạt động" (Activity Log) — passive AUTO_LOG rows from the KPI
+// Prototype extension (one per message sent to ChatGPT/Claude/Gemini while
+// this project was selected), written by the extension's own background.js
+// (POST /api/ai-sessions) but had no GET route at all until now — see
+// backend/app/routers/ai_sessions.py.
+export const getProjectAiSessions = (projectId: number, aiTool?: string) =>
+  api.get(`/projects/${projectId}/ai-sessions`, { params: aiTool ? { ai_tool: aiTool } : {} }).then(r => r.data);
+export const getAiSessionAttachmentBlob = (sessionId: number, attachmentId: number) =>
+  api.get(`/ai-sessions/${sessionId}/attachments/${attachmentId}`, { responseType: 'blob' }).then(r => r.data as Blob);
+
 export const uploadFeatureLogAttachment = (projectId: number, logId: number, file: File) =>
   new Promise<any>((resolve, reject) => {
     const reader = new FileReader();

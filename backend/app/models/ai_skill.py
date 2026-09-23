@@ -92,6 +92,7 @@ class AiSession(Base):
         "AiSessionAttachment", cascade="all, delete-orphan", lazy="select",
         order_by="AiSessionAttachment.id.asc()",
     )
+    author = relationship("Member", foreign_keys=[author_id], lazy="select")
 
 
 class AiSessionAttachment(Base):
