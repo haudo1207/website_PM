@@ -1223,6 +1223,20 @@ def _aggregate_team_comparison(
     assigned_giao_ratio = sql_func.coalesce(Task.kpi_ratio_assign, case((Task.support_id.isnot(None), 90), else_=100))
     support_giao_ratio = sql_func.coalesce(Task.kpi_ratio_support, 10)
 
+    # Fallback for kpi_assigned/kpi_support: kpi_engine.py's `recalculate_task`
+    # only populates these two columns once the task's PARENT Task Group is
+    # ALSO marked Done (they stay NULL — along with kpi_final — whenever a
+    # task is individually Done but its group hasn't closed yet, even though
+    # kpi_base, the pre-multiplier estimate, is already set). Every "Total
+    # KPI" figure below used to sum the raw columns with no fallback, so a
+    # Member could show 0 KPI here while the frontend's Member Detail
+    # drill-down (which has always fallen back to kpi_base) showed their
+    # real, nonzero total for the exact same period — confirmed live against
+    # the dev DB, where 100% of current Done tasks are in this NULL state.
+    kpi_fallback_base = sql_func.coalesce(Task.kpi_final, Task.kpi_base, 0)
+    kpi_assigned_effective = sql_func.coalesce(Task.kpi_assigned, kpi_fallback_base * assigned_giao_ratio / 100.0)
+    kpi_support_effective = sql_func.coalesce(Task.kpi_support, kpi_fallback_base * support_giao_ratio / 100.0)
+
     member_rows = (
         db.query(
             Task.assigned_id.label("member_id"),
@@ -1231,7 +1245,7 @@ def _aggregate_team_comparison(
             sql_func.sum(overdue_expr).label("assigned_overdue"),
             sql_func.sum(Task.manday_est).label("assigned_manday_est"),
             sql_func.sum(Task.manday_actual).label("assigned_manday_actual"),
-            sql_func.sum(Task.kpi_assigned).label("assigned_kpi"),
+            sql_func.sum(kpi_assigned_effective).label("assigned_kpi"),
         )
         .filter(Task.assigned_id.in_(team_member_ids))
         .group_by(Task.assigned_id)
@@ -1248,7 +1262,7 @@ def _aggregate_team_comparison(
             sql_func.sum(overdue_expr).label("support_overdue"),
             sql_func.sum(Task.manday_est).label("support_manday_est"),
             sql_func.sum(Task.manday_actual).label("support_manday_actual"),
-            sql_func.sum(Task.kpi_support).label("support_kpi"),
+            sql_func.sum(kpi_support_effective).label("support_kpi"),
         )
         # Exclude self-supported tasks from the "support" rollup so the same
         # Task isn't counted twice for the same Member (one as assigned, one as
@@ -1322,7 +1336,7 @@ def _aggregate_team_comparison(
     assigned_period_kpi = (
         db.query(
             Task.assigned_id.label("member_id"),
-            sql_func.sum(Task.kpi_assigned).label("period_kpi"),
+            sql_func.sum(kpi_assigned_effective).label("period_kpi"),
         )
         .filter(Task.assigned_id.in_(team_member_ids), *kpi_period_filter)
         .group_by(Task.assigned_id)
@@ -1331,7 +1345,7 @@ def _aggregate_team_comparison(
     support_period_kpi = (
         db.query(
             Task.support_id.label("member_id"),
-            sql_func.sum(Task.kpi_support).label("period_kpi"),
+            sql_func.sum(kpi_support_effective).label("period_kpi"),
         )
         .filter(
             Task.support_id.in_(team_member_ids),
@@ -1465,7 +1479,7 @@ def _aggregate_team_comparison(
                 sql_func.sum(overdue_expr).label("overdue"),
                 sql_func.sum(Task.manday_est).label("md_est"),
                 sql_func.sum(Task.manday_actual).label("md_actual"),
-                sql_func.sum(Task.kpi_assigned + Task.kpi_support).label("kpi"),
+                sql_func.sum(kpi_assigned_effective + kpi_support_effective).label("kpi"),
             )
             .select_from(Task)
             .join(TaskGroup, Task.task_group_id == TaskGroup.id)

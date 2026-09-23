@@ -237,9 +237,21 @@ def list_members(
     else:
         # Subquery to calculate KPI from Tasks for each member
         # Using UNION ALL to combine assigned and support portions of the task
+        # kpi_engine.py's `recalculate_task` only populates kpi_assigned /
+        # kpi_support (and kpi_final) once the task's PARENT Task Group is
+        # ALSO marked Done — a task can be individually Done with real work
+        # completed while its group is still open, leaving kpi_assigned /
+        # kpi_support NULL even though kpi_base (the pre-multiplier
+        # estimate) is already set. `Task.kpi_assigned.label('kpi_final')`
+        # used to be summed with no fallback, so kpi_total could read 0 here
+        # (and kpi_avg/kpi_bonus derived from it below along with it) while
+        # the frontend's Member Detail drill-down — which has always fallen
+        # back to kpi_base — showed the Member's real, nonzero total for the
+        # same period. Falls back to the same kpi_base × ratio estimate that
+        # 'kpi_base' below already computes, mirroring `getTaskKpiForMember`.
         q_assigned = db.query(
             Task.assigned_id.label('member_id'),
-            Task.kpi_assigned.label('kpi_final'),
+            func.coalesce(Task.kpi_assigned, Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_final'),
             func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
             func.coalesce(Task.manday_est, 0.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
@@ -252,7 +264,7 @@ def list_members(
 
         q_support = db.query(
             Task.support_id.label('member_id'),
-            Task.kpi_support.label('kpi_final'),
+            func.coalesce(Task.kpi_support, Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_final'),
             func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
             func.coalesce(Task.manday_est, 0.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
@@ -471,9 +483,13 @@ def get_kpi_summary(
     if not x_sync_token or x_sync_token != expected_token:
         raise HTTPException(status_code=401, detail="Unauthorized sync token")
 
+    # Same kpi_base fallback as list_members above — kpi_assigned/kpi_support
+    # stay NULL until the task's parent Task Group also closes, which would
+    # otherwise silently zero out kpi_total (and the kpi_bonus synced to the
+    # external recruitment system from it) for real, completed work.
     q_assigned = db.query(
         Task.assigned_id.label('member_id'),
-        Task.kpi_assigned.label('kpi_final'),
+        func.coalesce(Task.kpi_assigned, Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_final'),
         (Task.manday_actual * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
         (Task.manday_est * Task.kpi_ratio_assign / 100.0).label('manday_est'),
         (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
@@ -486,7 +502,7 @@ def get_kpi_summary(
 
     q_support = db.query(
         Task.support_id.label('member_id'),
-        Task.kpi_support.label('kpi_final'),
+        func.coalesce(Task.kpi_support, Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_final'),
         (Task.manday_actual * Task.kpi_ratio_support / 100.0).label('manday_actual'),
         (Task.manday_est * Task.kpi_ratio_support / 100.0).label('manday_est'),
         (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
