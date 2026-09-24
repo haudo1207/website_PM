@@ -67,9 +67,10 @@ function MonthItemChip({
     return (
       <div
         className="flex items-center gap-1 px-1 py-[1px] rounded text-[10px] leading-[15px] bg-gray-200"
-        title={block.title}
+        title={`${block.title}${block.start_time && block.end_time ? ` — ${block.start_time} – ${block.end_time}` : ''}`}
       >
         <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
+        {item.timeLabel && <span className="text-gray-500 shrink-0">{item.timeLabel}</span>}
         <span className="truncate font-medium text-gray-700">{block.title}</span>
       </div>
     );

@@ -555,6 +555,22 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_user_id ON telegram_connections (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_telegram_connections_token ON telegram_connections (token)"))
 
+        # ── Leave Request: hourly OFF ("OFF theo khung giờ") ──
+        # Nullable HH:MM columns — NULL = full-day leave, so every historical
+        # row keeps its exact current semantics. man_day widens INTEGER →
+        # NUMERIC(3,1) to store 0.5 (hourly); whole numbers convert losslessly
+        # and existing rows read back as their original values. Both statements
+        # are idempotent (IF NOT EXISTS / re-cast to the same type is a no-op).
+        conn.execute(text(
+            "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS start_time VARCHAR(5)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE leave_requests ADD COLUMN IF NOT EXISTS end_time VARCHAR(5)"
+        ))
+        conn.execute(text(
+            "ALTER TABLE leave_requests ALTER COLUMN man_day TYPE NUMERIC(3,1)"
+        ))
+
         # ── Project Template: Task Cha MandayEST, Task Con Skill Solution/Vendor ──
         conn.execute(text(
             "ALTER TABLE project_template_task_groups ADD COLUMN IF NOT EXISTS manday_est NUMERIC(5,2)"
