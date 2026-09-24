@@ -168,6 +168,56 @@ def list_calendar_project_colors(db: Session = Depends(get_db), current_user: Us
 
 
 # ─── Dashboard Calendar Events ────────────────────────────────────────
+def _leader_managed_member_ids(db: Session, leader_member_id: int) -> list[int]:
+    """Members directly managed by this Leader.
+
+    Same resolution rule the Dashboard Leader Card (overview/page.tsx) and
+    Team Load / System Audit (`_aggregate_team_comparison`) already use —
+    the canonical `Member.leader_member_id` FK, PLUS the legacy
+    `leader_name`/`leader_email` text match for rows that predate the FK.
+    The "Quản lý thành viên" UI persists assignments as text fields only
+    (create/update in members.py never write leader_member_id), so an
+    FK-only lookup silently misses most real teams. Match semantics are
+    deliberately identical to those existing consumers: case-insensitive,
+    trimmed comparison against the Leader's own display_name/full_name and
+    the Leader's Member/User email; canonical FK wins when both exist.
+    Never project PM / Technical Leader / workspace membership.
+    """
+    ids = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+    seen = set(ids)
+
+    leader_member = db.query(Member).filter(Member.id == leader_member_id).first()
+    if leader_member is None:
+        return ids
+
+    name_keys = {
+        str(leader_member.display_name or "").strip().lower(),
+        str(leader_member.full_name or "").strip().lower(),
+    } - {""}
+    email_keys = {str(leader_member.email or "").strip().lower()} - {""}
+    leader_user = db.query(User).filter(User.member_id == leader_member_id).first()
+    if leader_user and leader_user.email:
+        email_keys.add(leader_user.email.strip().lower())
+
+    if name_keys or email_keys:
+        legacy = (
+            db.query(Member.id, Member.leader_name, Member.leader_email)
+            .filter(
+                Member.leader_member_id.is_(None),
+                or_(Member.leader_name.isnot(None), Member.leader_email.isnot(None)),
+            )
+            .all()
+        )
+        for mid, lname, lemail in legacy:
+            lname_key = str(lname or "").strip().lower()
+            lemail_key = str(lemail or "").strip().lower()
+            if (lname_key and lname_key in name_keys) or (lemail_key and lemail_key in email_keys):
+                if mid not in seen:
+                    ids.append(mid)
+                    seen.add(mid)
+    return ids
+
+
 def _resolve_team_member_ids(
     db: Session,
     current_user: User,
@@ -190,7 +240,7 @@ def _resolve_team_member_ids(
         if role == ROLE_SUPER_ADMIN or member_id == caller_member_id:
             return [member_id]
         if caller_member_id:
-            managed = {m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()}
+            managed = set(_leader_managed_member_ids(db, caller_member_id))
             if member_id in managed:
                 return [member_id]
         raise HTTPException(403, "Không có quyền xem lịch của thành viên này.")
@@ -200,11 +250,11 @@ def _resolve_team_member_ids(
             team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
             team.append(leader_member_id)
             return team
-        # Leader self-team: canonical direct reports ONLY (Member.leader_member_id
-        # pointing at the caller — never project roles/workspace membership),
-        # and never another Leader's team.
+        # Leader self-team: direct reports only (Leader Cards' canonical rule
+        # — leader_member_id FK or legacy leader_name/email text match; never
+        # project roles/workspace membership), never another Leader's team.
         if role == ROLE_LEADER and leader_member_id == caller_member_id:
-            return [m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()]
+            return _leader_managed_member_ids(db, caller_member_id)
         raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
 
     if not caller_member_id:

@@ -66,8 +66,9 @@ export default function CalendarPage() {
   // Leader scope (requirement H): horizontal filter ALL | <members> | CỦA TÔI.
   // 'ALL' = directly managed members only (Leader's own calendar deliberately
   // excluded), number = one managed member's calendar, 'MINE' = own calendar.
-  // Canonical source is Member.leader_member_id — the same relation the backend
-  // enforces in _resolve_team_member_ids, never project roles.
+  // Managed-member resolution mirrors the Leader Cards / Team Load rule
+  // (leader_member_id FK or legacy leader_name/leader_email match) — the same
+  // rule backend/app/routers/calendar.py::_leader_managed_member_ids enforces.
   const [leaderScope, setLeaderScope] = useState<'ALL' | 'MINE' | number>('ALL');
   const [myMemberId, setMyMemberId] = useState<number | null>(null);
   const [myTeam, setMyTeam] = useState<{ id: number; name: string }[]>([]);
@@ -91,15 +92,36 @@ export default function CalendarPage() {
       }).catch(() => {});
     }
     if (role === 'leader') {
-      // Resolve my Member identity + directly managed roster (leader_member_id
-      // === my member id) for the horizontal filter chips.
+      // Resolve my Member identity + directly managed roster for the filter
+      // chips, with the SAME canonical rule as the Dashboard Leader Cards:
+      // Member.leader_member_id FK, plus the legacy leader_name/leader_email
+      // text match (the "Quản lý thành viên" UI persists assignments as text
+      // fields only, so an FK-only check misses most real teams).
       getMe().then((me) => {
         const mid = me?.member_id ?? null;
         setMyMemberId(mid);
         if (mid == null) { setLeaderScope('MINE'); return; }
         getMembers({ light: true }).then((members: any[]) => {
-          const team = (members || [])
-            .filter((m: any) => m.leader_member_id === mid)
+          const list = members || [];
+          const self = list.find((m: any) => m.id === mid);
+          const leaderNames = new Set(
+            [self?.display_name, self?.full_name]
+              .map(v => String(v || '').trim().toLowerCase())
+              .filter(Boolean)
+          );
+          const leaderEmails = new Set(
+            [me?.email, self?.email]
+              .map(v => String(v || '').trim().toLowerCase())
+              .filter(Boolean)
+          );
+          const isManaged = (m: any): boolean => {
+            if (m.leader_member_id != null) return m.leader_member_id === mid;
+            const nameKey = String(m.leader_name || '').trim().toLowerCase();
+            const emailKey = String(m.leader_email || '').trim().toLowerCase();
+            return (!!nameKey && leaderNames.has(nameKey)) || (!!emailKey && leaderEmails.has(emailKey));
+          };
+          const team = list
+            .filter((m: any) => m.id !== mid && isManaged(m))
             .map((m: any) => ({ id: m.id, name: m.full_name || m.display_name || `Member ${m.id}` }))
             .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
           setMyTeam(team);
