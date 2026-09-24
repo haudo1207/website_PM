@@ -21,14 +21,18 @@ import {
   buildHourTicks,
 } from './dateUtils';
 
-// A day column's timeline mixes two independent event types — Task
-// (draggable, project-colored) and Meeting (read-only, fixed indigo style)
-// — positioned/lane-packed together by time via the shared, type-agnostic
-// layoutDayItems(). See "Chốt thêm requirement": Meeting has its own data
-// source and permission scope, merged with Task only for display.
+// A day column's timeline mixes three independent event types — Task
+// (draggable, project-colored), Meeting (read-only, fixed indigo style) and
+// timed Hourly-Leave OFF (read-only, muted gray) — positioned/lane-packed
+// together by time via the shared, type-agnostic layoutDayItems(). See
+// "Chốt thêm requirement": Meeting has its own data source and permission
+// scope, merged with Task only for display. Same for hourly OFF: it lands on
+// the timeline at its exact start/end, while full-day OFF stays in the fixed
+// date-only row above (unchanged LeaveBlockChip).
 type DayItem =
   | { kind: 'task'; task: CalendarTask; top: number; height: number }
-  | { kind: 'meeting'; meeting: CalendarMeeting; top: number; height: number };
+  | { kind: 'meeting'; meeting: CalendarMeeting; top: number; height: number }
+  | { kind: 'leave'; leave: CalendarLeaveBlock; top: number; height: number };
 
 // 30-minute marks from 06:00 to 23:00 (inclusive) — shared by the hour rail
 // and the grid lines so they always line up. Pure function of the module's
@@ -64,6 +68,41 @@ function LeaveBlockChip({ block }: { block: CalendarLeaveBlock }) {
     >
       <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
       <span className="truncate">{block.title}</span>
+    </div>
+  );
+}
+
+// Hourly-Leave OFF on the timeline — same muted-gray language as the full-day
+// LeaveBlockChip (requirement F: "existing muted-gray OFF presentation should
+// be preserved"), read-only, never merged with other hourly leaves (each
+// request is its own block, lane-packed by layoutDayItems like Task/Meeting).
+function LeaveTimelineBlock({ block, top, height, lane, laneCount }: {
+  block: CalendarLeaveBlock;
+  top: number;
+  height: number;
+  lane: number;
+  laneCount: number;
+}) {
+  const widthPct = 100 / laneCount;
+  const leftPct = lane * widthPct;
+  return (
+    <div
+      className="absolute rounded-lg px-2 py-1 overflow-hidden shadow-sm border-l-[3px] border-gray-400 bg-gray-200"
+      style={{
+        top,
+        height: Math.max(height, 30),
+        left: `calc(${leftPct}% + 2px)`,
+        width: `calc(${widthPct}% - 4px)`,
+      }}
+      title={`${block.title} — ${block.start_time} – ${block.end_time}`}
+    >
+      <div className="flex items-center gap-1 min-w-0">
+        <span className="w-1.5 h-1.5 rounded-full shrink-0 bg-gray-400" />
+        <span className="text-[11px] font-bold leading-[1.25] truncate text-gray-700">{block.title}</span>
+      </div>
+      <div className="text-[10px] font-semibold truncate mt-0.5 text-gray-600">
+        {block.start_time} – {block.end_time}
+      </div>
     </div>
   );
 }
@@ -160,7 +199,7 @@ function DayColumnBody({
               onToggleDone={onToggleDone}
               onOpenDetail={onOpenDetail}
             />
-          ) : (
+          ) : p.kind === 'meeting' ? (
             <MeetingBlock
               key={`meeting-${p.meeting.id}`}
               meeting={p.meeting}
@@ -169,6 +208,15 @@ function DayColumnBody({
               lane={p.lane}
               laneCount={p.laneCount}
               onOpenDetail={onOpenMeetingDetail}
+            />
+          ) : (
+            <LeaveTimelineBlock
+              key={`leave-${p.leave.id}`}
+              block={p.leave}
+              top={p.top}
+              height={p.height}
+              lane={p.lane}
+              laneCount={p.laneCount}
             />
           )
         )}
@@ -206,6 +254,9 @@ export default function CalendarGrid({
     const map = new Map<string, CalendarLeaveBlock[]>();
     for (const block of leaveBlocks) {
       if (!block.start) continue;
+      // Timed (hourly) leaves render on the timeline itself below, not in the
+      // fixed date-only row.
+      if (block.start_time && block.end_time) continue;
       const key = block.start.slice(0, 10);
       map.set(key, [...(map.get(key) || []), block]);
     }
@@ -263,6 +314,7 @@ export default function CalendarGrid({
             {days.map(day => {
               type TaskItem = Extract<DayItem, { kind: 'task' }>;
               type MeetingItem = Extract<DayItem, { kind: 'meeting' }>;
+              type LeaveItem = Extract<DayItem, { kind: 'leave' }>;
               const dayTaskItems: DayItem[] = tasks
                 .map((task): TaskItem | null => {
                   if (!task.scheduled_at) return null;
@@ -284,12 +336,26 @@ export default function CalendarGrid({
                   return { kind: 'meeting', meeting, top, height };
                 })
                 .filter((x): x is MeetingItem => x !== null);
+              // Hourly-Leave OFF: exact timeline position from its start/end
+              // time (same geometry as Meeting blocks), muted-gray style.
+              const dayLeaveItems: DayItem[] = leaveBlocks
+                .map((block): LeaveItem | null => {
+                  if (!block.start_time || !block.end_time) return null;
+                  if (block.start.slice(0, 10) !== toApiDate(day)) return null;
+                  const s = parseHHMM(block.start_time);
+                  const e = parseHHMM(block.end_time);
+                  if (!s || !e) return null;
+                  const top = minutesToTop(s.hours, s.minutes);
+                  const height = (e.hours * 60 + e.minutes - (s.hours * 60 + s.minutes)) * (HOUR_HEIGHT / 60);
+                  return { kind: 'leave', leave: block, top, height };
+                })
+                .filter((x): x is LeaveItem => x !== null);
 
               return (
                 <DayColumnBody
                   key={day.toISOString()}
                   day={day}
-                  dayItems={[...dayTaskItems, ...dayMeetingItems]}
+                  dayItems={[...dayTaskItems, ...dayMeetingItems, ...dayLeaveItems]}
                   onToggleDone={onToggleDone}
                   onOpenDetail={onOpenDetail}
                   onOpenMeetingDetail={onOpenMeetingDetail}

@@ -26,7 +26,7 @@ from ..models.skill_master import Group, Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
-from ..utils.access import ROLE_SUPER_ADMIN
+from ..utils.access import ROLE_LEADER, ROLE_SUPER_ADMIN
 from ..utils.auth import get_current_user
 from ..utils.kpi_engine import parse_date
 from .meetings import meeting_to_dict
@@ -168,6 +168,56 @@ def list_calendar_project_colors(db: Session = Depends(get_db), current_user: Us
 
 
 # ─── Dashboard Calendar Events ────────────────────────────────────────
+def _leader_managed_member_ids(db: Session, leader_member_id: int) -> list[int]:
+    """Members directly managed by this Leader.
+
+    Same resolution rule the Dashboard Leader Card (overview/page.tsx) and
+    Team Load / System Audit (`_aggregate_team_comparison`) already use —
+    the canonical `Member.leader_member_id` FK, PLUS the legacy
+    `leader_name`/`leader_email` text match for rows that predate the FK.
+    The "Quản lý thành viên" UI persists assignments as text fields only
+    (create/update in members.py never write leader_member_id), so an
+    FK-only lookup silently misses most real teams. Match semantics are
+    deliberately identical to those existing consumers: case-insensitive,
+    trimmed comparison against the Leader's own display_name/full_name and
+    the Leader's Member/User email; canonical FK wins when both exist.
+    Never project PM / Technical Leader / workspace membership.
+    """
+    ids = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+    seen = set(ids)
+
+    leader_member = db.query(Member).filter(Member.id == leader_member_id).first()
+    if leader_member is None:
+        return ids
+
+    name_keys = {
+        str(leader_member.display_name or "").strip().lower(),
+        str(leader_member.full_name or "").strip().lower(),
+    } - {""}
+    email_keys = {str(leader_member.email or "").strip().lower()} - {""}
+    leader_user = db.query(User).filter(User.member_id == leader_member_id).first()
+    if leader_user and leader_user.email:
+        email_keys.add(leader_user.email.strip().lower())
+
+    if name_keys or email_keys:
+        legacy = (
+            db.query(Member.id, Member.leader_name, Member.leader_email)
+            .filter(
+                Member.leader_member_id.is_(None),
+                or_(Member.leader_name.isnot(None), Member.leader_email.isnot(None)),
+            )
+            .all()
+        )
+        for mid, lname, lemail in legacy:
+            lname_key = str(lname or "").strip().lower()
+            lemail_key = str(lemail or "").strip().lower()
+            if (lname_key and lname_key in name_keys) or (lemail_key and lemail_key in email_keys):
+                if mid not in seen:
+                    ids.append(mid)
+                    seen.add(mid)
+    return ids
+
+
 def _resolve_team_member_ids(
     db: Session,
     current_user: User,
@@ -177,7 +227,10 @@ def _resolve_team_member_ids(
     """Return member ids whose data the caller may view.
 
     - member_id: self, managed member (leader), or super_admin.
-    - leader_member_id: super_admin only — canonical team via Member.leader_member_id.
+    - leader_member_id: super_admin — canonical team via Member.leader_member_id.
+      A Leader may also pass their OWN member id here to resolve their directly
+      managed team (the Dashboard Calendar "ALL" scope — deliberately excludes
+      the Leader themselves; "CỦA TÔI" is the no-param self scope).
     - neither: caller's own member.
     """
     caller_member_id = getattr(current_user, "member_id", None)
@@ -187,17 +240,22 @@ def _resolve_team_member_ids(
         if role == ROLE_SUPER_ADMIN or member_id == caller_member_id:
             return [member_id]
         if caller_member_id:
-            managed = {m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()}
+            managed = set(_leader_managed_member_ids(db, caller_member_id))
             if member_id in managed:
                 return [member_id]
         raise HTTPException(403, "Không có quyền xem lịch của thành viên này.")
 
     if leader_member_id is not None:
-        if role != ROLE_SUPER_ADMIN:
-            raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
-        team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
-        team.append(leader_member_id)
-        return team
+        if role == ROLE_SUPER_ADMIN:
+            team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+            team.append(leader_member_id)
+            return team
+        # Leader self-team: direct reports only (Leader Cards' canonical rule
+        # — leader_member_id FK or legacy leader_name/email text match; never
+        # project roles/workspace membership), never another Leader's team.
+        if role == ROLE_LEADER and leader_member_id == caller_member_id:
+            return _leader_managed_member_ids(db, caller_member_id)
+        raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
 
     if not caller_member_id:
         return []
@@ -305,6 +363,11 @@ def list_dashboard_calendar_events(
             "title": f"{member_name} - OFF" if member_name else "OFF",
             "start": lr.start_date,
             "end": lr.end_date,
+            # Hourly Leave only (NULL for full-day) — frontend renders a timed
+            # block on the timeline when present, the existing date-only chip
+            # otherwise. Separate requests stay separate blocks (never merged).
+            "start_time": lr.start_time,
+            "end_time": lr.end_time,
             "type": "leave",
             "member_id": member_id_val,
             "member_name": member_name,

@@ -1,5 +1,10 @@
 export type LeaveType = 'Work Remotely' | 'Offline' | 'Go on Business' | 'Workshop' | 'Work Weekend';
 export type LeaveStatus = 'Approved' | 'Pending' | 'Rejected';
+// 'day'  = "OFF theo ngày" (existing full-day behaviour, one or many days)
+// 'hour' = "OFF theo khung giờ" (ONE date + HH:MM start/end, 0.5 man-day)
+export type OffMode = 'day' | 'hour';
+// Business rule: hourly OFF always counts as 0.5 man-day; full-day = 1/day.
+export const HOURLY_MAN_DAY = 0.5;
 
 export interface LeaveRequest {
   id: number;
@@ -12,6 +17,9 @@ export interface LeaveRequest {
   month: string;
   year: number;
   time: string;
+  // Hourly Leave only — set both = timed OFF within a single day; null = full-day.
+  start_time?: string | null;
+  end_time?: string | null;
   province: string;
   ward: string;
   address?: string;
@@ -34,8 +42,11 @@ export interface LeaveRequest {
 
 export interface LeaveRequestFormValues {
   leaveType: LeaveType;
+  offMode: OffMode;
   startDate: string;
   endDate: string;
+  startTime: string;
+  endTime: string;
   reason: string;
   province: string;
   ward: string;
@@ -225,14 +236,29 @@ export const mockLeaveRequests: LeaveRequest[] = [
 
 const emptyValues: LeaveRequestFormValues = {
   leaveType: 'Work Remotely',
+  offMode: 'day',
   startDate: '',
   endDate: '',
+  startTime: '',
+  endTime: '',
   reason: '',
   province: 'Hà Nội',
   ward: 'Phúc Tân',
   address: '',
   manDay: 0,
 };
+
+// "24/09/2026 09:00 – 12:00" for hourly rows, the plain date range otherwise.
+export function formatLeaveRange(req: Pick<LeaveRequest, 'start_date' | 'end_date' | 'start_time' | 'end_time'>): string {
+  if (req.start_time && req.end_time) {
+    return `${formatDateLabel(req.start_date)} ${req.start_time} – ${req.end_time}`;
+  }
+  return `${formatDateLabel(req.start_date)} - ${formatDateLabel(req.end_date)}`;
+}
+
+export function isHourlyLeave(req: Pick<LeaveRequest, 'start_time' | 'end_time'>): boolean {
+  return !!(req.start_time && req.end_time);
+}
 
 export function calculateManDay(startDate: string, endDate: string): number | null {
   if (!startDate || !endDate) return null;

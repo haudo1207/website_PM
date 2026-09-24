@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session, selectinload
 from typing import Optional
 from datetime import datetime
 import logging
+import re
 
 from ..database import get_db
 from ..models.leave_request import LeaveRequest
@@ -17,6 +18,31 @@ from ..utils.audit_service import AuditService
 logger = logging.getLogger("leave_requests")
 
 router = APIRouter()
+
+_HHMM_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+def _validate_hourly(body: dict) -> tuple:
+    """Hourly Leave = ONE date + start time + end time, end after start.
+
+    Returns (start_time, end_time), both None for a regular full-day request.
+    Cross-day hourly leave is explicitly NOT supported (start_date must equal
+    end_date whenever times are provided).
+    """
+    start_time = (body.get('start_time') or '').strip() or None
+    end_time = (body.get('end_time') or '').strip() or None
+    if not start_time and not end_time:
+        return None, None
+    if not start_time or not end_time:
+        raise HTTPException(400, "Nghỉ theo giờ phải có cả giờ bắt đầu và giờ kết thúc.")
+    if not _HHMM_RE.match(start_time) or not _HHMM_RE.match(end_time):
+        raise HTTPException(400, "Giờ phải theo định dạng HH:MM.")
+    if body.get('start_date') != body.get('end_date'):
+        raise HTTPException(400, "Nghỉ theo giờ chỉ áp dụng trong MỘT ngày (không hỗ trợ-cross ngày).")
+    if start_time >= end_time:
+        raise HTTPException(400, "Giờ kết thúc phải sau giờ bắt đầu.")
+    return start_time, end_time
+
 
 
 def _leader_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
@@ -47,10 +73,12 @@ def leave_to_dict(lr: LeaveRequest) -> dict:
         "leave_type": lr.leave_type,
         "start_date": lr.start_date,
         "end_date": lr.end_date,
-        "man_day": lr.man_day,
+        "man_day": float(lr.man_day) if lr.man_day is not None else None,
         "month": lr.month,
         "year": lr.year,
         "time": lr.time,
+        "start_time": lr.start_time,
+        "end_time": lr.end_time,
         "province": lr.province,
         "ward": lr.ward,
         "address": lr.address,
@@ -133,15 +161,21 @@ def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User
 # CREATE LEAVE REQUEST
 @router.post("")
 def create_leave_request(body: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    start_time, end_time = _validate_hourly(body)
+    # Hourly OFF = 0.5 man-day (server-authoritative business rule); full-day
+    # requests keep the existing frontend-computed man_day untouched.
+    man_day = 0.5 if start_time else body.get('man_day', 1)
     leave_request = LeaveRequest(
         user_id=current_user.id,
         leave_type=body.get('leave_type'),
         start_date=body.get('start_date'),
         end_date=body.get('end_date'),
-        man_day=body.get('man_day', 1),
+        man_day=man_day,
         month=body.get('month', ''),
         year=body.get('year', datetime.now().year),
         time=body.get('time', ''),
+        start_time=start_time,
+        end_time=end_time,
         province=body.get('province', ''),
         ward=body.get('ward', ''),
         address=body.get('address'),
@@ -179,11 +213,12 @@ def create_leave_request(body: dict, db: Session = Depends(get_db), current_user
         )
         if leader_user:
             creator_name = current_user.full_name or current_user.email or f"user-{current_user.id}"
-            date_text = (
-                lr.start_date
-                if lr.start_date == lr.end_date
-                else f"{lr.start_date} → {lr.end_date}"
-            )
+            if lr.start_time and lr.end_time:
+                date_text = f"{lr.start_date} {lr.start_time} → {lr.end_time}"
+            elif lr.start_date == lr.end_date:
+                date_text = lr.start_date
+            else:
+                date_text = f"{lr.start_date} → {lr.end_date}"
             db.add(Notification(
                 recipient_id=leader_user.id,
                 sender_id=current_user.id,
@@ -229,7 +264,19 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
         raise HTTPException(403, "Chỉ admin mới có quyền thay đổi trạng thái")
 
     old_status = lr.status
+    if any(k in body for k in ('start_time', 'end_time', 'start_date', 'end_date')):
+        # Re-validate hourly consistency against the EFFECTIVE post-update
+        # values (times may be added to an existing full-day row and vice
+        # versa) — same single-date/end-after-start rules as create.
+        effective = {
+            'start_date': body.get('start_date', lr.start_date),
+            'end_date': body.get('end_date', lr.end_date),
+            'start_time': body.get('start_time', lr.start_time),
+            'end_time': body.get('end_time', lr.end_time),
+        }
+        _validate_hourly(effective)
     for field in ['leave_type', 'start_date', 'end_date', 'man_day', 'month', 'year', 'time',
+                  'start_time', 'end_time',
                   'province', 'ward', 'address', 'reason', 'status']:
         if field in body:
             setattr(lr, field, body[field])

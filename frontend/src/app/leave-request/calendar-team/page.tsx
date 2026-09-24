@@ -193,7 +193,12 @@ export default function CalendarTeamPage() {
                     {s?.off ? (
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-semibold text-rose-700">Off</span>
-                        <span className="text-xs text-[#565e74]">{s.leave?.leave_type}</span>
+                        <span className="text-xs text-[#565e74]">
+                          {/* Hourly OFF shows its exact window; full-day keeps the leave type. */}
+                          {s.leave?.start_time && s.leave?.end_time
+                            ? `${s.leave.start_time} – ${s.leave.end_time}`
+                            : s.leave?.leave_type}
+                        </span>
                       </div>
                     ) : (
                       <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">Working</span>

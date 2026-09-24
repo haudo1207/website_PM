@@ -545,6 +545,10 @@ export interface CalendarLeaveBlock {
   title: string;
   start: string; // YYYY-MM-DD
   end: string;   // YYYY-MM-DD
+  // Hourly Leave only — both set = timed OFF (same single day) rendered on the
+  // timeline; both null = existing full-day chip.
+  start_time: string | null;
+  end_time: string | null;
   type: 'leave';
   member_id: number | null;
   member_name: string;
