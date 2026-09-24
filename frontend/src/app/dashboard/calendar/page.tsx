@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
   type DragStartEvent,
 } from '@dnd-kit/core';
-import { getDashboardCalendarEvents, updateTask, CalendarTask, CalendarMeeting, CalendarLeaveBlock, getApiErrorMessage, getLeaders } from '@/lib/api';
+import { getDashboardCalendarEvents, updateTask, CalendarTask, CalendarMeeting, CalendarLeaveBlock, getApiErrorMessage, getLeaders, getMe, getMembers } from '@/lib/api';
 import CalendarToolbar, { EventTypeFilter, CalendarViewMode } from '@/components/calendar/CalendarToolbar';
 import CalendarGrid from '@/components/calendar/CalendarGrid';
 import MonthGrid, { MonthItem } from '@/components/calendar/MonthGrid';
@@ -63,6 +63,14 @@ export default function CalendarPage() {
   const [selectedLeaderMemberId, setSelectedLeaderMemberId] = useState<number | null>(null);
   const [availableLeaders, setAvailableLeaders] = useState<{ member_id: number; name: string }[]>([]);
   const [currentUserRole, setCurrentUserRole] = useState<string>('');
+  // Leader scope (requirement H): horizontal filter ALL | <members> | CỦA TÔI.
+  // 'ALL' = directly managed members only (Leader's own calendar deliberately
+  // excluded), number = one managed member's calendar, 'MINE' = own calendar.
+  // Canonical source is Member.leader_member_id — the same relation the backend
+  // enforces in _resolve_team_member_ids, never project roles.
+  const [leaderScope, setLeaderScope] = useState<'ALL' | 'MINE' | number>('ALL');
+  const [myMemberId, setMyMemberId] = useState<number | null>(null);
+  const [myTeam, setMyTeam] = useState<{ id: number; name: string }[]>([]);
   const suppressClickRef = useRef(false);
 
   const sensors = useSensors(
@@ -80,6 +88,25 @@ export default function CalendarPage() {
             .filter((l: any) => l.member_id)
             .map((l: any) => ({ member_id: l.member_id, name: l.name }))
         );
+      }).catch(() => {});
+    }
+    if (role === 'leader') {
+      // Resolve my Member identity + directly managed roster (leader_member_id
+      // === my member id) for the horizontal filter chips.
+      getMe().then((me) => {
+        const mid = me?.member_id ?? null;
+        setMyMemberId(mid);
+        if (mid == null) { setLeaderScope('MINE'); return; }
+        getMembers({ light: true }).then((members: any[]) => {
+          const team = (members || [])
+            .filter((m: any) => m.leader_member_id === mid)
+            .map((m: any) => ({ id: m.id, name: m.full_name || m.display_name || `Member ${m.id}` }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
+          setMyTeam(team);
+          // No managed members → ALL would render an empty calendar; fall back
+          // to the personal view so the page keeps its current behavior.
+          if (team.length === 0) setLeaderScope('MINE');
+        }).catch(() => setLeaderScope('MINE'));
       }).catch(() => {});
     }
   }, []);
@@ -111,11 +138,26 @@ export default function CalendarPage() {
     return formatRangeLabel(days);
   }, [viewMode, anchorDate, days]);
 
+  // Scope params per active filter. Super Admin path is untouched; the Leader
+  // branches reuse the same endpoint's member_id / leader_member_id contract:
+  // ALL → leader_member_id=own member id (backend resolves direct team and
+  // rejects anyone else's), Member → member_id (already Leader-authorized for
+  // direct reports), CỦA TÔI → no params (current-user default).
+  const scopeParams = useMemo(() => {
+    if (currentUserRole === 'super_admin') {
+      return selectedLeaderMemberId ? { leader_member_id: selectedLeaderMemberId } : {};
+    }
+    if (currentUserRole === 'leader' && myMemberId != null) {
+      if (leaderScope === 'MINE') return {};
+      if (leaderScope === 'ALL') return { leader_member_id: myMemberId };
+      return { member_id: leaderScope };
+    }
+    return {};
+  }, [currentUserRole, selectedLeaderMemberId, myMemberId, leaderScope]);
+
   const { data: dashboardData, isFetching, error, refetch } = useQuery({
-    queryKey: ['calendar-dashboard-events', from, to, selectedLeaderMemberId, currentUserRole],
-    queryFn: () => getDashboardCalendarEvents(from, to, {
-      ...(currentUserRole === 'super_admin' && selectedLeaderMemberId ? { leader_member_id: selectedLeaderMemberId } : {}),
-    }),
+    queryKey: ['calendar-dashboard-events', from, to, selectedLeaderMemberId, currentUserRole, leaderScope, myMemberId],
+    queryFn: () => getDashboardCalendarEvents(from, to, scopeParams),
     staleTime: 30_000,
   });
 
@@ -133,6 +175,25 @@ export default function CalendarPage() {
   );
   const filteredMeetings = useMemo(() => (filters.has('meeting') ? meetings || [] : []), [meetings, filters]);
   const filteredLeaveBlocks = useMemo(() => (filters.has('leave') ? leaveBlocks : []), [leaveBlocks, filters]);
+
+  // A full-day/multi-day leave must show OFF on EVERY day it spans (24→26 =
+  // three days), not just its start day: expand each range into one copy per
+  // on-screen day. Single-day blocks pass through untouched (stable keys);
+  // hourly blocks are always single-date, so their times ride along safely.
+  const visibleLeaveBlocks = useMemo(() => {
+    const out: CalendarLeaveBlock[] = [];
+    for (const block of filteredLeaveBlocks) {
+      if (!block.start) continue;
+      if (!block.end || block.end === block.start) { out.push(block); continue; }
+      for (const day of days) {
+        const key = toApiDate(day);
+        if (key >= block.start && key <= block.end) {
+          out.push({ ...block, id: `${block.id}#${key}`, start: key, end: key });
+        }
+      }
+    }
+    return out;
+  }, [filteredLeaveBlocks, days]);
 
   // A task "belongs" to the visible range the same way the Grid already
   // decides it does: scheduled tasks by scheduled_at's date, date-only
@@ -193,11 +254,11 @@ export default function CalendarPage() {
     );
   }, [filteredMeetings, normalizedQuery]);
   const searchedLeaveBlocks = useMemo(() => {
-    if (!normalizedQuery) return filteredLeaveBlocks;
-    return filteredLeaveBlocks.filter(block =>
+    if (!normalizedQuery) return visibleLeaveBlocks;
+    return visibleLeaveBlocks.filter(block =>
       [block.title, block.member_name].some(value => value?.toLowerCase().includes(normalizedQuery))
     );
-  }, [filteredLeaveBlocks, normalizedQuery]);
+  }, [visibleLeaveBlocks, normalizedQuery]);
   const isSearchEmpty = !!normalizedQuery && searchedTasks.length === 0 && searchedMeetings.length === 0 && searchedLeaveBlocks.length === 0;
 
   const scheduledTasks = useMemo(() => searchedTasks.filter(t => !!t.scheduled_at), [searchedTasks]);
@@ -251,7 +312,11 @@ export default function CalendarPage() {
     }
     for (const block of searchedLeaveBlocks) {
       if (!block.start) continue;
-      map.set(block.start, [...(map.get(block.start) || []), { kind: 'leave', leave: block, timeLabel: null, sortMin: 24 * 60 + 1 }]);
+      // Hourly OFF sorts/orders by its start time in Month view too.
+      const t = block.start_time ? parseHHMM(block.start_time) : null;
+      const timeLabel = t ? `${String(t.hours).padStart(2, '0')}:${String(t.minutes).padStart(2, '0')}` : null;
+      const sortMin = t ? t.hours * 60 + t.minutes : 24 * 60 + 1;
+      map.set(block.start, [...(map.get(block.start) || []), { kind: 'leave', leave: block, timeLabel, sortMin }]);
     }
     map.forEach((list, key) => map.set(key, [...list].sort((a, b) => a.sortMin - b.sortMin)));
     return map;
@@ -412,6 +477,52 @@ export default function CalendarPage() {
                     <option key={l.member_id} value={l.member_id}>{l.name}</option>
                   ))}
                 </select>
+              </div>
+            )}
+            {/* Leader horizontal member filter — ALL | <members> | CỦA TÔI.
+                Sits in the same scope-row slot as (never replacing) the Super
+                Admin Team select below CalendarToolbar. */}
+            {currentUserRole === 'leader' && myMemberId != null && (
+              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-slate-100 bg-slate-50/50 overflow-x-auto shrink-0">
+                <span className="text-[11px] font-semibold text-slate-500 shrink-0">Thành viên</span>
+                {myTeam.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setLeaderScope('ALL')}
+                    className={`h-8 shrink-0 text-[12px] font-semibold px-3 rounded-lg border transition-colors ${
+                      leaderScope === 'ALL'
+                        ? 'bg-[#0058be] text-white border-[#0058be]'
+                        : 'bg-white text-[#0b1c30] border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    ALL
+                  </button>
+                )}
+                {myTeam.map(m => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setLeaderScope(m.id)}
+                    className={`h-8 shrink-0 text-[12px] font-semibold px-3 rounded-lg border transition-colors ${
+                      leaderScope === m.id
+                        ? 'bg-[#0058be] text-white border-[#0058be]'
+                        : 'bg-white text-[#0b1c30] border-slate-200 hover:bg-slate-50'
+                    }`}
+                  >
+                    {m.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setLeaderScope('MINE')}
+                  className={`h-8 shrink-0 text-[12px] font-semibold px-3 rounded-lg border transition-colors ${
+                    leaderScope === 'MINE'
+                      ? 'bg-[#0058be] text-white border-[#0058be]'
+                      : 'bg-white text-[#0b1c30] border-slate-200 hover:bg-slate-50'
+                  }`}
+                >
+                  CỦA TÔI
+                </button>
               </div>
             )}
             <CalendarToolbar

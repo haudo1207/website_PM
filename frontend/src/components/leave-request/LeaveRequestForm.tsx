@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { LeaveRequestFormValues, LeaveType, leaveTypes, locations, calculateManDay } from '@/lib/leave-request';
+import { HOURLY_MAN_DAY, LeaveRequestFormValues, LeaveType, OffMode, leaveTypes, locations, calculateManDay } from '@/lib/leave-request';
 import SearchableSelect from '@/components/common/SearchableSelect';
 
 interface LeaveRequestFormProps {
@@ -13,14 +13,22 @@ interface LeaveRequestFormProps {
 
 const emptyValues: LeaveRequestFormValues = {
   leaveType: 'Work Remotely',
+  offMode: 'day',
   startDate: '',
   endDate: '',
+  startTime: '',
+  endTime: '',
   reason: '',
   province: 'Hà Nội',
   ward: 'Phúc Tân',
   address: '',
   manDay: 0,
 };
+
+const OFF_MODE_OPTIONS: { key: OffMode; label: string }[] = [
+  { key: 'day', label: 'OFF theo ngày' },
+  { key: 'hour', label: 'OFF theo khung giờ' },
+];
 
 export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, submitLabel = 'Submit Request' }: LeaveRequestFormProps) {
   const [formValues, setFormValues] = useState<LeaveRequestFormValues>({
@@ -29,21 +37,42 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
   });
   const [validationMessage, setValidationMessage] = useState('');
 
+  const isHourly = formValues.offMode === 'hour';
   const selectedProvince = useMemo(() => locations.find((item) => item.province === formValues.province), [formValues.province]);
 
-  const calculatedManDay = useMemo(() => calculateManDay(formValues.startDate, formValues.endDate), [formValues.startDate, formValues.endDate]);
+  // Full-day: existing inclusive-calendar-day count (1 man-day/day).
+  // Hourly: fixed 0.5 man-day (business rule) on ONE date.
+  const calculatedManDay = useMemo(() => {
+    if (isHourly) {
+      return formValues.startDate && formValues.startTime && formValues.endTime && formValues.endTime > formValues.startTime
+        ? HOURLY_MAN_DAY
+        : null;
+    }
+    return calculateManDay(formValues.startDate, formValues.endDate);
+  }, [isHourly, formValues.startDate, formValues.endDate, formValues.startTime, formValues.endTime]);
 
   const isValid = useMemo(() => {
     if (!formValues.reason.trim()) return false;
-    if (!formValues.startDate || !formValues.endDate) return false;
+    if (!formValues.startDate) return false;
+    if (isHourly) {
+      if (!formValues.startTime || !formValues.endTime) return false;
+      if (formValues.endTime <= formValues.startTime) return false;
+      return true;
+    }
+    if (!formValues.endDate) return false;
     if (!calculatedManDay || calculatedManDay < 1) return false;
     if (calculatedManDay > 7) return false;
     return true;
-  }, [calculatedManDay, formValues.endDate, formValues.reason, formValues.startDate]);
+  }, [calculatedManDay, isHourly, formValues.endDate, formValues.startTime, formValues.endTime, formValues.reason, formValues.startDate]);
 
   const handleDateChange = (field: 'startDate' | 'endDate', value: string) => {
     const nextValues = { ...formValues, [field]: value };
     setFormValues(nextValues);
+
+    if (nextValues.offMode === 'hour') {
+      setValidationMessage('');
+      return;
+    }
 
     if (!nextValues.startDate || !nextValues.endDate) {
       setValidationMessage('');
@@ -66,6 +95,21 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
     setValidationMessage('');
   };
 
+  const handleOffModeChange = (mode: OffMode) => {
+    setFormValues((prev) => ({ ...prev, offMode: mode }));
+    setValidationMessage('');
+  };
+
+  const handleTimeChange = (field: 'startTime' | 'endTime', value: string) => {
+    const nextValues = { ...formValues, [field]: value };
+    setFormValues(nextValues);
+    if (nextValues.startTime && nextValues.endTime && nextValues.endTime <= nextValues.startTime) {
+      setValidationMessage('Giờ kết thúc phải sau giờ bắt đầu.');
+    } else {
+      setValidationMessage('');
+    }
+  };
+
   const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (!formValues.reason.trim()) {
@@ -73,7 +117,31 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
       return;
     }
 
-    if (!formValues.startDate || !formValues.endDate) {
+    if (!formValues.startDate) {
+      setValidationMessage('Please select a date.');
+      return;
+    }
+
+    if (isHourly) {
+      if (!formValues.startTime || !formValues.endTime) {
+        setValidationMessage('Please select both start and end time.');
+        return;
+      }
+      if (formValues.endTime <= formValues.startTime) {
+        setValidationMessage('Giờ kết thúc phải sau giờ bắt đầu.');
+        return;
+      }
+      onSubmit({
+        ...formValues,
+        // Hourly leave is single-date by design — end date mirrors start date
+        // (cross-day hourly is not supported).
+        endDate: formValues.startDate,
+        manDay: HOURLY_MAN_DAY,
+      });
+      return;
+    }
+
+    if (!formValues.endDate) {
       setValidationMessage('Please select both dates.');
       return;
     }
@@ -98,6 +166,8 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
 
     const payload: LeaveRequestFormValues = {
       ...formValues,
+      startTime: '',
+      endTime: '',
       manDay,
     };
 
@@ -106,6 +176,24 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
 
   return (
     <form className="space-y-5" onSubmit={handleSubmit}>
+      <div>
+        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Loại nghỉ (OFF)</label>
+        <div className="inline-flex rounded-lg border border-[#c2c6d6] bg-white p-0.5">
+          {OFF_MODE_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              onClick={() => handleOffModeChange(opt.key)}
+              className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${
+                formValues.offMode === opt.key ? 'bg-[#0058be] text-white' : 'text-[#565e74] hover:bg-[#f8f9ff]'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid gap-5 md:grid-cols-2">
         <div>
           <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Leave Type</label>
@@ -133,7 +221,9 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
         </div>
 
         <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Start Date</label>
+          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">
+            {isHourly ? 'Ngày nghỉ' : 'Start Date'}
+          </label>
           <input
             type="date"
             value={formValues.startDate}
@@ -142,15 +232,39 @@ export default function LeaveRequestForm({ initialValues, onSubmit, onCancel, su
           />
         </div>
 
-        <div>
-          <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">End Date</label>
-          <input
-            type="date"
-            value={formValues.endDate}
-            onChange={(event) => handleDateChange('endDate', event.target.value)}
-            className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
-          />
-        </div>
+        {isHourly ? (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Từ giờ</label>
+              <input
+                type="time"
+                value={formValues.startTime}
+                onChange={(event) => handleTimeChange('startTime', event.target.value)}
+                className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
+              />
+            </div>
+            <div>
+              <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">Đến giờ</label>
+              <input
+                type="time"
+                value={formValues.endTime}
+                min={formValues.startTime || undefined}
+                onChange={(event) => handleTimeChange('endTime', event.target.value)}
+                className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
+              />
+            </div>
+          </div>
+        ) : (
+          <div>
+            <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.2em] text-[#565e74]">End Date</label>
+            <input
+              type="date"
+              value={formValues.endDate}
+              onChange={(event) => handleDateChange('endDate', event.target.value)}
+              className="w-full rounded-lg border border-[#c2c6d6] bg-white px-3 py-2 text-sm text-[#0b1c30] outline-none focus:border-[#0058be]"
+            />
+          </div>
+        )}
       </div>
 
       <div>

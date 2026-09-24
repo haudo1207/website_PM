@@ -8,7 +8,7 @@ import SummaryCard from '@/components/leave-request/SummaryCard';
 import StatusBadge, { LeaveTypeBadge } from '@/components/leave-request/StatusBadge';
 import LeaveRequestForm from '@/components/leave-request/LeaveRequestForm';
 import Portal from '@/components/Portal';
-import { formatDateLabel, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
+import { formatDateLabel, formatLeaveRange, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
 import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, deleteLunchRecord, getLunchMonthlySummary } from '@/lib/api';
 import { getBusinessWeekdayLabel, isWeekendDate, monthCalendarDays, workingDaysForMonth } from '@/lib/business-date';
 
@@ -1056,12 +1056,14 @@ export default function LeaveRequestPage() {
       const e = new Date(req.end_date);
       if (s > monthEnd || e < monthStart) return; // no overlap with the month
 
-      // Count man-days that fall within the selected month.
+      // Count man-days that fall within the selected month. Hourly OFF is a
+      // single day worth 0.5 man-day; full-day rows keep counting 1/day.
+      const hourly = !!(req.start_time && req.end_time);
       let overlapDays = 0;
       const cursor = new Date(Math.max(s.getTime(), monthStart.getTime()));
       const realEnd = new Date(Math.min(e.getTime(), monthEnd.getTime()));
       while (cursor <= realEnd) {
-        overlapDays += 1;
+        overlapDays += hourly ? 0.5 : 1;
         cursor.setDate(cursor.getDate() + 1);
       }
 
@@ -1234,6 +1236,9 @@ export default function LeaveRequestPage() {
         month: new Date(values.startDate).toLocaleString('en-US', { month: 'long' }),
         year: new Date(values.startDate).getFullYear(),
         time: timeString,
+        // Hourly OFF ("OFF theo khung giờ"); null/null = existing full-day row.
+        start_time: values.offMode === 'hour' ? values.startTime : null,
+        end_time: values.offMode === 'hour' ? values.endTime : null,
         province: values.province,
         ward: values.ward,
         address: values.address || null,
@@ -1356,7 +1361,7 @@ export default function LeaveRequestPage() {
                                 {item.leave_type} • {item.man_day} Day{item.man_day > 1 ? 's' : ''}
                               </div>
                               <div className="text-xs text-[#565e74]">
-                                {formatDateLabel(item.start_date)} - {formatDateLabel(item.end_date)}
+                                {formatLeaveRange(item)}
                               </div>
                             </div>
                             <div className="flex flex-col items-end gap-2">
@@ -1427,7 +1432,10 @@ export default function LeaveRequestPage() {
                             <td className="px-3 py-3">
                               <LeaveTypeBadge type={item.leave_type} />
                             </td>
-                            <td className="px-3 py-3 text-[#565e74]">{formatDateLabel(item.start_date)}</td>
+                            <td className="px-3 py-3 text-[#565e74]">
+                              {formatDateLabel(item.start_date)}
+                              {item.start_time && <span className="block text-[11px] text-[#0b1c30] font-semibold">{item.start_time} – {item.end_time}</span>}
+                            </td>
                             <td className="px-3 py-3 text-[#565e74]">{formatDateLabel(item.end_date)}</td>
                             <td className="px-3 py-3 text-[#565e74]">
                               {item.time ? (() => {
@@ -1735,8 +1743,11 @@ export default function LeaveRequestPage() {
                     editingRequest
                       ? {
                           leaveType: editingRequest.leave_type,
+                          offMode: editingRequest.start_time && editingRequest.end_time ? ('hour' as const) : ('day' as const),
                           startDate: editingRequest.start_date,
                           endDate: editingRequest.end_date,
+                          startTime: editingRequest.start_time ?? '',
+                          endTime: editingRequest.end_time ?? '',
                           reason: editingRequest.reason,
                           province: editingRequest.province,
                           ward: editingRequest.ward,
@@ -1828,7 +1839,7 @@ export default function LeaveRequestPage() {
                 <div className="flex justify-between">
                   <span className="text-[#565e74]">Date Range</span>
                   <span className="font-semibold">
-                    {formatDateLabel(viewingRequest.start_date)} - {formatDateLabel(viewingRequest.end_date)}
+                    {formatLeaveRange(viewingRequest)}
                   </span>
                 </div>
                 <div className="flex justify-between">

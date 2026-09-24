@@ -26,7 +26,7 @@ from ..models.skill_master import Group, Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
-from ..utils.access import ROLE_SUPER_ADMIN
+from ..utils.access import ROLE_LEADER, ROLE_SUPER_ADMIN
 from ..utils.auth import get_current_user
 from ..utils.kpi_engine import parse_date
 from .meetings import meeting_to_dict
@@ -177,7 +177,10 @@ def _resolve_team_member_ids(
     """Return member ids whose data the caller may view.
 
     - member_id: self, managed member (leader), or super_admin.
-    - leader_member_id: super_admin only — canonical team via Member.leader_member_id.
+    - leader_member_id: super_admin — canonical team via Member.leader_member_id.
+      A Leader may also pass their OWN member id here to resolve their directly
+      managed team (the Dashboard Calendar "ALL" scope — deliberately excludes
+      the Leader themselves; "CỦA TÔI" is the no-param self scope).
     - neither: caller's own member.
     """
     caller_member_id = getattr(current_user, "member_id", None)
@@ -193,11 +196,16 @@ def _resolve_team_member_ids(
         raise HTTPException(403, "Không có quyền xem lịch của thành viên này.")
 
     if leader_member_id is not None:
-        if role != ROLE_SUPER_ADMIN:
-            raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
-        team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
-        team.append(leader_member_id)
-        return team
+        if role == ROLE_SUPER_ADMIN:
+            team = [m.id for m in db.query(Member.id).filter(Member.leader_member_id == leader_member_id).all()]
+            team.append(leader_member_id)
+            return team
+        # Leader self-team: canonical direct reports ONLY (Member.leader_member_id
+        # pointing at the caller — never project roles/workspace membership),
+        # and never another Leader's team.
+        if role == ROLE_LEADER and leader_member_id == caller_member_id:
+            return [m.id for m in db.query(Member.id).filter(Member.leader_member_id == caller_member_id).all()]
+        raise HTTPException(403, "Chỉ Super Admin mới lọc theo team Leader.")
 
     if not caller_member_id:
         return []
@@ -305,6 +313,11 @@ def list_dashboard_calendar_events(
             "title": f"{member_name} - OFF" if member_name else "OFF",
             "start": lr.start_date,
             "end": lr.end_date,
+            # Hourly Leave only (NULL for full-day) — frontend renders a timed
+            # block on the timeline when present, the existing date-only chip
+            # otherwise. Separate requests stay separate blocks (never merged).
+            "start_time": lr.start_time,
+            "end_time": lr.end_time,
             "type": "leave",
             "member_id": member_id_val,
             "member_name": member_name,
