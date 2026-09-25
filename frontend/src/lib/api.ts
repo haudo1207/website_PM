@@ -636,7 +636,7 @@ export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
 
 // Members
-export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string; light?: boolean }) =>
+export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string; light?: boolean; scope?: boolean }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
@@ -669,6 +669,15 @@ export const deleteLunchRecord = (id: number) =>
   api.delete(`/lunch/${id}`).then(r => r.data);
 export const getLunchMonthlySummary = (year: number, month: number) =>
   api.get('/lunch/monthly-summary', { params: { year, month } }).then(r => r.data);
+// Check Working/Lunch: members the caller may act on, scoped by backend workspace.
+export const getWorkingLunchMembers = (params?: { enabled_only?: boolean; date?: string }) =>
+  api.get('/lunch/members', { params }).then(r => r.data);
+// Check Working/Lunch: SUPER ADMIN / Leader configuration list (per Workspace).
+export const getWorkingLunchConfig = (workspace?: string, date?: string) =>
+  api.get('/lunch/working-members', { params: { ...(workspace ? { workspace } : {}), date } }).then(r => r.data);
+// Check Working/Lunch: enable/disable a member (SUPER ADMIN / Leader only).
+export const toggleWorkingLunchMember = (memberId: number, enabled: boolean, date: string) =>
+  api.put(`/lunch/working-members/${memberId}`, { enabled }, { params: { date } }).then(r => r.data);
 
 // Leave Requests
 export const getLeaveRequests = (params?: { status?: string; user_id?: number; from_date?: string; to_date?: string }) =>

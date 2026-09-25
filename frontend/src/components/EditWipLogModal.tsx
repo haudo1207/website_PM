@@ -168,6 +168,13 @@ export default function EditWipLogModal({
             <label
               htmlFor="editWipFileUploadInput"
               className={`relative border-2 border-dashed rounded-xl p-3 mb-3 flex flex-col items-center justify-center gap-1 text-center cursor-pointer border-slate-300 hover:border-[#0058be] bg-slate-50/50 hover:bg-slate-50 ${uploading ? 'opacity-60 pointer-events-none' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onDrop={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const f = e.dataTransfer.files?.[0];
+                if (f) handleUpload(f);
+              }}
             >
               <input
                 id="editWipFileUploadInput"

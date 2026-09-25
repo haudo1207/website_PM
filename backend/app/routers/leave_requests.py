@@ -11,8 +11,10 @@ from ..models.leave_request import LeaveRequest
 from ..models.member import Member
 from ..models.notification import Notification
 from ..models.user import User
+from ..models.workspace_access import UserWorkspaceAccess
+from ..models.system_category import Workspace
 from ..utils.auth import get_current_user, require_admin
-from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER, ALL_SCOPE, user_allowed_scopes
+from ..utils.access import ROLE_SUPER_ADMIN, ROLE_LEADER, ALL_SCOPE, user_allowed_scopes, user_in_workspace_scopes
 from ..utils.audit_service import AuditService
 
 logger = logging.getLogger("leave_requests")
@@ -45,26 +47,27 @@ def _validate_hourly(body: dict) -> tuple:
 
 
 
-def _leader_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
-    """A Leader may only view/manage leave requests from users within their
-    own Workspace(s); super_admin is unrestricted."""
+def _workspace_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
+    """Return true when both users are in the same DB-derived Workspace.
+
+    Super admin is unrestricted. Regular members and leaders are both
+    restricted to Workspace(s) explicitly granted in the database; the caller
+    must not be able to widen scope by sending a different workspace_id.
+    """
     if current_user.role == ROLE_SUPER_ADMIN:
-        return True
-    if current_user.role != ROLE_LEADER:
         return True
 
     allowed = user_allowed_scopes(db, current_user)
     if allowed == ALL_SCOPE:
         return True
 
-    target_user = db.query(User).filter(User.id == target_user_id).first()
-    if not target_user:
-        return False
+    return user_in_workspace_scopes(db, target_user_id, allowed)
 
-    target_scope = (target_user.data_scope or "").strip().lower()
-    # Global scope remains visible to every Leader, matching the app's
-    # Workspace-visibility convention used elsewhere in the project.
-    return target_scope in allowed or target_scope == ALL_SCOPE
+
+def _leader_scope_ok(db: Session, current_user: User, target_user_id: int) -> bool:
+    """Backward-compatible alias for leaders/admins; member access is checked
+    via the workspace-scoped helper above."""
+    return _workspace_scope_ok(db, current_user, target_user_id)
 
 def leave_to_dict(lr: LeaveRequest) -> dict:
     return {
@@ -113,8 +116,8 @@ def list_leave_requests(
 ):
     q = db.query(LeaveRequest).options(selectinload(LeaveRequest.user).selectinload(User.member))
 
-    # Super admin can see all; Leader is scoped to their own Company
-    # (Workspace); regular users can only see their own.
+    # Super admin sees everything; leaders can browse their Workspace;
+    # regular members/viewers are limited to their own records only.
     if current_user.role == ROLE_SUPER_ADMIN:
         if user_id:
             q = q.filter(LeaveRequest.user_id == user_id)
@@ -122,9 +125,18 @@ def list_leave_requests(
         allowed = user_allowed_scopes(db, current_user)
         if allowed != ALL_SCOPE:
             allowed_scopes = {str(s).strip().lower() for s in allowed if str(s).strip()}
+            granted_user_ids = (
+                db.query(UserWorkspaceAccess.user_id)
+                .join(Workspace, Workspace.id == UserWorkspaceAccess.workspace_id)
+                .filter(Workspace.code.in_(allowed_scopes))
+            )
             user_ids_subq = (
                 db.query(User.id)
-                .filter(or_(User.data_scope.in_(allowed_scopes), User.data_scope == ALL_SCOPE))
+                .filter(or_(
+                    User.data_scope.in_(allowed_scopes),
+                    User.data_scope == ALL_SCOPE,
+                    User.id.in_(granted_user_ids),
+                ))
                 .subquery()
             )
             q = q.filter(LeaveRequest.user_id.in_(user_ids_subq))
@@ -132,6 +144,8 @@ def list_leave_requests(
             q = q.filter(LeaveRequest.user_id == user_id)
     else:
         q = q.filter(LeaveRequest.user_id == current_user.id)
+        if user_id and user_id != current_user.id:
+            q = q.filter(LeaveRequest.user_id == current_user.id)
 
     if status:
         q = q.filter(LeaveRequest.status == status)
@@ -150,11 +164,15 @@ def get_leave_request(id: int, db: Session = Depends(get_db), current_user: User
     if not lr:
         raise HTTPException(404, "Không tìm thấy leave request")
     
-    # Check permission: admin can see all, user can only see their own
-    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
-        raise HTTPException(403, "Không có quyền xem")
-    if not _leader_scope_ok(db, current_user, lr.user_id):
-        raise HTTPException(403, "Không có quyền xem (khác Công ty)")
+    # Regular member/viewer: self-service only. They may not view another
+    # member's leave request even if they are in the same Workspace.
+    if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
+        if lr.user_id != current_user.id:
+            raise HTTPException(403, "Không có quyền xem")
+        if not _workspace_scope_ok(db, current_user, lr.user_id):
+            raise HTTPException(403, "Không có quyền xem (khác Workspace)")
+    elif not _leader_scope_ok(db, current_user, lr.user_id):
+        raise HTTPException(403, "Không có quyền xem (khác Workspace)")
 
     return leave_to_dict(lr)
 
@@ -253,11 +271,13 @@ def update_leave_request(id: int, body: dict, db: Session = Depends(get_db), cur
     if not lr:
         raise HTTPException(404, "Không tìm thấy leave request")
     
-    # Check permission: only admin or owner can update
+    # Members may only edit their own leave request; they still must remain in
+    # the same Workspace to access the record. Admin/leader remain scoped by
+    # the same DB-derived workspace rules when they act on someone else's item.
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền sửa")
     if not _leader_scope_ok(db, current_user, lr.user_id):
-        raise HTTPException(403, "Không có quyền sửa (khác Công ty)")
+        raise HTTPException(403, "Không có quyền sửa (khác Workspace)")
 
     # Only admin can change status
     if 'status' in body and current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER}:
@@ -305,7 +325,7 @@ def delete_leave_request(id: int, db: Session = Depends(get_db), current_user: U
     if current_user.role not in {ROLE_SUPER_ADMIN, ROLE_LEADER} and lr.user_id != current_user.id:
         raise HTTPException(403, "Không có quyền xóa")
     if not _leader_scope_ok(db, current_user, lr.user_id):
-        raise HTTPException(403, "Không có quyền xóa (khác Công ty)")
+        raise HTTPException(403, "Không có quyền xóa (khác Workspace)")
 
     lr_id, lr_user_id, lr_status = lr.id, lr.user_id, lr.status
     db.delete(lr)

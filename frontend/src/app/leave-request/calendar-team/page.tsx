@@ -35,7 +35,7 @@ export default function CalendarTeamPage() {
       setLoading(true);
       try {
         const [membersRes, leaveRes] = await Promise.all([
-          getMembers(),
+          getMembers({ scope: true }),
           getLeaveRequests(),
         ]);
         setMembers(membersRes);
