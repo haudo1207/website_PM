@@ -8,7 +8,7 @@ import {
 import {
   getProjectFeatures, createProjectFeature, renameProjectFeature, deleteProjectFeature,
   getProjectFeatureLogs, createProjectFeatureLog, deleteProjectFeatureLog, getProjectFeatureLogAttachmentBlob,
-  uploadFeatureLogAttachment, createProjectShareLink,
+  uploadFeatureLogAttachment,
   getProjectKnowledgeItems, createProjectKnowledgeItem, updateProjectKnowledgeItem, deleteProjectKnowledgeItem,
   getProjectAiSessions, getAiSessionAttachmentBlob,
 } from '@/lib/api';
@@ -431,20 +431,22 @@ export default function ProjectPrototypeTab({ projectId, projectName, initialFea
     }
   }
 
-  // Real public share link (same /share/project/{token} page every other
-  // "Chia sẻ" entry point in the app uses) — deep-linked straight to this
-  // log's Feature via ?feature=<name>, matching markee-dashboard's own
-  // "Mở Link" flow after saving a WIP entry, instead of an internal URL that
-  // requires being logged in to even open.
-  async function handleShareLog(log: FeatureLog) {
-    try {
-      const { share_url } = await createProjectShareLink(projectId, log.feature_id);
-      await navigator.clipboard.writeText(share_url);
+  // Copy the INTERNAL deep link (/project/detail/prototype?id=...&feature=...)
+  // instead of the public /share/project/{token} page — matches the
+  // extension's "Mở Link"/"Copy Link" flow (background.js's
+  // GET_PROJECT_SHARE_LINK), which was already fixed the same way per
+  // direct user feedback: whoever clicks this is already logged into
+  // pm-new, so they should land straight on the real Prototype tab, not
+  // a read-only public page meant for people without an account.
+  function handleShareLog(log: FeatureLog) {
+    const feature = features.find((f) => f.id === log.feature_id);
+    const url = `${window.location.origin}/project/detail/prototype?id=${projectId}${
+      feature ? `&feature=${encodeURIComponent(feature.name)}` : ''
+    }`;
+    navigator.clipboard.writeText(url).then(() => {
       setShareStatusLogId(log.id);
       setTimeout(() => setShareStatusLogId((cur) => (cur === log.id ? null : cur)), 2000);
-    } catch {
-      setError('Không tạo được link chia sẻ');
-    }
+    }).catch(() => setError('Không copy được link'));
   }
 
   const activeMembers = useMemo(() => {
