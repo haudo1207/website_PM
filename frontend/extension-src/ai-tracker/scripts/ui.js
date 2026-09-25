@@ -1873,13 +1873,13 @@ function injectWidget(toolName) {
       };
     }
 
-    // File attach: this specific "kéo/chọn file để gắn nhanh" affordance has
-    // no real backing endpoint anywhere in this extension today (grepped —
-    // the only real file flows are injectFilesToChat/insertSkillToChat,
-    // which push content the OTHER direction, into the host page's chat).
-    // Wired here as a real, working local file picker/list (no fabricated
-    // "uploaded!" claim) so the control isn't dead, pending a real
-    // attach-to-WIP endpoint to call.
+    // File attach: kéo/chọn file để gắn nhanh vào lần "Lưu Tóm tắt" tiếp
+    // theo. Trước đây control này chỉ HIỂN THỊ tên file cho có (không có
+    // endpoint nào nhận file thật) — giờ file thật được giữ lại trong
+    // `window.markeeStagedAttachFiles.wip` và `saveWipSummary()` sẽ đọc,
+    // convert base64 rồi gộp vào `attached_files` gửi cùng lúc tạo WIP log
+    // (endpoint `POST /projects/{pid}/features/{fid}/logs` đã nhận
+    // `attached_files` sẵn từ trước — chỉ thiếu chỗ này nối vào).
     const dropEl = document.getElementById("markee-summaryDrop");
     const chooseBtn = document.getElementById("markee-summaryChoose");
     const fileInput = document.getElementById("markee-summaryFileInput");
@@ -1889,16 +1889,46 @@ function injectWidget(toolName) {
       dropEl.addEventListener("dragover", (e) => e.preventDefault());
       dropEl.addEventListener("drop", (e) => {
         e.preventDefault();
-        if (e.dataTransfer && e.dataTransfer.files.length) renderSkinAttachedFiles(attachedEl, e.dataTransfer.files);
+        if (e.dataTransfer && e.dataTransfer.files.length) renderSkinAttachedFiles(attachedEl, e.dataTransfer.files, "wipSummary");
       });
     }
-    if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(attachedEl, fileInput.files));
+    if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(attachedEl, fileInput.files, "wipSummary"));
   })();
 
-  function renderSkinAttachedFiles(container, fileList) {
+  // Kho tạm giữ các File thật người dùng vừa kéo/chọn, tách riêng theo
+  // từng khung kéo-thả (2 khung cùng nuôi WIP, 1 khung nuôi Skill) — đọc
+  // bởi saveWipSummary()/scanAndSave() ngay trước khi Lưu, gộp lại rồi bị
+  // xoá sau khi gửi thành công.
+  window.markeeStagedAttachFiles = window.markeeStagedAttachFiles || { wipSummary: [], wipDrawer: [], skill: [] };
+
+  // Đọc 1 File thật thành {fileName, mimeType, base64} — cùng shape mà
+  // background.js's SAVE_SCRAPED_MARKDOWN handler đã hiểu sẵn cho
+  // autoScrapedFiles (fileName/name, mimeType/type, base64/data).
+  function fileToAttachEntry(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        resolve({
+          fileName: file.name,
+          name: file.name,
+          mimeType: file.type,
+          type: file.type,
+          base64: ev.target.result,
+          data: ev.target.result,
+          size: file.size,
+        });
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function renderSkinAttachedFiles(container, fileList, slotKey) {
     if (!container) return;
+    const files = Array.from(fileList || []);
+    if (slotKey) window.markeeStagedAttachFiles[slotKey] = files;
     container.innerHTML = "";
-    Array.from(fileList || []).forEach((f) => {
+    files.forEach((f) => {
       const row = document.createElement("div");
       row.style.cssText = "display:flex;align-items:center;gap:6px;font-size:9.5px;color:#c5cde9;background:#0f1425;border:1px solid rgba(91,99,255,.3);border-radius:6px;padding:4px 7px;";
       row.textContent = `📎 ${f.name}`;
@@ -2332,8 +2362,19 @@ function injectWidget(toolName) {
       const chooseBtn = document.getElementById("markee-drawerChoose");
       const fileInput = document.getElementById("markee-drawerFileInput");
       const attachedEl = document.getElementById("markee-drawerAttached");
+      const dropEl = document.getElementById("markee-drawerDrop");
       if (chooseBtn && fileInput) chooseBtn.onclick = () => fileInput.click();
-      if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(attachedEl, fileInput.files));
+      if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(attachedEl, fileInput.files, "wipDrawer"));
+      // Khung này trước đây KHÔNG có listener dragover/drop nào cả — kéo
+      // file thả vào chỉ là 1 ô trông giống drop-zone chứ không nhận gì,
+      // đúng loại "kéo thả không được" người dùng báo.
+      if (dropEl && fileInput) {
+        dropEl.addEventListener("dragover", (e) => e.preventDefault());
+        dropEl.addEventListener("drop", (e) => {
+          e.preventDefault();
+          if (e.dataTransfer && e.dataTransfer.files.length) renderSkinAttachedFiles(attachedEl, e.dataTransfer.files, "wipDrawer");
+        });
+      }
       if (submitBtn) {
         submitBtn.onclick = () => {
           const legacyBtn = document.getElementById("btn-save-wip");
@@ -2428,12 +2469,12 @@ function injectWidget(toolName) {
       const fileInput = document.getElementById("markee-skillFileInput");
       const fileListEl = document.getElementById("markee-skillFileList");
       if (chooseBtn && fileInput) chooseBtn.onclick = () => fileInput.click();
-      if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(fileListEl, fileInput.files));
+      if (fileInput) fileInput.addEventListener("change", () => renderSkinAttachedFiles(fileListEl, fileInput.files, "skill"));
       if (dropEl && fileInput) {
         dropEl.addEventListener("dragover", (e) => e.preventDefault());
         dropEl.addEventListener("drop", (e) => {
           e.preventDefault();
-          if (e.dataTransfer && e.dataTransfer.files.length) renderSkinAttachedFiles(fileListEl, e.dataTransfer.files);
+          if (e.dataTransfer && e.dataTransfer.files.length) renderSkinAttachedFiles(fileListEl, e.dataTransfer.files, "skill");
         });
       }
       if (submitBtn) {
@@ -5589,15 +5630,30 @@ function injectWidget(toolName) {
     );
   }
 
-  // Hàm Lưu Tóm Tắt
-  async function saveWipSummary() {
+  // Tìm nội dung Markdown được đánh dấu "# <PREFIX>: <tiêu đề>" (WIP hoặc
+  // SKILL) mà AI vừa trả lời — dùng chung cho saveWipSummary() và
+  // scanAndSave() bên dưới.
+  //
+  // THE "ChatGPT không lấy được markdown" BUG: SUMMARY_PROMPT/EXTRACTION_PROMPT
+  // yêu cầu AI trả lời bên trong 1 fenced ```markdown code block, nhưng AI
+  // không phải lúc nào cũng tuân thủ đúng format đó — nhiều khi nó trả lời
+  // luôn bằng markdown ĐÃ ĐƯỢC RENDER (thành <h1>/<p>/<ul> thật của khung
+  // chat) thay vì giữ nguyên trong 1 code block thô. Khi đó:
+  //   - Không có phần tử `pre code`/`cm-content` nào cả → vòng lặp cũ trả
+  //     về rỗng ngay từ đầu ("Không tìm thấy code block Markdown").
+  //   - Ngay cả khi có, dòng "# WIP: Tên" bị trình duyệt render thành thẻ
+  //     <h1>WIP: Tên</h1> thật — .innerText của nó chỉ còn "WIP: Tên",
+  //     KHÔNG còn ký tự "#" nữa — nên regex cũ (bắt buộc có "# ") không
+  //     bao giờ khớp được.
+  // Vì vậy scraper cũ CHỈ hoạt động khi AI tình cờ trả lời đúng trong 1
+  // code fence — im lặng thất bại mọi lúc khác. Fix: regex cho "#" là tuỳ
+  // chọn (khớp cả 2 dạng), và khi không có code block nào, fallback quét
+  // luôn text thật của tin nhắn AI cuối cùng trên trang.
+  function findTaggedMarkdown(docTypePrefix) {
+    const headerRe = new RegExp(`^#{0,3}\\s*${docTypePrefix}:\\s*(.*)`, "im");
+
     const allBlocks = document.querySelectorAll("pre code, div.cm-content");
     const codeBlocks = Array.from(allBlocks).filter((el) => !el.closest("#prompt-textarea"));
-
-    if (codeBlocks.length === 0) return showToast("⚠️ Không tìm thấy code block Markdown!", "warning");
-
-    let validContent = null,
-      docTitle = "";
 
     for (let i = codeBlocks.length - 1; i >= 0; i--) {
       const block = codeBlocks[i];
@@ -5612,14 +5668,34 @@ function injectWidget(toolName) {
       }
 
       md = md.trim().replace(/^markdown\n/i, "");
-      const match = md.match(new RegExp(`# WIP:\\s*(.*)`, "i"));
+      const match = md.match(headerRe);
       if (match && !match[1].includes("[Tên")) {
-        validContent = md;
-        docTitle = match[1].trim();
-        break;
+        return { content: md, title: match[1].trim() };
       }
     }
-    if (!validContent) return showToast(`⛔ Không tìm thấy nội dung "WIP" hợp lệ!`, "error");
+
+    // Fallback: AI trả lời bằng markdown đã render (không có code fence) —
+    // quét thẳng text thật của (các) tin nhắn AI trên trang, mới nhất trước.
+    const aiMessages = document.querySelectorAll(
+      '[data-message-author-role="assistant"], [data-is-streaming="false"], .font-claude-message, model-response, .model-response-text, .response-container'
+    );
+    for (let i = aiMessages.length - 1; i >= 0; i--) {
+      const md = (aiMessages[i].innerText || aiMessages[i].textContent || "").trim();
+      const match = md.match(headerRe);
+      if (match && !match[1].includes("[Tên")) {
+        return { content: md, title: match[1].trim() };
+      }
+    }
+
+    return null;
+  }
+
+  // Hàm Lưu Tóm Tắt
+  async function saveWipSummary() {
+    const found = findTaggedMarkdown("WIP");
+    if (!found) return showToast(`⛔ Không tìm thấy nội dung "WIP" hợp lệ!`, "error");
+    const validContent = found.content;
+    const docTitle = found.title;
 
     const featureInput = document.getElementById("markee-feature-input-push");
 
@@ -5720,6 +5796,30 @@ function injectWidget(toolName) {
       console.log("🟡 [Markee] finalizePayload gặp lỗi, tiếp tục lưu text:", err.message);
     }
 
+    // Gộp thêm file người dùng tự kéo/chọn (2 khung: summary card + drawer
+    // sheet) — trước đây các khung này chỉ hiện tên file cho có, không có
+    // gì thật sự được gửi đi. `POST .../features/{id}/logs` đã nhận
+    // `attached_files` sẵn (dùng chung với autoScrapedFiles), chỉ thiếu nối
+    // vào đây.
+    const stagedWip = [
+      ...(window.markeeStagedAttachFiles?.wipSummary || []),
+      ...(window.markeeStagedAttachFiles?.wipDrawer || []),
+    ];
+    if (stagedWip.length > 0) {
+      try {
+        const converted = await Promise.all(stagedWip.map(fileToAttachEntry));
+        const existingNames = new Set(autoFiles.map((f) => f.fileName || f.name || ""));
+        for (const f of converted) {
+          if (!existingNames.has(f.fileName)) {
+            autoFiles.push(f);
+            existingNames.add(f.fileName);
+          }
+        }
+      } catch (err) {
+        console.log("🟡 [Markee] Lỗi đọc file đính kèm thủ công:", err.message);
+      }
+    }
+
     if (autoFiles.length > 0) {
       showToast(`✅ Đã tự hút ${autoFiles.length} file từ AI! Đang lưu...`);
     } else {
@@ -5744,7 +5844,16 @@ function injectWidget(toolName) {
     }, (res) => {
       if (res && res.success === false) {
         showToast(`⚠️ ${res.error || "Lưu Tóm Tắt thất bại."}`, "warning");
+        return;
       }
+      // Xoá kho tạm + list hiển thị sau khi gửi thành công, tránh gắn nhầm
+      // lại đúng mấy file này vào lần Lưu Tóm tắt kế tiếp.
+      window.markeeStagedAttachFiles.wipSummary = [];
+      window.markeeStagedAttachFiles.wipDrawer = [];
+      const summaryAttachedEl = document.getElementById("markee-summaryAttached");
+      const drawerAttachedEl = document.getElementById("markee-drawerAttached");
+      if (summaryAttachedEl) summaryAttachedEl.innerHTML = "";
+      if (drawerAttachedEl) drawerAttachedEl.innerHTML = "";
     });
   }
 
@@ -5767,35 +5876,10 @@ function injectWidget(toolName) {
   loadCustomers();
 
   async function scanAndSave(docTypePrefix, skillTypeVal) {
-    const allBlocks = document.querySelectorAll("pre code, div.cm-content");
-    const codeBlocks = Array.from(allBlocks).filter((el) => !el.closest("#prompt-textarea"));
-
-    if (codeBlocks.length === 0) return showToast("⚠️ Không tìm thấy code block Markdown!", "warning");
-
-    let validContent = null,
-      docTitle = "";
-
-    for (let i = codeBlocks.length - 1; i >= 0; i--) {
-      const block = codeBlocks[i];
-      let md = "";
-
-      // FIX: Nối dòng cho CodeMirror của ChatGPT
-      if (block.classList.contains("cm-content") || block.querySelector(".cm-line")) {
-        const lines = Array.from(block.querySelectorAll(".cm-line")).map((l) => l.innerText || l.textContent);
-        md = lines.join("\n");
-      } else {
-        md = block.innerText || block.textContent || "";
-      }
-
-      md = md.trim().replace(/^markdown\n/i, "");
-      const match = md.match(new RegExp(`# ${docTypePrefix}:\\s*(.*)`, "i"));
-      if (match && !match[1].includes("[Tên")) {
-        validContent = md;
-        docTitle = match[1].trim();
-        break;
-      }
-    }
-    if (!validContent) return showToast(`⛔ Không tìm thấy nội dung "${docTypePrefix}" hợp lệ!`, "error");
+    const found = findTaggedMarkdown(docTypePrefix);
+    if (!found) return showToast(`⛔ Không tìm thấy nội dung "${docTypePrefix}" hợp lệ!`, "error");
+    const validContent = found.content;
+    const docTitle = found.title;
 
     const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
     let pId = null;
@@ -5805,9 +5889,22 @@ function injectWidget(toolName) {
     }
     let finalSkillType = docTypePrefix === "SKILL" ? document.getElementById("markee-asset-type-select").value : skillTypeVal;
 
+    // Gộp file người dùng tự kéo/chọn vào khung Skill (trước đây chỉ hiện
+    // tên file cho có, không gửi gì thật) — cùng cách với saveWipSummary().
+    let manualFiles = [];
+    const stagedSkill = window.markeeStagedAttachFiles?.skill || [];
+    if (stagedSkill.length > 0) {
+      try {
+        manualFiles = await Promise.all(stagedSkill.map(fileToAttachEntry));
+      } catch (err) {
+        console.log("🟡 [Markee] Lỗi đọc file đính kèm thủ công (Skill):", err.message);
+      }
+    }
+
     showToast("⏳ Đang lưu...");
     chrome.runtime.sendMessage({
       action: "SAVE_SCRAPED_MARKDOWN",
+      autoScrapedFiles: manualFiles,
       data: {
         title: (docTypePrefix === "WIP" ? "WIP: " : "") + docTitle,
         markdown_content: validContent,
@@ -5823,7 +5920,11 @@ function injectWidget(toolName) {
     }, (res) => {
       if (res && res.success === false) {
         showToast(`⚠️ ${res.error || "Lưu Kỹ Năng thất bại."}`, "warning");
+        return;
       }
+      window.markeeStagedAttachFiles.skill = [];
+      const skillFileListEl = document.getElementById("markee-skillFileList");
+      if (skillFileListEl) skillFileListEl.innerHTML = "";
     });
   }
   document.getElementById("btn-save-skill").onclick = () => scanAndSave("SKILL", "dynamic");
