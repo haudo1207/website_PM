@@ -1197,7 +1197,13 @@ async function autoScrapeAIFiles() {
       // (its own literal markers), so the class-based check was redundant
       // for that case and over-broad for every other one — dropping it
       // only removes the over-blocking, the WIP guard itself is unchanged.
-      if (textContent.includes("# WIP:") || textContent.includes("MỤC ĐÍCH: Lưu trạng thái")) {
+      // Đồng bộ với fix "Writing block" của findTaggedMarkdown() bên
+      // ui.js: khi ChatGPT hiển thị bản WIP qua Writing block (không phải
+      // code block thường), dòng "# WIP:" bị render mất ký tự "#" trong
+      // .innerText — check cũ chỉ khớp CÓ "#" nên không nhận ra đây là nội
+      // dung WIP nữa, dẫn tới lưu dư 1 file "ai_output.md" trùng lặp với
+      // chính log WIP đã được lưu qua findTaggedMarkdown(). "#" giờ tuỳ chọn.
+      if (/^#{0,3}\s*WIP:/im.test(textContent) || textContent.includes("MỤC ĐÍCH: Lưu trạng thái")) {
         console.log("[Markee AutoScrape] 🚫 Đã chặn: Bỏ qua tạo file do nội dung chứa text WIP.");
         textContent = "";
       }
