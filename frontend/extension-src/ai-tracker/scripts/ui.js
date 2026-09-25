@@ -828,7 +828,15 @@ function injectWidget(toolName) {
       #markee-widget .pf-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;}
       #markee-widget .pf-title{font-size:9.5px;font-weight:900;color:#8f99ff;letter-spacing:.04em;}
       #markee-widget .pf-project{font-size:9.5px;font-weight:800;color:#fff;}
-      #markee-widget .pf-select{width:100%;}
+      /* Was missing from the shared dark-select rule below (only
+         width:100% here) — every OTHER select in this widget gets an
+         explicit dark background/text color, but this one fell back to
+         the browser's native white control background while still
+         inheriting the widget's light/white text color, so the closed
+         box (e.g. "Meeting Cretate") rendered as near-invisible white
+         text on a white background whenever a project already had
+         features to show. */
+      #markee-widget .pf-select{width:100%;height:28px;border-radius:7px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.6px;box-sizing:border-box;}
       #markee-widget .project-list{display:flex;flex-direction:column;gap:5px;padding:0 9px 9px;overflow-y:auto;flex:1;min-height:120px;}
       #markee-widget .item{min-height:36px;border-radius:9px;background:#111629;border:1px solid rgba(255,255,255,.055);display:flex;align-items:center;gap:7px;padding:6px 8px;cursor:pointer;}
       #markee-widget .item:hover{border-color:rgba(91,99,255,.42);}
