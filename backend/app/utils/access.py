@@ -482,6 +482,91 @@ def member_query_for_user(db: Session, user):
     return query.filter(or_(*conditions))
 
 
+def user_in_workspace_scopes(db: Session, user_or_id, scopes) -> bool:
+    """True when the user (id or User object) demonstrably belongs to at least
+    one of the given Workspace scope-codes.
+
+    The Workspace a user belongs to is DERIVED FROM THE DATABASE relationship —
+    `user_workspace_access` grants plus the legacy `User.data_scope` column —
+    never from anything a client sends. A user is considered global (and thus
+    inside every scope) when their data_scope == 'all'.
+    """
+    if not scopes:
+        return False
+    if isinstance(user_or_id, User):
+        user = user_or_id
+    else:
+        user = db.query(User).filter(User.id == int(user_or_id)).first()
+    if not user:
+        return False
+    scope_set = {str(s).strip().lower() for s in scopes if str(s).strip()}
+    if not scope_set:
+        return False
+    ds = (getattr(user, "data_scope", None) or "").strip().lower()
+    if ds == ALL_SCOPE:
+        return True
+    if ds in scope_set:
+        return True
+    granted = (
+        db.query(Workspace.code)
+        .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
+        .filter(
+            UserWorkspaceAccess.user_id == user.id,
+            Workspace.code.in_(scope_set),
+        )
+        .all()
+    )
+    return bool(granted)
+
+
+def workspaces_for_member(db: Session, member_id):
+    """Workspace rows a Member belongs to, derived from their linked User's
+    DB grants (`user_workspace_access` + legacy `data_scope`). Falls back to
+    the Member's free-text `team` name matched against the Workspace Master
+    (e.g. team 'DEV' → Workspace 'DEV') only when the Member has no linked
+    User record yet.
+
+    This is the backend's single source of truth for "which Workspace does this
+    Member's data live in" — the Check Working/Lunch config rows, lunch records,
+    calendar and leave scoping all rely on it.
+    """
+    if member_id is None:
+        return []
+    user = db.query(User).filter(User.member_id == member_id).first()
+
+    workspaces = []
+    seen = set()
+    if user is not None:
+        ds = (getattr(user, "data_scope", None) or "").strip()
+        # Linked user grants are the canonical relationship.
+        rows = (
+            db.query(Workspace)
+            .join(UserWorkspaceAccess, UserWorkspaceAccess.workspace_id == Workspace.id)
+            .filter(UserWorkspaceAccess.user_id == user.id)
+            .all()
+        )
+        for ws in rows:
+            if ws.id not in seen:
+                workspaces.append(ws)
+                seen.add(ws.id)
+        if ds and ds != ALL_SCOPE:
+            ws = resolve_workspace(db, ds)
+            if ws and ws.id not in seen:
+                workspaces.append(ws)
+                seen.add(ws.id)
+        if workspaces:
+            return workspaces
+
+    # No linked account / no grants yet: fall back to the Member's team name
+    # matched against the Workspace Master (member.team 'DEV' -> workspace DEV).
+    member = db.query(Member).filter(Member.id == member_id).first()
+    if member is not None and member.team:
+        ws = resolve_workspace(db, member.team)
+        if ws:
+            return [ws]
+    return []
+
+
 # ── Workspace → department mapping for Member/Leader attribution ─────────
 # Mirrors the department-matching rule used inside member_query_for_user() so
 # the Dashboard Leader visibility stays consistent with the Member dataset.

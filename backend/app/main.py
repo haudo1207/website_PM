@@ -43,10 +43,53 @@ from .models import leave_request as leave_request_model
 from .models import project_template as project_template_model
 from .models import notification as notification_model
 from .models import workspace_access as workspace_access_model
+from .models import working_lunch as working_lunch_model
 from .models import telegram_connection as telegram_connection_model
 from .models import zalo as zalo_model
 from .models import workload_setting as workload_setting_model
 from sqlalchemy import text
+
+
+def apply_working_lunch_schema():
+    """Create the daily Check Lunch roster table independently of legacy DDL."""
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS workspace_working_lunch_members (
+                id SERIAL PRIMARY KEY,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                work_date DATE NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT false,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                CONSTRAINT uq_workspace_working_lunch_member_day
+                    UNIQUE (workspace_id, member_id, work_date)
+            )
+        """))
+        conn.execute(text(
+            "ALTER TABLE workspace_working_lunch_members "
+            "ADD COLUMN IF NOT EXISTS work_date DATE"
+        ))
+        conn.execute(text(
+            "UPDATE workspace_working_lunch_members SET work_date = CURRENT_DATE, enabled = false "
+            "WHERE work_date IS NULL"
+        ))
+        conn.execute(text(
+            "ALTER TABLE workspace_working_lunch_members ALTER COLUMN work_date SET NOT NULL"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_member_id "
+            "ON workspace_working_lunch_members (member_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_workspace_id "
+            "ON workspace_working_lunch_members (workspace_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_work_date "
+            "ON workspace_working_lunch_members (work_date)"
+        ))
+
 
 def apply_schema_updates():
     """Small idempotent migrations for existing installs without Alembic."""
@@ -345,6 +388,44 @@ def apply_schema_updates():
         # (and upsert lookups) do not require a full table scan.
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_lunch_records_date ON lunch_records (date)"
+        ))
+
+        # Check Working/Lunch member configuration (workspace-scoped): which
+        # Members are allowed to participate, per Workspace. Idempotent for
+        # existing installs; mirrored by SQLAlchemy model working_lunch so
+        # Base.metadata.create_all() also covers brand-new databases.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS workspace_working_lunch_members (
+                id SERIAL PRIMARY KEY,
+                workspace_id INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                work_date DATE NOT NULL,
+                enabled BOOLEAN NOT NULL DEFAULT false,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+                CONSTRAINT uq_workspace_working_lunch_member_day UNIQUE (workspace_id, member_id, work_date)
+            )
+        """))
+        conn.execute(text("ALTER TABLE workspace_working_lunch_members ADD COLUMN IF NOT EXISTS work_date DATE"))
+        conn.execute(text(
+            "UPDATE workspace_working_lunch_members "
+            "SET work_date = CURRENT_DATE, enabled = false "
+            "WHERE work_date IS NULL"
+        ))
+        conn.execute(text("ALTER TABLE workspace_working_lunch_members ALTER COLUMN work_date SET NOT NULL"))
+        conn.execute(text("ALTER TABLE workspace_working_lunch_members DROP CONSTRAINT IF EXISTS uq_workspace_working_lunch_member"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_workspace_working_lunch_member_day ON workspace_working_lunch_members (workspace_id, member_id, work_date)"))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_member_id "
+            "ON workspace_working_lunch_members (member_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_workspace_id "
+            "ON workspace_working_lunch_members (workspace_id)"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_wwlm_work_date "
+            "ON workspace_working_lunch_members (work_date)"
         ))
 
         # Create audit_logs table and indices if not exists
@@ -1537,6 +1618,7 @@ def init_db_defaults():
 def run_startup_once():
     """Apply idempotent schema/default updates in one pre-deploy process."""
     Base.metadata.create_all(bind=engine)
+    apply_working_lunch_schema()
     try:
         apply_schema_updates()
     except Exception as e:

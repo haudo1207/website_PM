@@ -3,7 +3,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Navbar from '@/components/Navbar';
 import { formatDateLabel } from '@/lib/leave-request';
-import { deleteLunchRecord, getLunchRecords, getMembers, upsertLunchRecord } from '@/lib/api';
+import { deleteLunchRecord, getLunchRecords, getWorkingLunchConfig, getWorkingLunchMembers, toggleWorkingLunchMember, upsertLunchRecord } from '@/lib/api';
 import { getBusinessWeekdayLabel, isWeekendDate, monthCalendarDays, parseYmdLocal, workingDaysForMonth } from '@/lib/business-date';
 
 type LunchStatus = '' | 'lunch' | 'no_lunch' | 'onsite' | 'bonus';
@@ -17,6 +17,9 @@ interface Member {
   department?: string;
   position?: string;
   user_id?: number;
+  workspace_id?: number;
+  workspace_code?: string;
+  enabled?: boolean;
 }
 
 interface LunchRecord {
@@ -28,7 +31,7 @@ interface LunchRecord {
 }
 
 const LUNCH_PRICE = 40000;
-const ADMIN_ROLES = new Set(['admin', 'super_admin']);
+const ADMIN_ROLES = new Set(['admin', 'super_admin', 'leader']);
 const STATUS_OPTIONS: { value: LunchStatus; label: string }[] = [
   { value: 'no_lunch', label: 'Không đặt' },
   { value: 'lunch', label: 'Đặt' },
@@ -143,6 +146,11 @@ export default function CheckLunchPage() {
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
+  /** Workspace-scoped roster incl. not-yet-enabled members, for manager
+   *  (SUPER ADMIN / Leader) configuration. Empty for plain Members. */
+  const [configMembers, setConfigMembers] = useState<Member[]>([]);
+  const [savingConfigId, setSavingConfigId] = useState<number | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const monthCacheRef = useRef<Map<string, LunchRecord[]>>(new Map());
 
   const commitCache = useCallback((year: number, month: number, records: LunchRecord[]) => {
@@ -165,23 +173,38 @@ export default function CheckLunchPage() {
     const fetchData = async () => {
       setLoading(true);
       try {
-        // getMembers and the monthly lunch records are independent — fetch them
-        // in parallel instead of sequentially.
+        const role = localStorage.getItem('role') || '';
+        const userId = Number(localStorage.getItem('user_id') || 0);
+        const canManage = ADMIN_ROLES.has(role);
+
+        setIsAdmin(canManage);
+
+        // The Check Working/Lunch roster is decided by the BACKEND from the
+        // current user's DB Workspace relationship — the client never picks a
+        // workspace. `/lunch/members` returns only Members that a manager has
+        // explicitly enabled inside the caller's Workspace (and, for a plain
+        // Member/Viewer, only the caller themselves when enabled).
         const [membersRes, records] = await Promise.all([
-          getMembers(),
+          getWorkingLunchMembers({ enabled_only: true, date: selectedDate }),
           getLunchRecords({ year: selectedYear, month: selectedMonth }),
         ]);
         setMembers(membersRes);
         commitCache(selectedYear, selectedMonth, records);
         setLunchRecords(records);
 
-        const role = localStorage.getItem('role') || '';
-        const userId = Number(localStorage.getItem('user_id') || 0);
-        const storedMemberId = Number(localStorage.getItem('member_id') || 0);
-        const member = membersRes.find((m: Member) => m.user_id === userId);
+        // Managers (SUPER ADMIN / Leader) additionally load the Workspace-scoped
+        // configuration list so they can enable/disable participants.
+        if (canManage) {
+          try {
+            const configRes = await getWorkingLunchConfig(undefined, selectedDate);
+            setConfigMembers(configRes);
+          } catch (configError) {
+            console.error('Error fetching working/lunch configuration:', configError);
+          }
+        }
 
-        setIsAdmin(ADMIN_ROLES.has(role));
-        setCurrentMemberId(storedMemberId || member?.id || null);
+        const member = membersRes.find((m: Member) => m.user_id === userId);
+        setCurrentMemberId(member?.id || null);
       } catch (error) {
         console.error('Error fetching check lunch data:', error);
       } finally {
@@ -194,6 +217,25 @@ export default function CheckLunchPage() {
     // intentionally read from the initial render only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    const refreshDailyRoster = async () => {
+      try {
+        const roster = await getWorkingLunchMembers({ enabled_only: true, date: selectedDate });
+        setMembers(roster);
+        const userId = Number(localStorage.getItem('user_id') || 0);
+        setCurrentMemberId(roster.find((member: Member) => member.user_id === userId)?.id || null);
+        if (isAdmin) {
+          const config = await getWorkingLunchConfig(undefined, selectedDate);
+          setConfigMembers(config);
+        }
+      } catch (error) {
+        console.error('Error fetching daily Check Lunch roster:', error);
+      }
+    };
+    refreshDailyRoster();
+  }, [isAdmin, loading, selectedDate]);
 
   useEffect(() => {
     if (loading) return;
@@ -433,6 +475,25 @@ export default function CheckLunchPage() {
     }
   }, []);
 
+  const handleRosterToggle = useCallback(async (memberId: number, enabled: boolean) => {
+    setSavingConfigId(memberId);
+    setConfigError(null);
+    try {
+      await toggleWorkingLunchMember(memberId, enabled, selectedDate);
+      const [config, roster] = await Promise.all([
+        getWorkingLunchConfig(undefined, selectedDate),
+        getWorkingLunchMembers({ enabled_only: true, date: selectedDate }),
+      ]);
+      setConfigMembers(config);
+      setMembers(roster);
+    } catch (error) {
+      console.error('Error updating daily Check Lunch roster:', error);
+      setConfigError('Không thể cập nhật danh sách cho ngày này.');
+    } finally {
+      setSavingConfigId(null);
+    }
+  }, [selectedDate]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f1f5f9] text-[#0b1c30]">
@@ -460,7 +521,16 @@ export default function CheckLunchPage() {
             </div>
 
             <section className="mb-4 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="grid gap-3 md:grid-cols-[130px_130px_130px_minmax(220px,1fr)] md:items-end">
+              <div className="grid gap-3 md:grid-cols-[150px_130px_130px_130px_minmax(220px,1fr)] md:items-end">
+                <label className="block">
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Ngày chọn người</span>
+                  <input
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    className="h-10 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm outline-none focus:border-blue-500"
+                  />
+                </label>
                 <label className="block">
                   <span className="mb-1 block text-xs font-semibold text-slate-600">Team</span>
                   <select
@@ -513,6 +583,37 @@ export default function CheckLunchPage() {
                 <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-orange-200 bg-orange-50" />Onsite</span>
                 <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-violet-200 bg-violet-50" />Bonus</span>
                 <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" />Chưa chọn</span>
+              </div>
+            </section>
+
+            <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm">
+              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-bold text-slate-800">Chọn thành viên Check Lunch</h2>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Danh sách áp dụng riêng cho ngày {formatDateLabel(selectedDate)}. Chỉ người được bật mới thấy tab đăng ký của mình.
+                  </p>
+                </div>
+                <span className="text-xs font-semibold text-blue-700">
+                  {configMembers.filter((member) => member.enabled).length} người được chọn
+                </span>
+              </div>
+              {configError && <p className="mt-2 text-xs font-semibold text-rose-600">{configError}</p>}
+              <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
+                {configMembers.map((member) => (
+                  <label key={member.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:border-blue-300">
+                    <input
+                      type="checkbox"
+                      checked={member.enabled === true}
+                      disabled={savingConfigId === member.id}
+                      onChange={(event) => handleRosterToggle(member.id, event.target.checked)}
+                      className="h-4 w-4 accent-blue-600"
+                    />
+                    <span className="min-w-0 truncate font-medium text-slate-700">{memberName(member)}</span>
+                    <span className="ml-auto shrink-0 text-[10px] text-slate-400">{member.team || ''}</span>
+                  </label>
+                ))}
+                {configMembers.length === 0 && <div className="text-sm text-slate-500">Chưa có thành viên trong Workspace này.</div>}
               </div>
             </section>
 
