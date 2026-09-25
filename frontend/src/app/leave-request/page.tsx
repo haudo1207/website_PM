@@ -9,7 +9,7 @@ import StatusBadge, { LeaveTypeBadge } from '@/components/leave-request/StatusBa
 import LeaveRequestForm from '@/components/leave-request/LeaveRequestForm';
 import Portal from '@/components/Portal';
 import { formatDateLabel, formatLeaveRange, LeaveRequest, LeaveRequestFormValues, getStorageKey, mockLeaveRequests } from '@/lib/leave-request';
-import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, deleteLunchRecord, getLunchMonthlySummary } from '@/lib/api';
+import { getMembers, getLeaveRequests, createLeaveRequest, updateLeaveRequest, deleteLeaveRequest, approveLeaveRequest, getLunchRecords, upsertLunchRecord, deleteLunchRecord, getLunchMonthlySummary, getWorkingLunchConfig, getWorkingLunchMembers, toggleWorkingLunchMember } from '@/lib/api';
 import { getBusinessWeekdayLabel, isWeekendDate, monthCalendarDays, workingDaysForMonth } from '@/lib/business-date';
 
 const ITEMS_PER_PAGE = 5;
@@ -74,6 +74,9 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   const [selectedDate, setSelectedDate] = useState(calendarDate);
   const [currentMemberId, setCurrentMemberId] = useState<number | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [dailyMembers, setDailyMembers] = useState<TeamMember[]>([]);
+  const [configMembers, setConfigMembers] = useState<Array<TeamMember & { enabled?: boolean }>>([]);
+  const [savingConfigId, setSavingConfigId] = useState<number | 'bulk' | null>(null);
 
   const fetchLunchRecords = useCallback(async () => {
     const records = await getLunchRecords({ year: selectedYear, month: selectedMonth });
@@ -81,11 +84,35 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   }, [selectedMonth, selectedYear]);
 
   useEffect(() => {
-    const userId = Number(localStorage.getItem('user_id') || 0);
-    const storedMemberId = Number(localStorage.getItem('member_id') || 0);
-    const member = members.find((m) => m.user_id === userId);
-    setCurrentMemberId(storedMemberId || member?.id || null);
-  }, [members]);
+    const loadDailyRoster = async () => {
+      try {
+        const rosterPromise = getWorkingLunchMembers({ enabled_only: true, date: selectedDate });
+        const configPromise = isAdmin ? getWorkingLunchConfig(undefined, selectedDate) : Promise.resolve([]);
+        const [roster, config] = await Promise.all([rosterPromise, configPromise]);
+        const userId = Number(localStorage.getItem('user_id') || 0);
+        const rosterMembers = roster.map((member: any) => ({
+          ...member,
+          name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+          team: member.team || '',
+          role: member.position || 'Member',
+        }));
+        setDailyMembers(rosterMembers);
+        setCurrentMemberId(rosterMembers.find((member: any) => member.user_id === userId)?.id || null);
+        if (isAdmin) {
+          setConfigMembers(config.map((member: any) => ({
+            ...member,
+            name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+            team: member.team || '',
+            role: member.position || 'Member',
+          })));
+        }
+      } catch (error) {
+        console.error('Error fetching daily Check Lunch roster:', error);
+        setDailyMembers([]);
+      }
+    };
+    loadDailyRoster();
+  }, [isAdmin, selectedDate]);
 
   useEffect(() => {
     fetchLunchRecords().catch((err: unknown) => console.error('Error fetching lunch records:', err));
@@ -93,16 +120,16 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
 
   const teams = useMemo(() => {
     const set = new Set<string>();
-    members.forEach((m) => { if (m.team) set.add(m.team); });
+    dailyMembers.forEach((m) => { if (m.team) set.add(m.team); });
     return ['All', ...Array.from(set).sort()];
-  }, [members]);
+  }, [dailyMembers]);
 
   const visibleMembers = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
-    return members
+    return dailyMembers
       .filter((m) => selectedTeam === 'All' || m.team === selectedTeam)
       .filter((m) => !q || m.name.toLowerCase().includes(q));
-  }, [members, searchTerm, selectedTeam]);
+  }, [dailyMembers, searchTerm, selectedTeam]);
 
   const calendarDays = useMemo(() => monthCalendarDays(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
   const workDays = useMemo(() => workingDaysForMonth(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
@@ -186,6 +213,56 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
       console.error('Error saving lunch status:', err);
     } finally {
       setSavingKey(null);
+    }
+  };
+
+  const toggleDailyMember = async (memberId: number, enabled: boolean) => {
+    setSavingConfigId(memberId);
+    try {
+      await toggleWorkingLunchMember(memberId, enabled, selectedDate);
+      const [roster, config] = await Promise.all([
+        getWorkingLunchMembers({ enabled_only: true, date: selectedDate }),
+        getWorkingLunchConfig(undefined, selectedDate),
+      ]);
+      setDailyMembers(roster.map((member: any) => ({
+        ...member,
+        name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+        team: member.team || '',
+        role: member.position || 'Member',
+      })));
+      setConfigMembers(config.map((member: any) => ({
+        ...member,
+        name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+        team: member.team || '',
+        role: member.position || 'Member',
+      })));
+    } finally {
+      setSavingConfigId(null);
+    }
+  };
+
+  const toggleAllDailyMembers = async (enabled: boolean) => {
+    setSavingConfigId('bulk');
+    try {
+      await Promise.all(configMembers.map((member) => toggleWorkingLunchMember(member.id, enabled, selectedDate)));
+      const [roster, config] = await Promise.all([
+        getWorkingLunchMembers({ enabled_only: true, date: selectedDate }),
+        getWorkingLunchConfig(undefined, selectedDate),
+      ]);
+      setDailyMembers(roster.map((member: any) => ({
+        ...member,
+        name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+        team: member.team || '',
+        role: member.position || 'Member',
+      })));
+      setConfigMembers(config.map((member: any) => ({
+        ...member,
+        name: member.name || member.full_name || member.display_name || 'Chưa có tên',
+        team: member.team || '',
+        role: member.position || 'Member',
+      })));
+    } finally {
+      setSavingConfigId(null);
     }
   };
 
@@ -315,7 +392,11 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
       </div>
 
       <section className="mb-4 rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
-        <div className="grid gap-3 md:grid-cols-[130px_130px_130px_minmax(220px,1fr)] md:items-end">
+        <div className="grid gap-3 md:grid-cols-[150px_130px_130px_130px_minmax(220px,1fr)] md:items-end">
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold text-[#565e74]">Ngày chọn người</span>
+            <input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none" />
+          </label>
           <label className="block">
             <span className="mb-1 block text-xs font-semibold text-[#565e74]">Team</span>
             <select value={selectedTeam} onChange={(e) => setSelectedTeam(e.target.value)} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
@@ -347,6 +428,38 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
           <span className="inline-flex items-center gap-1"><span className="h-2.5 w-2.5 rounded-sm border border-slate-200 bg-slate-50" />Chưa chọn</span>
         </div>
       </section>
+
+      {isAdmin && (
+        <section className="mb-4 rounded-xl border border-blue-200 bg-blue-50/40 p-4 shadow-sm">
+          <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-sm font-bold text-[#061733]">Chọn người có mặt ngày {formatDateLabel(selectedDate)}</h3>
+              <p className="mt-1 text-xs text-[#565e74]">Chỉ người được tích mới xuất hiện trong bảng và được phép tự đăng ký Đặt/Không đặt.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold text-blue-700">{configMembers.filter((member) => member.enabled).length}/{configMembers.length} người</span>
+              <button type="button" onClick={() => toggleAllDailyMembers(true)} disabled={savingConfigId !== null || configMembers.length === 0} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Chọn tất cả</button>
+              <button type="button" onClick={() => toggleAllDailyMembers(false)} disabled={savingConfigId !== null || configMembers.length === 0} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50">Bỏ chọn tất cả</button>
+            </div>
+          </div>
+          <div className="mt-3 grid max-h-56 gap-2 overflow-y-auto sm:grid-cols-2 lg:grid-cols-4">
+            {configMembers.map((member) => (
+              <label key={member.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm hover:border-blue-300">
+                <input
+                  type="checkbox"
+                  checked={member.enabled === true}
+                  disabled={savingConfigId !== null}
+                  onChange={(event) => toggleDailyMember(member.id, event.target.checked)}
+                  className="h-4 w-4 accent-blue-600"
+                />
+                <span className="min-w-0 truncate font-medium text-slate-700">{member.name}</span>
+                <span className="ml-auto shrink-0 text-[10px] text-slate-400">{member.team || ''}</span>
+              </label>
+            ))}
+            {configMembers.length === 0 && <div className="text-sm text-slate-500">Chưa có member trong Workspace này.</div>}
+          </div>
+        </section>
+      )}
 
       <section className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -894,7 +1007,7 @@ export default function LeaveRequestPage() {
       try {
         const [leaveData, membersData] = await Promise.all([
           getLeaveRequests(),
-          getMembers({ light: true }),
+          getMembers({ light: true, scope: true }),
         ]);
 
         const mapped: TeamMember[] = membersData.map((m: any) => ({
