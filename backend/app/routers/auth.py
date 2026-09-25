@@ -99,6 +99,8 @@ def token_response(user: User) -> dict:
     return {
         "access_token": token,
         "token_type": "bearer",
+        "user_id": user.id,
+        "member_id": user.member_id,
         "role": user.role,
         "full_name": user.full_name,
         "avatar_url": user.avatar_url,

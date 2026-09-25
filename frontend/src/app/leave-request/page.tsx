@@ -90,6 +90,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
         const configPromise = isAdmin ? getWorkingLunchConfig(undefined, selectedDate) : Promise.resolve([]);
         const [roster, config] = await Promise.all([rosterPromise, configPromise]);
         const userId = Number(localStorage.getItem('user_id') || 0);
+        const memberId = Number(localStorage.getItem('member_id') || 0);
         const rosterMembers = roster.map((member: any) => ({
           ...member,
           name: member.name || member.full_name || member.display_name || 'Chưa có tên',
@@ -97,7 +98,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
           role: member.position || 'Member',
         }));
         setDailyMembers(rosterMembers);
-        setCurrentMemberId(rosterMembers.find((member: any) => member.user_id === userId)?.id || null);
+        setCurrentMemberId(rosterMembers.find((member: any) => member.user_id === userId)?.id || memberId || (!isAdmin && rosterMembers.length === 1 ? rosterMembers[0].id : null));
         if (isAdmin) {
           setConfigMembers(config.map((member: any) => ({
             ...member,
@@ -267,7 +268,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   };
 
   if (!isAdmin) {
-    const currentMember = currentMemberId ? members.find((m) => m.id === currentMemberId) : null;
+    const currentMember = currentMemberId ? dailyMembers.find((m) => m.id === currentMemberId) : null;
     return (
       <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-5">
         <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
@@ -1005,24 +1006,8 @@ export default function LeaveRequestPage() {
     queryKey: QUERY_KEY,
     queryFn: async () => {
       try {
-        const [leaveData, membersData] = await Promise.all([
-          getLeaveRequests(),
-          getMembers({ light: true, scope: true }),
-        ]);
-
-        const mapped: TeamMember[] = membersData.map((m: any) => ({
-          id: m.id,
-          name: m.full_name || m.display_name || m.name || 'Unknown',
-          team: m.team || 'Unassigned',
-          role: m.position || 'Member',
-          email: m.email,
-          telegram_username: m.telegram_username,
-          phone: m.phone,
-          position: m.position,
-          user_id: m.user_id,
-        }));
-
-        return { requests: leaveData as LeaveRequest[], teamMembers: mapped };
+        const requests = await getLeaveRequests();
+        return { requests: requests as LeaveRequest[], teamMembers: [] as TeamMember[] };
       } catch (error) {
         console.error('Error fetching data:', error);
         return { requests: mockLeaveRequests, teamMembers: [] as TeamMember[] };
@@ -1035,7 +1020,28 @@ export default function LeaveRequestPage() {
   });
 
   const requests: LeaveRequest[] = leaveData?.requests || [];
-  const teamMembers: TeamMember[] = leaveData?.teamMembers || [];
+  const { data: memberData } = useQuery({
+    queryKey: ['leave-request-members'],
+    queryFn: async () => {
+      const membersData = await getMembers({ light: true, scope: true });
+      return membersData.map((m: any): TeamMember => ({
+        id: m.id,
+        name: m.full_name || m.display_name || m.name || 'Unknown',
+        team: m.team || 'Unassigned',
+        role: m.position || 'Member',
+        email: m.email,
+        telegram_username: m.telegram_username,
+        phone: m.phone,
+        position: m.position,
+        user_id: m.user_id,
+      }));
+    },
+    enabled: view === 'calendar',
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const teamMembers: TeamMember[] = memberData || [];
 
   const editingId = useMemo(() => {
     const idParam = searchParams.get('edit');
