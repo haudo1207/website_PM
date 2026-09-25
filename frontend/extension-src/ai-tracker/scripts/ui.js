@@ -5695,6 +5695,29 @@ function injectWidget(toolName) {
       }
     }
 
+    // Fallback cuối: ChatGPT có tính năng "Writing block" (khác "Code
+    // block") — theo tài liệu OpenAI, nội dung dạng "draft/document" (đúng
+    // loại bản WIP/Skill này) thường được ChatGPT tự cho vào khung Writing
+    // block thay vì Code block, BẤT KỂ prompt có ép bọc code fence hay
+    // không — đây là quyết định ở tầng giao diện của ChatGPT, không phải
+    // lỗi prompt. Writing block là 1 component riêng, không chắc luôn nằm
+    // trong `[data-message-author-role="assistant"]` ở trên, nên quét luôn
+    // toàn bộ text của cả trang — lấy match CUỐI CÙNG theo thứ tự xuất
+    // hiện (nội dung mới luôn nằm dưới/sau trong DOM của 1 khung chat) để
+    // tránh nhặt nhầm 1 bản WIP cũ từ đầu phiên chat dài.
+    const bodyText = document.body ? document.body.innerText || "" : "";
+    const globalRe = new RegExp(`^#{0,3}\\s*${docTypePrefix}:\\s*(.*)`, "gim");
+    let lastMatch = null;
+    let m;
+    while ((m = globalRe.exec(bodyText)) !== null) {
+      if (!m[1].includes("[Tên")) lastMatch = m;
+    }
+    if (lastMatch) {
+      const startIdx = lastMatch.index;
+      const content = bodyText.slice(startIdx).trim();
+      return { content, title: lastMatch[1].trim() };
+    }
+
     return null;
   }
 
