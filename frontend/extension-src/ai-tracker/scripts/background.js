@@ -844,9 +844,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const params = new URLSearchParams();
         if (message.filterType === "recent") params.set("recent", "true");
         else if (message.filterType === "favorite") params.set("favorite", "true");
-        if (message.departmentId) params.set("department_id", String(message.departmentId));
-        if (message.teamId) params.set("team_id", String(message.teamId));
-        if (message.projectId) params.set("project_id", String(message.projectId));
+        // Callers send BOTH shapes depending on which panel: a single
+        // departmentId/teamId/projectId (e.g. the Download flow), or an
+        // array departmentIds/teamIds/projectIds (e.g. refreshSkinSkillsPanel/
+        // fetchAndRenderSkills, the main Kỹ năng scope card). This handler
+        // only ever read the singular names — a plural/array value was
+        // silently ignored (`message.departmentId` is undefined when the
+        // caller sent `departmentIds`), so picking a Phòng ban/Team/Dự án
+        // in the Kỹ năng scope card filtered nothing at all; every result
+        // set was really "no filter" regardless of what was selected.
+        // GET /api/ai-skills only accepts ONE id per field, so take the
+        // first element when an array was sent.
+        const firstOf = (v) => (Array.isArray(v) ? v[0] : v);
+        const departmentId = firstOf(message.departmentIds) ?? message.departmentId;
+        const teamId = firstOf(message.teamIds) ?? message.teamId;
+        const projectId = firstOf(message.projectIds) ?? message.projectId;
+        if (departmentId) params.set("department_id", String(departmentId));
+        if (teamId) params.set("team_id", String(teamId));
+        if (projectId) params.set("project_id", String(projectId));
+        // skillType ("skill"/"wip"/...) -> asset_type. Was never forwarded
+        // at all, so every GET_SKILLS call — Tóm tắt or Kỹ năng — hit the
+        // exact same unfiltered-by-type query.
+        if (message.skillType) params.set("asset_type", String(message.skillType).toLowerCase());
         if (message.keyword) params.set("keyword", message.keyword);
         if (message.limit) params.set("limit", String(message.limit));
         if (message.offset) params.set("offset", String(message.offset));

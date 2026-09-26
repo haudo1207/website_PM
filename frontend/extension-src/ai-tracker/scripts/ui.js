@@ -797,7 +797,7 @@ function injectWidget(toolName) {
       #markee-widget .summary-extra.open{display:block;}
       #markee-widget .summary-detail-grid{display:flex;flex-direction:column;gap:6px;}
       #markee-widget .summary-detail-field label{display:block;margin-bottom:4px;color:#8f99ff;font-size:9px;font-weight:900;letter-spacing:.04em;}
-      #markee-widget .summary-detail-select,#markee-widget .summary-detail-input,#markee-widget .drawer-select,#markee-widget .drawer-input,#markee-widget .su-select,#markee-widget .sd-select{width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;}
+      #markee-widget .summary-detail-select,#markee-widget .summary-detail-input,#markee-widget .drawer-select,#markee-widget .drawer-input,#markee-widget .su-select,#markee-widget .sd-select,#markee-widget .scope-select{width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;}
       #markee-widget .summary-feature-row,#markee-widget .feature-row{display:grid;grid-template-columns:1fr auto;gap:5px;}
       #markee-widget .summary-feature-create,#markee-widget .create-feature{height:30px;padding:0 8px;border-radius:7px;border:1px solid rgba(25,197,143,.32);background:rgba(25,197,143,.08);color:#8ce4c6;font-size:9.5px;font-weight:900;cursor:pointer;white-space:nowrap;}
       #markee-widget .download-context-note{display:none;font-size:9.5px;color:#8b98bd;margin-top:6px;line-height:1.4;}
@@ -1208,7 +1208,7 @@ function injectWidget(toolName) {
 
               <div class="skill-upload-name">
                 <label><span>TÊN KỸ NĂNG</span><span>Tự lấy từ tên file nếu bỏ trống</span></label>
-                <input id="markee-skillUploadName" placeholder="Ví dụ: Thiết kế Landing Page...">
+                <input class="su-select" id="markee-skillUploadName" placeholder="Ví dụ: Thiết kế Landing Page...">
               </div>
 
               <div class="skill-drop" id="markee-skillDrop">
@@ -1468,10 +1468,10 @@ function injectWidget(toolName) {
           </label>
 
           <div>
-            <select id="markee-department-select"><option value="">-- Tất cả Phòng ban --</option></select>
-            <select id="markee-team-select" disabled><option value="">-- Tất cả Team --</option></select>
-            <input type="text" id="markee-project-input-push" placeholder="-- Chat tự do --">
-            <select id="markee-asset-type-select">
+            <select class="su-select" id="markee-department-select"><option value="">-- Tất cả Phòng ban --</option></select>
+            <select class="su-select" id="markee-team-select" disabled><option value="">-- Tất cả Team --</option></select>
+            <input type="text" class="su-select" id="markee-project-input-push" placeholder="-- Chat tự do --">
+            <select class="su-select" id="markee-asset-type-select">
               <option value="Skill" selected>Skill (Mặc định)</option>
               <option value="Prompt">Prompt</option>
               <option value="SOP">SOP</option>
