@@ -138,6 +138,31 @@ def create_skill(body: dict, db: Session = Depends(get_db), current_user=Depends
     return _skill_to_dict(skill)
 
 
+@router.patch("/ai-skills/{sid:int}")
+def update_skill(sid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Edit a saved Skill's title/content — the /skills page (pm-new's own
+    "Knowledge Hub" tab) had view + delete but no edit at all, unlike a
+    project's WIP log (PATCH /projects/{pid}/feature-logs/{lid})."""
+    skill = db.query(AiSkill).filter(AiSkill.id == sid).first()
+    if not skill:
+        raise HTTPException(404, "Không tìm thấy skill")
+
+    if "title" in body:
+        title = (body.get("title") or "").strip()
+        if not title:
+            raise HTTPException(400, "Thiếu tiêu đề")
+        skill.title = title
+    if "markdown_content" in body:
+        content = (body.get("markdown_content") or "").strip()
+        if not content:
+            raise HTTPException(400, "Thiếu nội dung")
+        skill.markdown_content = content
+
+    db.commit()
+    db.refresh(skill)
+    return _skill_to_dict(skill)
+
+
 @router.delete("/ai-skills/{sid:int}")
 def delete_skill(sid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     skill = db.query(AiSkill).filter(AiSkill.id == sid).first()

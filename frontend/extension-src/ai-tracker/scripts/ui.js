@@ -2932,10 +2932,28 @@ function injectWidget(toolName) {
     input.style.cssText = "width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;cursor:pointer;";
     wrap.appendChild(input);
 
+    // Appended to <body> (not `wrap`) and positioned `fixed` from the
+    // input's own on-screen rect — every `.card` in this widget has
+    // `overflow:hidden` (rounded-corner containment), which silently
+    // CLIPS an absolutely-positioned descendant that extends past the
+    // card's box. A native <select>'s own dropdown popup is drawn by the
+    // browser in a layer that ignores page CSS entirely, so it was never
+    // affected — only this custom combobox was: inside a card, its
+    // suggestion list rendered with display:block same as anywhere else,
+    // just invisible, clipped to nothing. Escaping to <body> with `fixed`
+    // positioning sidesteps every ancestor's overflow/stacking context,
+    // regardless of which card a given combobox happens to sit inside.
     const list = document.createElement("div");
     list.className = "mk-combo-list";
-    list.style.cssText = "position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:180px;overflow-y:auto;background:#111629;border:1px solid #4e46dc;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.6);z-index:1000000;display:none;";
-    wrap.appendChild(list);
+    list.style.cssText = "position:fixed;max-height:180px;overflow-y:auto;background:#111629;border:1px solid #4e46dc;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.6);z-index:2147483647;display:none;";
+    document.body.appendChild(list);
+
+    function positionList() {
+      const r = input.getBoundingClientRect();
+      list.style.left = `${r.left}px`;
+      list.style.width = `${r.width}px`;
+      list.style.top = `${r.bottom + 2}px`;
+    }
 
     let highlighted = -1;
 
@@ -2985,12 +3003,22 @@ function injectWidget(toolName) {
 
     function openList() {
       renderList();
+      positionList();
       list.style.display = "block";
     }
     function closeList() {
       list.style.display = "none";
       highlighted = -1;
     }
+
+    // `list` is now `position:fixed` on <body>, independent of any
+    // scrollable ancestor — if the widget's own panel scrolls while the
+    // list is open, it would stay frozen in place instead of tracking the
+    // input. Simplest safe fix: just close it (matches normal dropdown
+    // behavior elsewhere — nothing here needs an open list to survive a
+    // scroll).
+    window.addEventListener("scroll", () => { if (list.style.display !== "none") closeList(); }, true);
+    window.addEventListener("resize", () => { if (list.style.display !== "none") closeList(); });
 
     input.addEventListener("focus", () => {
       input.value = "";

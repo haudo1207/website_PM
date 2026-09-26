@@ -835,6 +835,8 @@ export interface AiSkillEntry {
 }
 export const getAiSkills = (params?: { department_id?: number; team_id?: number; project_id?: number; asset_type?: string; keyword?: string; limit?: number; offset?: number }) =>
   api.get<AiSkillEntry[]>('/ai-skills', { params }).then(r => r.data);
+export const updateAiSkill = (id: number, body: { title?: string; markdown_content?: string }) =>
+  api.patch<AiSkillEntry>(`/ai-skills/${id}`, body).then(r => r.data);
 export const deleteAiSkill = (id: number) => api.delete(`/ai-skills/${id}`).then(r => r.data);
 export const getAiSkillAttachmentBlob = (skillId: number, idx: number) =>
   api.get(`/ai-skills/${skillId}/attachments/${idx}`, { responseType: 'blob' }).then(r => r.data as Blob);

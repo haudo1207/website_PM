@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Brain, Search, Trash2, Paperclip, Download, ChevronDown, ChevronUp, Building2, FolderOpen, Loader2 } from 'lucide-react';
+import { Brain, Search, Trash2, Pencil, Check, X, Paperclip, Download, ChevronDown, ChevronUp, Building2, FolderOpen, Loader2 } from 'lucide-react';
 import Navbar from '@/components/Navbar';
 import { isMemberOrAbove } from '@/lib/auth';
 import {
-  getAiSkills, deleteAiSkill, getAiSkillAttachmentBlob, AiSkillEntry,
+  getAiSkills, updateAiSkill, deleteAiSkill, getAiSkillAttachmentBlob, AiSkillEntry,
   getDepartments, getTeams, getCustomers, getProjects,
 } from '@/lib/api';
 
@@ -53,6 +53,10 @@ export default function SkillPage() {
   const [error, setError] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editContent, setEditContent] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     getDepartments().then(setDepartments).catch(() => {});
@@ -105,6 +109,26 @@ export default function SkillPage() {
       setError(e?.response?.data?.detail || 'Lỗi khi xóa');
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  function startEdit(s: AiSkillEntry) {
+    setEditingId(s.id);
+    setEditTitle(s.title);
+    setEditContent(s.markdown_content);
+  }
+
+  async function handleSaveEdit(s: AiSkillEntry) {
+    if (!editTitle.trim() || !editContent.trim()) return;
+    setSavingEdit(true);
+    try {
+      const updated = await updateAiSkill(s.id, { title: editTitle.trim(), markdown_content: editContent.trim() });
+      setSkills((prev) => prev.map((x) => (x.id === s.id ? updated : x)));
+      setEditingId(null);
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Lỗi khi lưu chỉnh sửa');
+    } finally {
+      setSavingEdit(false);
     }
   }
 
@@ -234,8 +258,41 @@ export default function SkillPage() {
             const isLong = s.markdown_content.length > CONTENT_TRUNCATE_LENGTH;
             const isExpanded = expandedIds.has(s.id);
             const shown = isLong && !isExpanded ? s.markdown_content.slice(0, CONTENT_TRUNCATE_LENGTH).trimEnd() + '…' : s.markdown_content;
+            const isEditing = editingId === s.id;
             return (
               <div key={s.id} className="bg-white border border-slate-200 rounded-xl p-4 hover:border-slate-300 transition-colors">
+                {isEditing ? (
+                  <div className="space-y-2">
+                    <input
+                      autoFocus
+                      value={editTitle}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                      className="w-full text-[13.5px] font-bold bg-white text-slate-800 border border-[#0058be] rounded-lg px-3 py-1.5 outline-none"
+                    />
+                    <textarea
+                      value={editContent}
+                      onChange={(e) => setEditContent(e.target.value)}
+                      rows={6}
+                      className="w-full text-[12.5px] font-mono bg-white text-slate-800 border border-[#0058be] rounded-lg px-3 py-2 outline-none resize-y"
+                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handleSaveEdit(s)}
+                        disabled={savingEdit || !editTitle.trim() || !editContent.trim()}
+                        className="flex items-center gap-1 text-[11.5px] font-semibold text-white bg-[#0058be] px-3 py-1.5 rounded-lg disabled:opacity-50"
+                      >
+                        <Check className="w-3.5 h-3.5" /> {savingEdit ? 'Đang lưu...' : 'Lưu'}
+                      </button>
+                      <button
+                        onClick={() => setEditingId(null)}
+                        className="flex items-center gap-1 text-[11.5px] font-semibold text-slate-500 hover:bg-slate-100 px-3 py-1.5 rounded-lg"
+                      >
+                        <X className="w-3.5 h-3.5" /> Hủy
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                <>
                 <div className="flex items-start justify-between gap-3 mb-1.5">
                   <div className="min-w-0">
                     <div className="text-[13.5px] font-bold text-slate-800 truncate">{s.title}</div>
@@ -251,14 +308,23 @@ export default function SkillPage() {
                       <span className="uppercase font-bold text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{s.asset_type}</span>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleDelete(s)}
-                    disabled={deletingId === s.id}
-                    className="text-slate-300 hover:text-red-500 shrink-0 disabled:opacity-50"
-                    title="Xóa Kỹ năng này"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => startEdit(s)}
+                      className="text-slate-300 hover:text-[#0058be]"
+                      title="Sửa Kỹ năng này"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(s)}
+                      disabled={deletingId === s.id}
+                      className="text-slate-300 hover:text-red-500 disabled:opacity-50"
+                      title="Xóa Kỹ năng này"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
                 <p className="text-[12.5px] text-slate-600 leading-relaxed whitespace-pre-wrap font-mono">{shown}</p>
                 {isLong && (
@@ -281,6 +347,8 @@ export default function SkillPage() {
                       </button>
                     ))}
                   </div>
+                )}
+                </>
                 )}
               </div>
             );
