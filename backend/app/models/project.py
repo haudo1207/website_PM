@@ -56,6 +56,9 @@ class Project(Base):
     created_at            = Column(DateTime, server_default=func.now())
     updated_at            = Column(DateTime, onupdate=func.now())
     last_activity_at      = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
+    is_critical           = Column(Boolean, nullable=False, default=False, server_default="false", index=True)
+    critical_updated_at   = Column(DateTime(timezone=True), nullable=True)
+    critical_updated_by   = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # AI Check Fields
     ai_status             = Column(String(50), default="NOT_CHECKED", nullable=False, server_default="NOT_CHECKED")

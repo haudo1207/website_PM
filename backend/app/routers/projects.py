@@ -2,6 +2,7 @@
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -48,6 +49,11 @@ from ..services.document_storage import delete_task_link_documents
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
 
 
+def _task_done_expr():
+    """SQL equivalent of kpi_engine's status.strip().lower() == 'done'."""
+    return sql_func.lower(sql_func.trim(Task.status)) == "done"
+
+
 # ═══════════════════════════════════════════════════════════
 # PROJECT CRUD
 # ═══════════════════════════════════════════════════════════
@@ -71,7 +77,7 @@ def serialize_project(p, db):
         db.query(Task)
         .join(TaskGroup, Task.task_group_id == TaskGroup.id)
         .join(Phase, TaskGroup.phase_id == Phase.id)
-        .filter(Phase.project_id == p.id, Task.status == "Done")
+        .filter(Phase.project_id == p.id, _task_done_expr())
         .count()
     )
 
@@ -80,8 +86,23 @@ def serialize_project(p, db):
         db.query(Task)
         .join(TaskGroup, Task.task_group_id == TaskGroup.id)
         .join(Phase, TaskGroup.phase_id == Phase.id)
-        .filter(Phase.project_id == p.id, Task.days_late > 0)
+        .filter(Phase.project_id == p.id, Task.days_late > 0, ~_task_done_expr())
         .count()
+    )
+
+    task_metrics = (
+        db.query(
+            sql_func.sum(case((~_task_done_expr(), 1), else_=0)),
+            sql_func.coalesce(sql_func.sum(case((~_task_done_expr(), Task.manday_est), else_=0)), 0),
+            sql_func.coalesce(sql_func.sum(case((_task_done_expr(), sql_func.coalesce(Task.manday_actual, Task.manday_est)), else_=0)), 0),
+            sql_func.coalesce(sql_func.sum(case((~_task_done_expr(), Task.kpi_base), else_=0)), 0),
+            sql_func.coalesce(sql_func.sum(case((_task_done_expr(), Task.kpi_final), else_=0)), 0),
+        )
+        .select_from(Task)
+        .join(TaskGroup, Task.task_group_id == TaskGroup.id)
+        .join(Phase, TaskGroup.phase_id == Phase.id)
+        .filter(Phase.project_id == p.id)
+        .one()
     )
 
     # Fetch PMs
@@ -123,6 +144,9 @@ def serialize_project(p, db):
         "business": business_label_for_project(db, p),
         "business_unit": business_unit_for_project(db, p),
         "year": p.year,
+        "is_critical": bool(p.is_critical),
+        "critical_updated_at": str(p.critical_updated_at) if p.critical_updated_at else None,
+        "critical_updated_by": p.critical_updated_by,
         "pm_id": p.pm_id,
         "pm_name": pm_names if pm_names else None,
         "pm_ids": pm_ids,
@@ -144,6 +168,11 @@ def serialize_project(p, db):
         "task_count": task_count,
         "completed_task_count": completed_task_count,
         "warning_task_count": warning_task_count,
+        "active_task_count": int(task_metrics[0] or 0),
+        "active_manday": float(task_metrics[1] or 0),
+        "completed_manday": float(task_metrics[2] or 0),
+        "active_kpi": float(task_metrics[3] or 0),
+        "completed_kpi": float(task_metrics[4] or 0),
         "members": members_list,
         "ai_status": p.ai_status,
         "last_ai_check_at": str(p.last_ai_check_at) if p.last_ai_check_at else None,
@@ -168,7 +197,16 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
     leaders = role_members.get("Leader", [])
     sales = role_members.get("Sales", [])
     members = role_members.get("Member", [])
-    task_count, completed_task_count, warning_task_count = task_stats
+    (
+        task_count,
+        completed_task_count,
+        warning_task_count,
+        active_task_count,
+        active_manday,
+        completed_manday,
+        active_kpi,
+        completed_kpi,
+    ) = task_stats
 
     if progress_map is not None:
         try:
@@ -189,6 +227,9 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "business": business_label_for_project(db, p, by_code, by_name),
         "business_unit": business_unit_for_project(db, p, by_code, by_name),
         "year": p.year,
+        "is_critical": bool(p.is_critical),
+        "critical_updated_at": str(p.critical_updated_at) if p.critical_updated_at else None,
+        "critical_updated_by": p.critical_updated_by,
         "pm_id": p.pm_id,
         "pm_name": ", ".join(m[1] for m in pms if m[1]) or None,
         "pm_ids": [m[0] for m in pms],
@@ -214,6 +255,11 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "task_count": task_count,
         "completed_task_count": completed_task_count,
         "warning_task_count": warning_task_count,
+        "active_task_count": active_task_count,
+        "active_manday": float(active_manday or 0),
+        "completed_manday": float(completed_manday or 0),
+        "active_kpi": float(active_kpi or 0),
+        "completed_kpi": float(completed_kpi or 0),
         "members": [{"name": name, "email": email} for _, name, email in all_members],
         "ai_status": p.ai_status,
         "last_ai_check_at": str(p.last_ai_check_at) if p.last_ai_check_at else None,
@@ -235,29 +281,14 @@ def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional
     target_b = (business_unit or "").strip().lower()
     if not target_b or target_b == "all":
         return q
-    # A project the caller is explicitly assigned to (project_members) always
-    # stays visible under the current Workspace tab, even when its own
-    # business/data_scope belongs to a different Workspace — mirrors the
-    # membership-overrides-Workspace rule in access.py's can_access_project.
-    member_id = getattr(current_user, "member_id", None)
-    assigned_project_ids = (
-        db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
-        if member_id else None
-    )
     ws = resolve_workspace(db, target_b)
     if ws:
         b_val = ws.name
-        filters = [
+        return q.filter(or_(
             Project.business == b_val,
-            Project.business == "All",
             and_(Project.business.is_(None), Project.data_scope == target_b),
             and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
-        ]
-        if assigned_project_ids is not None:
-            filters.append(Project.id.in_(assigned_project_ids))
-        return q.filter(or_(*filters))
-    if assigned_project_ids is not None:
-        return q.filter(Project.id.in_(assigned_project_ids))
+        ))
     return q.filter(Project.id == -1)
 
 
@@ -385,13 +416,27 @@ def list_projects(
     )
 
     task_stats = {
-        project_id: (task_count, completed_count, warning_count)
-        for project_id, task_count, completed_count, warning_count in (
+        project_id: (
+            task_count,
+            completed_count,
+            warning_count,
+            active_count,
+            active_manday,
+            completed_manday,
+            active_kpi,
+            completed_kpi,
+        )
+        for project_id, task_count, completed_count, warning_count, active_count, active_manday, completed_manday, active_kpi, completed_kpi in (
             db.query(
                 Phase.project_id,
                 sql_func.count(Task.id),
-                sql_func.sum(case((Task.status == "Done", 1), else_=0)),
-                sql_func.sum(case((Task.days_late > 0, 1), else_=0)),
+                sql_func.sum(case((_task_done_expr(), 1), else_=0)),
+                sql_func.sum(case((and_(Task.days_late > 0, ~_task_done_expr()), 1), else_=0)),
+                sql_func.sum(case((~_task_done_expr(), 1), else_=0)),
+                sql_func.coalesce(sql_func.sum(case((~_task_done_expr(), Task.manday_est), else_=0)), 0),
+                sql_func.coalesce(sql_func.sum(case((_task_done_expr(), sql_func.coalesce(Task.manday_actual, Task.manday_est)), else_=0)), 0),
+                sql_func.coalesce(sql_func.sum(case((~_task_done_expr(), Task.kpi_base), else_=0)), 0),
+                sql_func.coalesce(sql_func.sum(case((_task_done_expr(), Task.kpi_final), else_=0)), 0),
             )
             .select_from(Task)
             .join(TaskGroup, Task.task_group_id == TaskGroup.id)
@@ -433,7 +478,7 @@ def list_projects(
             p,
             db,
             phase_counts.get(p.id, 0),
-            task_stats.get(p.id, (0, 0, 0)),
+            task_stats.get(p.id, (0, 0, 0, 0, 0, 0, 0, 0)),
             role_members[p.id],
             all_members[p.id],
             by_code,
@@ -464,6 +509,48 @@ def toggle_project_pin(pid: int, db: Session = Depends(get_db), current_user=Dep
     db.add(ProjectPin(user_id=current_user.id, project_id=pid))
     db.commit()
     return {"success": True, "is_pinned": True}
+
+
+@router.patch("/projects/{pid:int}/critical")
+def set_project_critical(
+    pid: int,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_super_admin),
+):
+    """Admin-owned business priority; independent from overdue task metrics."""
+    p = db.query(Project).filter(Project.id == pid).first()
+    if not p:
+        raise HTTPException(404, "Project not found.")
+
+    if not isinstance(body.get("is_critical"), bool):
+        raise HTTPException(400, "is_critical must be a boolean.")
+    is_critical = body["is_critical"]
+    old_value = bool(p.is_critical)
+    p.is_critical = is_critical
+    p.critical_updated_at = datetime.now(timezone.utc)
+    p.critical_updated_by = current_user.id
+    AuditService.record(
+        db=db,
+        user_id=current_user.id,
+        module="Project",
+        entity_type="Project",
+        entity_id=p.id,
+        action="UPDATE_PROJECT_CRITICAL",
+        resource_name=p.name,
+        project_id=p.id,
+        field_name="is_critical",
+        old_value=str(old_value),
+        new_value=str(is_critical),
+        description=("Đánh dấu" if is_critical else "Bỏ đánh dấu") + f" Critical cho dự án '{p.name}'",
+    )
+    db.commit()
+    return {
+        "success": True,
+        "is_critical": p.is_critical,
+        "critical_updated_at": str(p.critical_updated_at),
+        "critical_updated_by": p.critical_updated_by,
+    }
 
 
 @router.post("/projects")
