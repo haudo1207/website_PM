@@ -3,8 +3,8 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, getMe } from '@/lib/api';
-import { isAdmin, getEmail } from '@/lib/auth';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical } from '@/lib/api';
+import { isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import SearchableSelect from './common/SearchableSelect';
@@ -24,6 +24,20 @@ const PROJECT_PHASES = [
   '10. Giao hàng', '11. Triển khai', '12. Hoàn thành triển khai',
   '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
 ];
+
+type ProjectColumn = 'pm' | 'sales' | 'activeManday' | 'completedManday' | 'activeKpi' | 'completedKpi' | 'activeTasks' | 'completedTasks' | 'overdueTasks';
+
+const DEFAULT_PROJECT_COLUMNS: Record<ProjectColumn, boolean> = {
+  pm: true,
+  sales: true,
+  activeManday: true,
+  completedManday: true,
+  activeKpi: true,
+  completedKpi: true,
+  activeTasks: true,
+  completedTasks: true,
+  overdueTasks: true,
+};
 
 const getPhaseBadgeStyle = (phase: string) => {
   if (!phase) return 'bg-slate-100 text-slate-600 border border-slate-200/50';
@@ -103,14 +117,19 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const paramYear = searchParams.get('year');
 
   const canManage = isAdmin();
+  const canManageCritical = isSuperAdmin();
+  const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
   const [search, setSearch] = useState('');
-  const [businessFilter, setBusinessFilter] = useState('All');
+  const [businessFilter, setBusinessFilter] = useState(ctxWorkspaceCode || 'All');
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
   const [salesFilter, setSalesFilter] = useState('All');
   const [memberFilter, setMemberFilter] = useState('All');
   const [yearFilter, setYearFilter] = useState('All');
+  const [overdueOnly, setOverdueOnly] = useState(false);
+  const [criticalOnly, setCriticalOnly] = useState(false);
+  const [visibleColumns, setVisibleColumns] = useState<Record<ProjectColumn, boolean>>(DEFAULT_PROJECT_COLUMNS);
   const [sortBy, setSortBy] = useState('newest');
 
   const [msg, setMsg] = useState<{ t: string; e: boolean } | null>(null);
@@ -124,13 +143,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-
-  // Own member_id — used below to keep a project I'm assigned to visible
-  // regardless of the Workspace tab, by numeric id rather than by email
-  // (see isAssignedToMe).
-  const { data: me } = useQuery({ queryKey: ['me-project-list'], queryFn: getMe, staleTime: 5 * 60_000 });
-  const myMemberId = me?.member_id ?? null;
+  const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
 
   // Nhớ lựa chọn Lưới/Danh sách theo trình duyệt (không cần đồng bộ server).
   useEffect(() => {
@@ -142,6 +155,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   useEffect(() => {
     try { localStorage.setItem('pm_project_list_view', viewMode); } catch {}
   }, [viewMode]);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('pm_project_list_columns');
+      if (saved) setVisibleColumns({ ...DEFAULT_PROJECT_COLUMNS, ...JSON.parse(saved) });
+    } catch {}
+  }, []);
+  useEffect(() => {
+    try { localStorage.setItem('pm_project_list_columns', JSON.stringify(visibleColumns)); } catch {}
+  }, [visibleColumns]);
 
   // Close the per-card "..." menu on any click outside it — the button/dropdown
   // themselves stop propagation, so only genuine outside clicks reach here.
@@ -158,11 +180,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     staleTime: 5 * 60_000,
   });
   const customers: any[] = customersData || [];
+  const { data: workspacesData } = useQuery({
+    queryKey: ['workspaces'],
+    queryFn: () => getWorkspaces(),
+    staleTime: 5 * 60_000,
+  });
+  const workspaces: Workspace[] = workspacesData || [];
 
-  // Resolve a customer_id (relational, preferred) from the URL param OR the
-  // currently selected dropdown customer name. The backend uses this to
-  // broaden the project scope to all granted Workspaces for multi-Workspace
-  // Leaders — see Issue 2 fix in backend/app/routers/projects.py.
+  // Resolve a customer_id from the URL or the customer selected inside the
+  // already Workspace-scoped dataset.
   const resolvedCustomerId: number | null = useMemo(() => {
     if (paramCustId) {
       const n = Number(paramCustId);
@@ -175,25 +201,27 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     return null;
   }, [paramCustId, customerFilter, customers]);
 
+  // Workspace is the first dataset constraint. Use its code for the API so
+  // all later filter options and the table originate from the same scope.
+  const selectedWorkspace = useMemo(() => {
+    if (lockedWorkspace) return lockedWorkspace;
+    if (businessFilter !== 'All') {
+      return workspaces.find(w => w.name === businessFilter || w.code === businessFilter)?.code || businessFilter;
+    }
+    return ctxWorkspaceCode || undefined;
+  }, [lockedWorkspace, businessFilter, ctxWorkspaceCode, workspaces]);
+
   const { data: listData, refetch: reload } = useQuery({
-    queryKey: ['project-list', resolvedCustomerId],
+    queryKey: ['project-list', selectedWorkspace, resolvedCustomerId],
     queryFn: async () => {
-      // Issue 2 — when a customer filter is active, send customer_id
-      // (preferred) so the backend uses the broad project-query variant and
-      // a multi-Workspace Leader sees every project of that Customer across
-      // their granted Workspaces.
-      const projs = await getProjects(resolvedCustomerId ? { customer_id: resolvedCustomerId } : undefined);
+      const projs = await getProjects({
+        business_unit: selectedWorkspace,
+        customer_id: resolvedCustomerId || undefined,
+      });
       return {
         projects: projs || [],
       };
     },
-  });
-  // Shared cache key with Navbar/Project Hub/CustomersProjectsView — this
-  // near-static list is fetched once and reused across the whole app.
-  const { data: workspacesData } = useQuery({
-    queryKey: ['workspaces'],
-    queryFn: () => getWorkspaces(),
-    staleTime: 5 * 60_000,
   });
   const { data: pinnedIdsData } = useQuery({
     queryKey: ['project-pins'],
@@ -214,7 +242,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     }
   };
   const projects: any[] = listData?.projects || [];
-  const workspaces: Workspace[] = workspacesData || [];
 
   // Project Hub: lock the Workspace filter to the current tab's Workspace.
   useEffect(() => {
@@ -227,7 +254,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   // Workspace is selected app-wide (Navbar switcher) — keeps this list
   // consistent with Dashboard/KPI. The dropdown below still lets the user
   // override it locally without touching the shared selection.
-  const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
   useEffect(() => {
     if (lockedWorkspace || !ctxWorkspaceCode) return;
     const ws = workspaces.find(w => w.code === ctxWorkspaceCode);
@@ -258,17 +284,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const flash = (t: string, e = false) => { setMsg({ t, e }); setTimeout(() => setMsg(null), 4000); };
 
-  const getInitials = (name: string) => {
-    if (!name) return '—';
-    return name
-      .trim()
-      .split(/\s+/)
-      .map(n => n[0])
-      .join('')
-      .substring(0, 2)
-      .toUpperCase();
-  };
-
   const handleResetFilters = () => {
     setSearch('');
     if (!lockedWorkspace) setBusinessFilter('All');
@@ -278,16 +293,16 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     setSalesFilter('All');
     setMemberFilter('All');
     setYearFilter('All');
+    setOverdueOnly(false);
+    setCriticalOnly(false);
     setPage(1);
     if (!lockedWorkspace) router.replace(pathname);
   };
 
   // Dynamic lists from loaded data memoized
   const uniqueCustomers = useMemo(() => {
-    const dbCustomerNames = customers.map(c => c.name);
-    const projCustomerNames = projects.map(p => p.customer_name).filter(Boolean);
-    return Array.from(new Set([...dbCustomerNames, ...projCustomerNames])).sort();
-  }, [customers, projects]);
+    return Array.from(new Set(projects.map(p => p.customer_name).filter(Boolean))).sort();
+  }, [projects]);
 
   const uniquePms = useMemo(() => {
     const names: string[] = [];
@@ -331,6 +346,17 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     return Array.from(new Set(projects.map(p => p.year).filter(v => v !== null && v !== undefined))).sort((a, b) => (b as number) - (a as number));
   }, [projects]);
 
+  // A Workspace switch replaces the source dataset. Clear any downstream
+  // selection that is not available in that Workspace instead of leaving a
+  // stale filter that belongs to the previous one.
+  useEffect(() => {
+    if (customerFilter !== 'All' && !uniqueCustomers.includes(customerFilter)) setCustomerFilter('All');
+    if (pmFilter !== 'All' && !uniquePms.includes(pmFilter)) setPmFilter('All');
+    if (salesFilter !== 'All' && !uniqueSales.includes(salesFilter)) setSalesFilter('All');
+    if (memberFilter !== 'All' && !uniqueMembers.includes(memberFilter)) setMemberFilter('All');
+    if (yearFilter !== 'All' && !uniqueYears.map(String).includes(yearFilter)) setYearFilter('All');
+  }, [customerFilter, pmFilter, salesFilter, memberFilter, yearFilter, uniqueCustomers, uniquePms, uniqueSales, uniqueMembers, uniqueYears]);
+
   // Workspace code → display name map from the Workspace Master
   const wsNameByCode = useMemo(() => {
     const m = new Map<string, string>();
@@ -339,28 +365,12 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   }, [workspaces]);
 
   // Filter memoized
-  const myEmail = (getEmail() || '').toLowerCase();
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
       const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      // A project I'm explicitly assigned to always stays visible under the
-      // current Workspace tab, even if it belongs to a different Workspace
-      // (mirrors the membership-overrides-Workspace rule on the backend).
-      // Matched by member_id, not email — Member.email is optional and
-      // often blank on real member records, which silently broke this
-      // exact escape hatch: a Member legitimately assigned (any role: PM/
-      // Leader/Sales/plain Member) to a project outside their home
-      // Workspace had that project hidden the moment the switcher wasn't
-      // on that Workspace's tab.
-      const isAssignedToMe = myMemberId != null && [
-        ...(Array.isArray(p.member_ids) ? p.member_ids : []),
-        ...(Array.isArray(p.pm_ids) ? p.pm_ids : []),
-        ...(Array.isArray(p.sales_ids) ? p.sales_ids : []),
-        ...(Array.isArray(p.technical_leader_ids) ? p.technical_leader_ids : []),
-      ].some((id: any) => Number(id) === Number(myMemberId));
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -380,9 +390,11 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         return projMemberNames.some(name => name.toLowerCase() === mLower);
       })();
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear;
+      const matchOverdue = !overdueOnly || (p.warning_task_count || 0) > 0;
+      const matchCritical = !criticalOnly || p.is_critical === true;
+      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, wsNameByCode, myEmail]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly, wsNameByCode]);
 
   // Sort memoized — pinned projects always float to the top; the chosen
   // sortBy comparator only breaks ties within each (pinned / unpinned) group.
@@ -402,6 +414,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       }
       if (sortBy === 'name_asc') return a.name.localeCompare(b.name, 'vi');
       if (sortBy === 'name_desc') return b.name.localeCompare(a.name, 'vi');
+      if (sortBy === 'overdue_desc') return (b.warning_task_count || 0) - (a.warning_task_count || 0);
+      if (sortBy === 'manday_active_desc') return (b.active_manday || 0) - (a.active_manday || 0);
+      if (sortBy === 'kpi_active_desc') return (b.active_kpi || 0) - (a.active_kpi || 0);
       return 0;
     };
     return [...filtered].sort((a, b) => {
@@ -414,6 +429,21 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
+  const mandayColumnCount = Number(visibleColumns.activeManday) + Number(visibleColumns.completedManday);
+  const kpiColumnCount = Number(visibleColumns.activeKpi) + Number(visibleColumns.completedKpi);
+  const taskColumnCount = Number(visibleColumns.activeTasks) + Number(visibleColumns.completedTasks) + Number(visibleColumns.overdueTasks);
+  const hasMetricColumns = mandayColumnCount + kpiColumnCount + taskColumnCount > 0;
+
+  const handleSetCritical = async (project: any) => {
+    try {
+      await setProjectCritical(project.id, !project.is_critical);
+      setMenuOpenId(null);
+      await reload();
+      flash(project.is_critical ? 'Đã bỏ đánh dấu Critical.' : 'Đã đánh dấu dự án Critical.');
+    } catch (e: any) {
+      flash(e?.response?.data?.detail || 'Không thể cập nhật Critical.', true);
+    }
+  };
 
   return (
     <div className="min-h-screen flex bg-[#f8fafc]" style={{ fontFamily: "'Inter', sans-serif" }}>
@@ -457,23 +487,16 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                 className="w-full pl-9 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs outline-none text-slate-700 focus:border-indigo-500 bg-slate-50/20" />
             </div>
 
-            <SearchableSelect
-              label="giai đoạn"
-              icon="🚩"
-              options={PROJECT_PHASES.map(ph => ({ id: ph, name: ph }))}
-              value={phaseFilter}
-              onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
-              placeholder="Tìm giai đoạn..."
-            />
-
-            <SearchableSelect
-              label="khách hàng"
-              icon="🏢"
-              options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
-              value={customerFilter}
-              onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
-              placeholder="Tìm khách hàng..."
-            />
+            {!lockedWorkspace && (
+              <SearchableSelect
+                label="Workspace"
+                icon="🗂️"
+                options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
+                value={businessFilter}
+                onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+                placeholder="Tìm Workspace..."
+              />
+            )}
 
             <SearchableSelect
               label="PM"
@@ -494,24 +517,13 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
             />
 
             <SearchableSelect
-              label="thành viên"
-              icon="👥"
-              options={uniqueMembers.map(m => ({ id: m, name: m }))}
-              value={memberFilter}
-              onChange={val => { setMemberFilter(String(val)); setPage(1); }}
-              placeholder="Tìm thành viên..."
+              label="khách hàng"
+              icon="🏢"
+              options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
+              value={customerFilter}
+              onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
+              placeholder="Tìm khách hàng..."
             />
-
-            {!lockedWorkspace && (
-              <SearchableSelect
-                label="Workspace"
-                icon="🗂️"
-                options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
-                value={businessFilter}
-                onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
-                placeholder="Tìm Workspace..."
-              />
-            )}
 
             <SearchableSelect
               label="năm"
@@ -521,6 +533,78 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               onChange={val => { setYearFilter(String(val)); setPage(1); }}
               placeholder="Tìm năm..."
             />
+
+            <button
+              type="button"
+              onClick={() => { setCriticalOnly(v => !v); setPage(1); }}
+              className={`h-[34px] px-3 rounded-lg border text-xs font-semibold transition-colors ${criticalOnly ? 'border-red-300 bg-red-50 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              🚩 Critical
+            </button>
+
+            <button
+              type="button"
+              onClick={() => { setOverdueOnly(v => !v); setPage(1); }}
+              className={`h-[34px] px-3 rounded-lg border text-xs font-semibold transition-colors ${overdueOnly ? 'border-red-300 bg-red-50 text-red-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+            >
+              Có task trễ
+            </button>
+
+            <details className="relative shrink-0">
+              <summary className="list-none flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer h-[34px]">
+                Bộ lọc khác <span className="text-slate-400">▾</span>
+              </summary>
+              <div className="absolute right-0 mt-2 p-3 bg-white border border-slate-200 rounded-lg shadow-lg z-40 flex flex-col gap-2 min-w-[220px]">
+                <SearchableSelect
+                  label="giai đoạn"
+                  icon="🚩"
+                  options={PROJECT_PHASES.map(ph => ({ id: ph, name: ph }))}
+                  value={phaseFilter}
+                  onChange={val => { setPhaseFilter(String(val)); setPage(1); }}
+                  placeholder="Tìm giai đoạn..."
+                />
+                <SearchableSelect
+                  label="thành viên"
+                  icon="👥"
+                  options={uniqueMembers.map(m => ({ id: m, name: m }))}
+                  value={memberFilter}
+                  onChange={val => { setMemberFilter(String(val)); setPage(1); }}
+                  placeholder="Tìm thành viên..."
+                />
+              </div>
+            </details>
+
+            {viewMode === 'list' && <details className="relative shrink-0 ml-auto">
+              <summary className="list-none flex items-center gap-1.5 border border-slate-200 hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer h-[34px]">
+                ⚙ Cột hiển thị <span className="text-slate-400">▾</span>
+              </summary>
+              <div className="absolute right-0 mt-2 p-3 bg-white border border-slate-200 rounded-lg shadow-lg z-40 min-w-[220px] text-xs">
+                <p className="font-bold text-slate-500 uppercase tracking-wider mb-2">Cột hiển thị</p>
+                {([
+                  ['pm', 'PM'], ['sales', 'Sale'],
+                  ['activeManday', 'Manday · Đang làm'], ['completedManday', 'Manday · Hoàn thành'],
+                  ['activeKpi', 'KPI · Đang làm'], ['completedKpi', 'KPI · Hoàn thành'],
+                  ['activeTasks', 'Task · Đang làm'], ['completedTasks', 'Task · Hoàn thành'], ['overdueTasks', 'Task · Trễ'],
+                ] as [ProjectColumn, string][]).map(([key, label]) => (
+                  <label key={key} className="flex items-center gap-2 py-1.5 text-slate-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={visibleColumns[key]}
+                      onChange={e => setVisibleColumns(prev => ({ ...prev, [key]: e.target.checked }))}
+                      className="accent-[#0058be]"
+                    />
+                    {label}
+                  </label>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setVisibleColumns({ ...DEFAULT_PROJECT_COLUMNS })}
+                  className="w-full text-left mt-2 pt-2 border-t border-slate-200 text-[#0058be] font-semibold hover:text-[#00479c]"
+                >
+                  Khôi phục mặc định
+                </button>
+              </div>
+            </details>}
 
             {canManage && (
               <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600 cursor-pointer shrink-0 bg-slate-50/20 px-3 py-1.5 border border-slate-200 rounded-lg h-[34px]">
@@ -537,7 +621,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                 Chọn trang này
               </label>
             )}
-            <div className="flex items-center gap-0.5 bg-slate-50/20 border border-slate-200 rounded-lg h-[34px] p-0.5 shrink-0">
+            <div className={`flex items-center gap-0.5 bg-slate-50/20 border border-slate-200 rounded-lg h-[34px] p-0.5 shrink-0 ${viewMode === 'grid' ? 'ml-auto' : ''}`}>
               <button
                 type="button"
                 onClick={() => setViewMode('grid')}
@@ -569,6 +653,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                 <option value="oldest">Cũ nhất</option>
                 <option value="name_asc">Tên (A-Z)</option>
                 <option value="name_desc">Tên (Z-A)</option>
+                <option value="overdue_desc">Task trễ ↓</option>
+                <option value="manday_active_desc">Manday đang làm ↓</option>
+                <option value="kpi_active_desc">KPI đang làm ↓</option>
               </select>
             </div>
 
@@ -625,13 +712,21 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                               </svg>
                             </button>
                             {menuOpenId === p.id && (
-                              <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                              <div className="absolute right-0 mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
                                 <button
                                   onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                 >
                                   ✏️ Chỉnh sửa
                                 </button>
+                                {canManageCritical && (
+                                  <button
+                                    onClick={() => handleSetCritical(p)}
+                                    className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                  >
+                                    {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
+                                  </button>
+                                )}
                                 <button
                                   onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
@@ -645,6 +740,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                       </div>
                     </div>
                     <div className="flex items-center gap-1.5 mb-0.5">
+                      {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
                       <h3 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                       {p.business && (
                         <span className="shrink-0 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200" title={`Dự án thuộc Workspace ${p.business}`}>
@@ -654,52 +750,31 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                     </div>
                     <p className="text-[13px] text-slate-500 mb-5 line-clamp-1 italic flex items-center gap-1.5"><span className="not-italic text-sm">🏢</span> {p.customer_name || 'Chưa có khách hàng'}</p>
                     
-                    <div className="grid grid-cols-2 gap-y-4 mb-3">
-                      <div>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Project Manager</p>
-                        <p className="text-[13px] font-semibold text-slate-700 truncate">{p.pm_name || <span className="text-slate-400 italic">—</span>}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Technical Lead</p>
-                        <p className="text-[13px] font-semibold text-slate-700 truncate">{p.technical_leader_name || <span className="text-slate-400 italic">—</span>}</p>
-                      </div>
+                    <div className="mb-3">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">PM</p>
+                      <p className="text-[13px] font-semibold text-slate-700 truncate" title={p.pm_name}>{p.pm_name || <span className="text-slate-400 italic">—</span>}</p>
                     </div>
-                    <div className="mb-6">
-                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Sales</p>
+                    <div className="mb-5">
+                      <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Sale</p>
                       <p className="text-[13px] font-semibold text-slate-700 truncate">{p.sales_name || <span className="text-slate-400 italic">--</span>}</p>
                     </div>
 
-                    <div className="border-t border-slate-100 pt-4 mt-auto flex justify-between items-center">
-                      <div className="flex gap-6">
-                        <div className="text-left">
-                          <p className="text-[11px] text-slate-500 font-medium">Tổng</p>
-                          <p className="text-[14px] font-bold text-slate-800 mt-0.5">{p.task_count ?? 0}</p>
-                        </div>
-                        <div className="text-left">
-                          <p className="text-[11px] text-emerald-600 font-medium">Hoàn thành</p>
-                          <p className="text-[14px] font-bold text-emerald-600 mt-0.5">{p.completed_task_count ?? 0}</p>
-                        </div>
-                        <div className="text-left">
-                          <p className="text-[11px] text-rose-600 font-medium">Cảnh báo</p>
-                          <p className="text-[14px] font-bold text-rose-600 mt-0.5">{p.warning_task_count ?? 0}</p>
-                        </div>
+                    <div className="border-t border-slate-100 pt-4 mt-auto grid grid-cols-3 gap-3">
+                      <div>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">Manday</p>
+                        <p className="text-[12px] font-bold text-amber-700 tabular-nums">{p.active_manday ?? 0} <span className="font-medium text-slate-500">đang</span></p>
+                        <p className="text-[12px] font-bold text-emerald-600 tabular-nums">{p.completed_manday ?? 0} <span className="font-medium text-slate-500">xong</span></p>
                       </div>
-
-                      <div className="flex -space-x-1.5 overflow-hidden">
-                        {p.members?.slice(0, 3).map((m: any, idx: number) => {
-                          const COLORS = ['bg-blue-600', 'bg-purple-600', 'bg-indigo-600', 'bg-pink-600', 'bg-emerald-600'];
-                          const bg = COLORS[idx % COLORS.length];
-                          return (
-                            <div key={idx} className={`inline-block h-6 w-6 rounded-full ring-2 ring-white ${bg} flex items-center justify-center text-[9px] font-bold text-white uppercase`} title={m.name}>
-                              {getInitials(m.name)}
-                            </div>
-                          );
-                        })}
-                        {p.members?.length > 3 && (
-                          <div className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 uppercase" title="Xem thêm thành viên">
-                            +{p.members.length - 3}
-                          </div>
-                        )}
+                      <div>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">KPI</p>
+                        <p className="text-[12px] font-bold text-indigo-700 tabular-nums">{p.active_kpi ?? 0} <span className="font-medium text-slate-500">đang</span></p>
+                        <p className="text-[12px] font-bold text-emerald-600 tabular-nums">{p.completed_kpi ?? 0} <span className="font-medium text-slate-500">xong</span></p>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1.5">Task</p>
+                        <p className="text-[12px] font-bold text-slate-800 tabular-nums">{p.active_task_count ?? 0} <span className="font-medium text-slate-500">đang</span></p>
+                        <p className="text-[12px] font-bold text-emerald-600 tabular-nums">{p.completed_task_count ?? 0} <span className="font-medium text-slate-500">xong</span></p>
+                        <p className="text-[12px] font-bold text-rose-600 tabular-nums">{p.warning_task_count ?? 0} <span className="font-medium">trễ</span></p>
                       </div>
                     </div>
                   </div>
@@ -715,19 +790,25 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-slate-400 uppercase text-[10px] font-bold tracking-wider border-b border-slate-200">
-                    {canManage && <th className="px-4 py-2.5 w-8"></th>}
-                    <th className="px-2 py-2.5 w-8"></th>
-                    <th className="px-3 py-2.5 min-w-[220px]">Dự án</th>
-                    <th className="px-3 py-2.5">Giai đoạn</th>
-                    <th className="px-3 py-2.5">Project Manager</th>
-                    <th className="px-3 py-2.5">Technical Lead</th>
-                    <th className="px-3 py-2.5">Sales</th>
-                    <th className="px-3 py-2.5 text-center">Tổng</th>
-                    <th className="px-3 py-2.5 text-center">Hoàn thành</th>
-                    <th className="px-3 py-2.5 text-center">Cảnh báo</th>
-                    <th className="px-3 py-2.5">Thành viên</th>
-                    <th className="px-3 py-2.5 w-10"></th>
+                    {canManage && <th className="px-4 py-2.5 w-8" rowSpan={hasMetricColumns ? 2 : 1}></th>}
+                    <th className="px-2 py-2.5 w-8" rowSpan={hasMetricColumns ? 2 : 1}></th>
+                    <th className="px-3 py-2.5 min-w-[220px]" rowSpan={hasMetricColumns ? 2 : 1}>Dự án</th>
+                    {visibleColumns.pm && <th className="px-3 py-2.5" rowSpan={hasMetricColumns ? 2 : 1}>PM</th>}
+                    {visibleColumns.sales && <th className="px-3 py-2.5" rowSpan={hasMetricColumns ? 2 : 1}>Sale</th>}
+                    {mandayColumnCount > 0 && <th className="px-3 py-2.5 text-center" colSpan={mandayColumnCount}>Manday</th>}
+                    {kpiColumnCount > 0 && <th className="px-3 py-2.5 text-center" colSpan={kpiColumnCount}>KPI</th>}
+                    {taskColumnCount > 0 && <th className="px-3 py-2.5 text-center" colSpan={taskColumnCount}>Task</th>}
+                    <th className="px-3 py-2.5 w-10" rowSpan={hasMetricColumns ? 2 : 1}></th>
                   </tr>
+                  {hasMetricColumns && <tr className="bg-slate-50 text-slate-400 uppercase text-[9px] font-bold tracking-wider border-b border-slate-200">
+                    {visibleColumns.activeManday && <th className="px-3 py-2 text-center">Đang làm</th>}
+                    {visibleColumns.completedManday && <th className="px-3 py-2 text-center">Hoàn thành</th>}
+                    {visibleColumns.activeKpi && <th className="px-3 py-2 text-center">Đang làm</th>}
+                    {visibleColumns.completedKpi && <th className="px-3 py-2 text-center">Hoàn thành</th>}
+                    {visibleColumns.activeTasks && <th className="px-3 py-2 text-center">Đang làm</th>}
+                    {visibleColumns.completedTasks && <th className="px-3 py-2 text-center">Hoàn thành</th>}
+                    {visibleColumns.overdueTasks && <th className="px-3 py-2 text-center">Trễ</th>}
+                  </tr>}
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {paged.map(p => {
@@ -762,39 +843,22 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                         <td className="px-3 py-3 max-w-[280px]">
                           <div className="flex items-center gap-1.5">
                             <span className="text-[13px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors truncate" title={p.name}>{p.name}</span>
+                            {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
                             {p.business && (
                               <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200">{p.business}</span>
                             )}
                           </div>
                           <p className="text-[11.5px] text-slate-500 truncate italic">{p.customer_name || 'Chưa có khách hàng'} · Năm {p.year || '—'}</p>
                         </td>
-                        <td className="px-3 py-3 whitespace-nowrap">
-                          <span className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded uppercase tracking-wider ${phaseBadge}`}>{p.current_phase || '1. Tư vấn'}</span>
-                        </td>
-                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[160px] truncate" title={p.pm_name}>{p.pm_name || <span className="text-slate-400 italic font-normal">—</span>}</td>
-                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[160px] truncate" title={p.technical_leader_name}>{p.technical_leader_name || <span className="text-slate-400 italic font-normal">—</span>}</td>
-                        <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[140px] truncate" title={p.sales_name}>{p.sales_name || <span className="text-slate-400 italic font-normal">--</span>}</td>
-                        <td className="px-3 py-3 text-center text-[13px] font-bold text-slate-800">{p.task_count ?? 0}</td>
-                        <td className="px-3 py-3 text-center text-[13px] font-bold text-emerald-600">{p.completed_task_count ?? 0}</td>
-                        <td className="px-3 py-3 text-center text-[13px] font-bold text-rose-600">{p.warning_task_count ?? 0}</td>
-                        <td className="px-3 py-3">
-                          <div className="flex -space-x-1.5 overflow-hidden">
-                            {p.members?.slice(0, 3).map((m: any, idx: number) => {
-                              const COLORS = ['bg-blue-600', 'bg-purple-600', 'bg-indigo-600', 'bg-pink-600', 'bg-emerald-600'];
-                              const bg = COLORS[idx % COLORS.length];
-                              return (
-                                <div key={idx} className={`inline-block h-6 w-6 rounded-full ring-2 ring-white ${bg} flex items-center justify-center text-[9px] font-bold text-white uppercase`} title={m.name}>
-                                  {getInitials(m.name)}
-                                </div>
-                              );
-                            })}
-                            {p.members?.length > 3 && (
-                              <div className="inline-block h-6 w-6 rounded-full ring-2 ring-white bg-slate-200 flex items-center justify-center text-[9px] font-bold text-slate-600 uppercase" title="Xem thêm thành viên">
-                                +{p.members.length - 3}
-                              </div>
-                            )}
-                          </div>
-                        </td>
+                        {visibleColumns.pm && <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[160px] truncate" title={p.pm_name}>{p.pm_name || <span className="text-slate-400 italic font-normal">—</span>}</td>}
+                        {visibleColumns.sales && <td className="px-3 py-3 text-[12.5px] font-semibold text-slate-700 max-w-[140px] truncate" title={p.sales_name}>{p.sales_name || <span className="text-slate-400 italic font-normal">--</span>}</td>}
+                        {visibleColumns.activeManday && <td className="px-3 py-3 text-center text-[13px] font-bold text-amber-700 tabular-nums">{p.active_manday ?? 0}</td>}
+                        {visibleColumns.completedManday && <td className="px-3 py-3 text-center text-[13px] font-bold text-emerald-600 tabular-nums">{p.completed_manday ?? 0}</td>}
+                        {visibleColumns.activeKpi && <td className="px-3 py-3 text-center text-[13px] font-bold text-indigo-700 tabular-nums">{p.active_kpi ?? 0}</td>}
+                        {visibleColumns.completedKpi && <td className="px-3 py-3 text-center text-[13px] font-bold text-emerald-600 tabular-nums">{p.completed_kpi ?? 0}</td>}
+                        {visibleColumns.activeTasks && <td className="px-3 py-3 text-center text-[13px] font-bold text-slate-800">{p.active_task_count ?? 0}</td>}
+                        {visibleColumns.completedTasks && <td className="px-3 py-3 text-center text-[13px] font-bold text-emerald-600">{p.completed_task_count ?? 0}</td>}
+                        {visibleColumns.overdueTasks && <td className="px-3 py-3 text-center text-[13px] font-bold text-rose-600">{p.warning_task_count ?? 0}</td>}
                         <td className="px-3 py-3" onClick={(e) => e.stopPropagation()}>
                           {canManage && (
                             <div className="relative">
@@ -808,13 +872,21 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                                 </svg>
                               </button>
                               {menuOpenId === p.id && (
-                                <div className="absolute right-0 mt-1 w-40 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                                <div className="absolute right-0 mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
                                   <button
                                     onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
                                     className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
                                   >
                                     ✏️ Chỉnh sửa
                                   </button>
+                                  {canManageCritical && (
+                                    <button
+                                      onClick={() => handleSetCritical(p)}
+                                      className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                    >
+                                      {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
+                                    </button>
+                                  )}
                                   <button
                                     onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
                                     className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"

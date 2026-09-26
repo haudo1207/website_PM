@@ -359,6 +359,25 @@ def apply_schema_updates():
         # Add business column to projects
         conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS business VARCHAR(30) NOT NULL DEFAULT 'Infrastructure'"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_business ON projects (business)"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS is_critical BOOLEAN NOT NULL DEFAULT FALSE"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS critical_updated_at TIMESTAMPTZ"))
+        conn.execute(text("ALTER TABLE projects ADD COLUMN IF NOT EXISTS critical_updated_by INTEGER"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_is_critical ON projects (is_critical)"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'projects_critical_updated_by_fkey'
+                      AND conrelid = 'projects'::regclass
+                ) THEN
+                    ALTER TABLE projects
+                    ADD CONSTRAINT projects_critical_updated_by_fkey
+                    FOREIGN KEY (critical_updated_by) REFERENCES users(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
         conn.execute(text("""
             UPDATE projects 
             SET business = 'Markee' 

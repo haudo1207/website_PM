@@ -1261,6 +1261,8 @@ export default function OverviewTab() {
     const initialRanking = activeRankingMembers.map(m => {
       const myTasks = (selectedWorkspaceScope === 'external' ? fTasks : myTasksBroadSource).filter(t => isSameId(t.assigned_id, m.id) || isSameId(t.support_id, m.id));
       let d = 0, i = 0, o = 0, md = 0, k = 0, mdPlanned = 0, kpiPlanned = 0;
+      let mandayAssignedForProgress = 0, mandayDoneForProgress = 0;
+      let mandayRatioIssueCount = 0;
       // Per-Workspace Manday allocation — powers the split-allocation bar in
       // the ranking table (e.g. "Dev 6.0 · Infra 2.0"), so a Chính/Phụ
       // Manday breakdown is visible per member without a separate toggle.
@@ -1269,6 +1271,28 @@ export default function OverviewTab() {
         const taskManday = (t.manday_actual || t.manday_est || 0);
         md += taskManday;
         mdPlanned += (t.manday_est || 0);
+
+        // Manday progress uses the persisted KPI allocation ratios as the
+        // contribution share. Do not normalize invalid ratios or invent a
+        // 90/10 fallback: missing persisted ratio data contributes 0. A task
+        // without Support belongs 100% to its Assigned member.
+        const assignedRatioValue = Number(t.kpi_ratio_assign ?? 0);
+        const supportRatioValue = Number(t.kpi_ratio_support ?? 0);
+        if (t.support_id != null && assignedRatioValue + supportRatioValue !== 100) {
+          mandayRatioIssueCount++;
+        }
+        let allocationRatio = 0;
+        if (isSameId(t.assigned_id, m.id)) {
+          allocationRatio = t.support_id == null
+            ? 1
+            : assignedRatioValue / 100;
+        }
+        if (isSameId(t.support_id, m.id)) {
+          allocationRatio = supportRatioValue / 100;
+        }
+        const allocatedEstManday = Number(t.manday_est ?? 0) * allocationRatio;
+        mandayAssignedForProgress += allocatedEstManday;
+
         kpiPlanned += getTaskKpiPotentialForMember(t, m.id);
         const wsCode = (t.projectDataScope || '').toLowerCase();
         if (wsCode) mandayByWs[wsCode] = (mandayByWs[wsCode] || 0) + taskManday;
@@ -1285,6 +1309,7 @@ export default function OverviewTab() {
         const doneInPeriod = isTaskDoneInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter);
         if (doneInPeriod) {
           d++;
+          mandayDoneForProgress += allocatedEstManday;
           k += getTaskKpiForMember(t, m.id);
         } else if (!isDone) {
           i++;
@@ -1311,6 +1336,10 @@ export default function OverviewTab() {
         overdue: o,
         manday: Math.round(md * 10) / 10,
         mandayPlanned: Math.round(mdPlanned * 10) / 10,
+        mandayProgress: mandayAssignedForProgress > 0
+          ? Math.round((mandayDoneForProgress / mandayAssignedForProgress) * 100)
+          : 0,
+        mandayRatioIssueCount,
         kpi: Math.round(k * 10) / 10,
         kpiPlanned: Math.round(kpiPlanned * 10) / 10,
         mandayByWs,
@@ -2414,18 +2443,19 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
-                  <th className="px-4 py-3 font-bold bg-slate-100 min-w-[140px]">
+                  <th className="px-4 py-3 text-center font-bold bg-slate-100 min-w-[140px]">
                     <span className="inline-flex items-center gap-1">
-                      Tiến Độ
+                      Tiến Độ Manday
                       <FormulaTooltip>
-                        <p className="font-bold text-white/90 mb-1">Tiến độ (Task Completion)</p>
+                        <p className="font-bold text-white/90 mb-1">Tiến độ Manday</p>
                         <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">Tiến độ = round((Done / Giao) × 100)</p>
+                        <p className="text-white font-mono">Tiến độ = round(Manday Done / Manday Giao × 100)</p>
                         <p className="text-white/60 mt-1.5">Trong đó:</p>
                         <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
-                          <li><b>Done:</b> Số task status = Done (có end_date_actual) trong kỳ</li>
-                          <li><b>Giao:</b> Tổng số task giao cho member trong kỳ (mọi trạng thái)</li>
+                          <li><b>Manday Giao:</b> tổng <code>manday_est</code> được phân bổ cho thành viên theo vai trò Assigned/Support và <code>kpi_ratio_assign/support</code>.</li>
+                          <li><b>Manday Done:</b> phần Manday Giao tương ứng với các task đã Done hợp lệ trong kỳ.</li>
                         </ul>
+                        <p className="text-white/60 mt-1.5"><b>Lưu ý:</b> Không sử dụng <code>manday_actual</code>. Tiến độ đo <b>khối lượng Manday EST đã hoàn thành</b>, không phải số lượng task hoàn thành.</p>
                         <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
                       </FormulaTooltip>
                     </span>
@@ -2437,7 +2467,6 @@ export default function OverviewTab() {
                   <tr><td colSpan={9} className="text-center py-6 text-slate-400 font-semibold">Chưa có thành viên nào.</td></tr>
                 ) : (
                   memberRanking.map((m, i) => {
-                    const rate = m.assigned > 0 ? Math.round((m.done / m.assigned) * 100) : 0;
                     const isLeader = leaders.some(ld => ld.name && ld.name !== 'Không có Leader' && (
                       ld.name.trim().toLowerCase() === m.name.trim().toLowerCase() ||
                       ld.name.trim().toLowerCase() === (m.rawMember?.full_name || '').trim().toLowerCase() ||
@@ -2538,8 +2567,13 @@ export default function OverviewTab() {
                             );
                           })()}
                         </td>
-                        <td className="px-4 py-3.5">
-                          <ProgressBar value={rate} color={rate >= 80 ? 'bg-emerald-500' : rate >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
+                        <td
+                          className="px-4 py-3.5"
+                          title={m.mandayRatioIssueCount > 0
+                            ? `${m.mandayRatioIssueCount} task có tổng KPI Ratio Assigned/Support khác 100%; hệ thống giữ nguyên ratio gốc, không tự normalize.`
+                            : undefined}
+                        >
+                          <ProgressBar value={m.mandayProgress} color={m.mandayProgress >= 80 ? 'bg-emerald-500' : m.mandayProgress >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
                         </td>
                       </tr>
                     );
