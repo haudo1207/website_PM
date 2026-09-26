@@ -2513,13 +2513,31 @@ function injectWidget(toolName) {
     const resultText = document.getElementById("markee-sdResultText");
     if (!listEl) return;
     const searchEl = document.getElementById("markee-sdSearch");
-    chrome.runtime.sendMessage({
+    // #markee-sdDepartment/sdPosition/sdCustomer/sdProject used to be dead
+    // stubs — never populated, never wired to any event, never read here.
+    // The "🏢 Phòng ban & Vị trí" / "📁 Khách hàng & Dự án" scope switch in
+    // this drawer had zero effect on the list: every query below sent no
+    // department/team/project filter at all, always the full unfiltered
+    // set regardless of scope tab or field selections.
+    const sdActiveTab = document.querySelector("#markee-skillDownloadFlow .sd-scope-tab.active");
+    const sdScope = sdActiveTab ? sdActiveTab.dataset.sdScope : "org";
+    const sdDept = document.getElementById("markee-sdDepartment");
+    const sdPos = document.getElementById("markee-sdPosition");
+    const sdProj = document.getElementById("markee-sdProject");
+    const payload = {
       action: "GET_SKILLS",
       skillType: "skill",
       keyword: searchEl ? searchEl.value.trim() : "",
       filterType: "all",
       userId: currentUser,
-    }, (res) => {
+    };
+    if (sdScope === "org") {
+      if (sdDept && sdDept.value) payload.departmentIds = [Number(sdDept.value)];
+      if (sdPos && sdPos.value) payload.teamIds = [Number(sdPos.value)];
+    } else if (sdProj && sdProj.value) {
+      payload.projectIds = [Number(sdProj.value)];
+    }
+    chrome.runtime.sendMessage(payload, (res) => {
       const skills = res && Array.isArray(res.skills) ? res.skills : [];
       if (resultText) resultText.textContent = `${skills.length} kỹ năng phù hợp`;
       listEl.innerHTML = "";
@@ -2562,9 +2580,61 @@ function injectWidget(toolName) {
             const isOrg = tab.dataset.sdScope === "org";
             document.getElementById("markee-sdOrgFields").classList.toggle("hidden", !isOrg);
             document.getElementById("markee-sdProjectFields").classList.toggle("hidden", isOrg);
+            refreshSkinSkillDownloadList();
           });
         });
       }
+      // Populate + wire the Phòng ban/Vị trí and Khách hàng/Dự án selects —
+      // were pure static "-- Tất cả --" stubs before, referenced nowhere
+      // else in the file: no populate call, no change listener, no read.
+      const sdDeptSel = document.getElementById("markee-sdDepartment");
+      const sdPosSel = document.getElementById("markee-sdPosition");
+      if (sdDeptSel) {
+        chrome.runtime.sendMessage({ action: "GET_DEPARTMENTS" }, (res) => {
+          const depts = res && Array.isArray(res.departments) ? res.departments : [];
+          sdDeptSel.innerHTML = `<option value="">-- Tất cả --</option>` + depts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
+        });
+        sdDeptSel.addEventListener("change", () => {
+          if (sdPosSel) {
+            sdPosSel.disabled = !sdDeptSel.value;
+            sdPosSel.innerHTML = `<option value="">-- Tất cả --</option>`;
+            if (sdDeptSel.value) {
+              chrome.runtime.sendMessage({ action: "GET_TEAMS", departmentIds: [Number(sdDeptSel.value)] }, (res) => {
+                const teams = res && Array.isArray(res.teams) ? res.teams : [];
+                sdPosSel.innerHTML = `<option value="">-- Tất cả --</option>` + teams.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
+              });
+            }
+          }
+          refreshSkinSkillDownloadList();
+        });
+      }
+      if (sdPosSel) sdPosSel.addEventListener("change", refreshSkinSkillDownloadList);
+
+      const sdCustSel = document.getElementById("markee-sdCustomer");
+      const sdProjSel = document.getElementById("markee-sdProject");
+      if (sdCustSel) {
+        chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
+          const customers = res && Array.isArray(res.customers) ? res.customers : [];
+          sdCustSel.innerHTML = `<option value="">-- Tất cả --</option>` + customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(sdCustSel, "Tìm khách hàng...");
+        });
+        sdCustSel.addEventListener("change", () => {
+          if (sdProjSel) {
+            sdProjSel.disabled = !sdCustSel.value;
+            sdProjSel.innerHTML = `<option value="">-- Tất cả --</option>`;
+            if (sdCustSel.value) {
+              chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: sdCustSel.value }, (res) => {
+                const projects = res && Array.isArray(res.projects) ? res.projects : [];
+                sdProjSel.innerHTML = `<option value="">-- Tất cả --</option>` + projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+                enableSelectSearch(sdProjSel, "Tìm dự án...");
+              });
+            }
+          }
+          refreshSkinSkillDownloadList();
+        });
+      }
+      if (sdProjSel) sdProjSel.addEventListener("change", refreshSkinSkillDownloadList);
+
       const searchEl = document.getElementById("markee-sdSearch");
       if (searchEl) {
         let t = null;
@@ -5972,11 +6042,51 @@ function injectWidget(toolName) {
     const validContent = found.content;
     const docTitle = found.title;
 
-    const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
     let pId = null;
-    if (!attachProjectCb || attachProjectCb.checked) {
-      const selectedProject = await getSelectedProjectAsync();
-      pId = selectedProject.projectId || null;
+    let deptId = null;
+    let teamId = null;
+
+    if (docTypePrefix === "SKILL") {
+      // The Upload drawer's own "🏢 Phòng ban & Vị trí" / "📁 Khách hàng &
+      // Dự án" scope switch never actually controlled what got saved:
+      // project_id always came from the checkbox+globally-selected project
+      // below (checked by default) and department_id/team_id always came
+      // from #markee-department-select/#markee-team-select — legacy
+      // selects that get auto-populated with whatever department loaded
+      // FIRST as soon as the drawer opens, regardless of which scope tab
+      // is active or what the user actually picked. Net effect: picking
+      // "Phòng ban & Vị trí" never stopped the save from still being tied
+      // to whatever project was globally selected — the scope switch had
+      // no real effect. Read the drawer's OWN fields directly instead.
+      const suProj = document.getElementById("markee-suProject");
+      const suDept = document.getElementById("markee-suDepartment");
+      const suPos = document.getElementById("markee-suPosition");
+      const activeScopeTab = document.querySelector("#markee-skillUploadFlow .su-scope-tab.active");
+      const drawerScope = activeScopeTab ? activeScopeTab.dataset.suScope : null;
+
+      if (drawerScope === "project" && suProj && suProj.value) {
+        pId = Number(suProj.value);
+      } else if (drawerScope === "org" && suDept && suDept.value) {
+        deptId = Number(suDept.value);
+        teamId = suPos && suPos.value ? Number(suPos.value) : null;
+      } else {
+        // Drawer never opened/touched — saved directly via "💾 Lưu Kỹ
+        // năng" from the classic tab, so fall back to ITS OWN checkbox +
+        // department/team selects (the ones this always read before).
+        const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
+        if (!attachProjectCb || attachProjectCb.checked) {
+          const selectedProject = await getSelectedProjectAsync();
+          pId = selectedProject.projectId || null;
+        }
+        deptId = getSelectNumber(departmentSelect);
+        teamId = getSelectNumber(teamSelect);
+      }
+    } else {
+      const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
+      if (!attachProjectCb || attachProjectCb.checked) {
+        const selectedProject = await getSelectedProjectAsync();
+        pId = selectedProject.projectId || null;
+      }
     }
     let finalSkillType = docTypePrefix === "SKILL" ? document.getElementById("markee-asset-type-select").value : skillTypeVal;
 
@@ -6004,8 +6114,8 @@ function injectWidget(toolName) {
         skill_type: finalSkillType,
         status: skillTypeVal === "wip" ? "approved" : "pending",
         project_id: pId,
-        department_id: getSelectNumber(departmentSelect),
-        team_id: getSelectNumber(teamSelect),
+        department_id: deptId,
+        team_id: teamId,
         session_tokens: estimateTokens(document.body.innerText),
       },
     }, (res) => {
