@@ -26,8 +26,10 @@ function formatDate(iso: string | null) {
 }
 
 type Scope = 'all' | 'org' | 'project';
+type MainTab = 'knowledge' | 'people';
 
 export default function SkillPage() {
+  const [mainTab, setMainTab] = useState<MainTab>('knowledge');
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
   useEffect(() => {
@@ -137,6 +139,31 @@ export default function SkillPage() {
         </div>
       </div>
 
+      <div className="flex items-center gap-1 border-b border-slate-200">
+        <button
+          onClick={() => setMainTab('knowledge')}
+          className={`px-3.5 py-2 text-[13px] font-bold border-b-2 transition-colors ${
+            mainTab === 'knowledge' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          Knowledge Hub
+        </button>
+        <button
+          onClick={() => setMainTab('people')}
+          className={`px-3.5 py-2 text-[13px] font-bold border-b-2 transition-colors ${
+            mainTab === 'people' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
+          }`}
+        >
+          People &amp; Skill Intelligence
+        </button>
+      </div>
+
+      {mainTab === 'people' ? (
+        <div className="text-center py-16 text-[12.5px] text-slate-400 bg-white border border-slate-200 rounded-xl">
+          Đang phát triển — chưa có nội dung.
+        </div>
+      ) : (
+      <>
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 text-[12.5px] text-red-700">{error}</div>
       )}
@@ -148,7 +175,7 @@ export default function SkillPage() {
               key={s}
               onClick={() => { setScope(s); setDepartmentId(''); setTeamId(''); setCustomerId(''); setProjectId(''); }}
               className={`px-3 py-1.5 rounded-full text-[12px] font-bold border transition-colors ${
-                scope === s ? 'bg-[#0058be] text-white border-[#0058be]' : 'text-slate-500 border-slate-200 hover:border-slate-300'
+                scope === s ? 'bg-[#0058be] text-white border-[#0058be]' : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
               }`}
             >
               {s === 'all' ? 'Tất cả' : s === 'org' ? '🏢 Phòng ban & Vị trí' : '📁 Khách hàng & Dự án'}
@@ -161,7 +188,7 @@ export default function SkillPage() {
               onChange={(e) => setKeyword(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && load()}
               placeholder="Tìm theo tiêu đề..."
-              className="w-full pl-8 pr-3 py-1.5 text-[12.5px] border border-slate-300 rounded-full outline-none focus:ring-1 focus:ring-[#0058be]"
+              className="w-full pl-8 pr-3 py-1.5 text-[12.5px] bg-white text-slate-800 placeholder:text-slate-400 border border-slate-300 rounded-full outline-none focus:ring-1 focus:ring-[#0058be]"
             />
           </div>
         </div>
@@ -169,12 +196,12 @@ export default function SkillPage() {
         {scope === 'org' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <select value={departmentId} onChange={(e) => { setDepartmentId(e.target.value ? Number(e.target.value) : ''); setTeamId(''); }}
-              className="text-[12.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
+              className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
               <option value="">-- Tất cả Phòng ban --</option>
               {departments.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
             <select value={teamId} onChange={(e) => setTeamId(e.target.value ? Number(e.target.value) : '')}
-              className="text-[12.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
+              className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
               <option value="">-- Tất cả Vị trí --</option>
               {teams.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
@@ -184,12 +211,12 @@ export default function SkillPage() {
         {scope === 'project' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             <select value={customerId} onChange={(e) => { setCustomerId(e.target.value ? Number(e.target.value) : ''); setProjectId(''); }}
-              className="text-[12.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
+              className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
               <option value="">-- Chọn Khách hàng --</option>
               {customers.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <select value={projectId} onChange={(e) => setProjectId(e.target.value ? Number(e.target.value) : '')} disabled={!customerId}
-              className="text-[12.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be] disabled:opacity-50">
+              className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be] disabled:opacity-50 disabled:bg-slate-50">
               <option value="">-- Tất cả Dự án --</option>
               {projects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
@@ -264,6 +291,8 @@ export default function SkillPage() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
       </div>
       </main>
