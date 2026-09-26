@@ -53,6 +53,10 @@ def _is_manager(user) -> bool:
     return (getattr(user, "role", ROLE_MEMBER) or "").strip().lower() in MANAGER_ROLES
 
 
+def _is_super_admin(user) -> bool:
+    return (getattr(user, "role", ROLE_MEMBER) or "").strip().lower() == ROLE_SUPER_ADMIN
+
+
 def _is_member_scoped(user) -> bool:
     return (getattr(user, "role", ROLE_MEMBER) or "").strip().lower() in MEMBER_SCOPED_ROLES
 
@@ -242,7 +246,7 @@ def _collect_working_lunch_members(db, user, workspace_code=None, enabled_only=T
     target_ws = _resolve_requested_workspace(db, user, workspace_code)
     if _is_member_scoped(user):
         mid = getattr(user, "member_id", None)
-        if not mid or not work_date or not _is_member_enabled(db, mid, work_date):
+        if not mid or not work_date:
             return []
         m = db.query(Member).filter(Member.id == mid).first()
         if not m:
@@ -251,6 +255,7 @@ def _collect_working_lunch_members(db, user, workspace_code=None, enabled_only=T
         if target_ws is not None and target_ws.id not in {w.id for w in ws_list}:
             return []
         ws = ws_list[0] if ws_list else None
+        enabled = _is_member_enabled(db, mid, work_date)
         return [{
             "id": m.id,
             "user_id": getattr(user, "id", None),
@@ -262,7 +267,7 @@ def _collect_working_lunch_members(db, user, workspace_code=None, enabled_only=T
             "workspace_id": ws.id if ws else None,
             "workspace_code": ws.code if ws else None,
             "workspace_name": ws.name if ws else None,
-            "enabled": True,
+            "enabled": enabled,
         }]
     if not _is_manager(user):
         return []
@@ -573,15 +578,13 @@ def upsert_lunch_record(
 
     if _is_manager(current_user):
         _assert_member_in_scope(db, current_user, body.member_id)
-        if not _is_member_enabled(db, body.member_id, parsed_date):
+        if not _is_super_admin(current_user) and not _is_member_enabled(db, body.member_id, parsed_date):
             raise HTTPException(403, "Member is not selected for Check Working/Lunch on this date")
     else:
         if body.member_id != getattr(current_user, "member_id", None):
             raise HTTPException(403, "You may only register for yourself")
         if not current_user.member_id:
             raise HTTPException(403, "Account is not linked to a member")
-        if not _is_member_enabled(db, current_user.member_id, parsed_date):
-            raise HTTPException(403, "You are not enabled for Check Working/Lunch")
 
     weekday = parsed_date.weekday()
     if weekday in (5, 6):

@@ -66,6 +66,7 @@ function lunchStatusClass(status: LunchStatus) {
 
 function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[]; leaveRequests: LeaveRequest[]; calendarDate: string; isAdmin: boolean }) {
   const now = new Date(calendarDate);
+  const todayDate = dateToYMD(new Date());
   const [lunchRecords, setLunchRecords] = useState<{ id: number; member_id: number; date: string; has_lunch: boolean; status?: string }[]>([]);
   const [selectedTeam, setSelectedTeam] = useState('All');
   const [selectedMonth, setSelectedMonth] = useState(now.getMonth() + 1);
@@ -79,17 +80,24 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   const [savingConfigId, setSavingConfigId] = useState<number | 'bulk' | null>(null);
 
   const fetchLunchRecords = useCallback(async () => {
-    const records = await getLunchRecords({ year: selectedYear, month: selectedMonth });
-    setLunchRecords(records);
-  }, [selectedMonth, selectedYear]);
+    const [monthRecords, todayRecords] = await Promise.all([
+      getLunchRecords({ year: selectedYear, month: selectedMonth }),
+      isAdmin ? Promise.resolve([]) : getLunchRecords({ date: todayDate }),
+    ]);
+    const recordsByKey = new Map<string, (typeof monthRecords)[number]>();
+    [...monthRecords, ...todayRecords].forEach((record) => recordsByKey.set(`${record.member_id}-${record.date}`, record));
+    setLunchRecords(Array.from(recordsByKey.values()));
+  }, [isAdmin, selectedMonth, selectedYear, todayDate]);
 
   useEffect(() => {
     const loadDailyRoster = async () => {
       try {
-        const rosterPromise = getWorkingLunchMembers({ enabled_only: true, date: selectedDate });
-        const configPromise = isAdmin ? getWorkingLunchConfig(undefined, selectedDate) : Promise.resolve([]);
+        const rosterDate = isAdmin ? selectedDate : todayDate;
+        const rosterPromise = getWorkingLunchMembers({ enabled_only: true, date: rosterDate });
+        const configPromise = isAdmin ? getWorkingLunchConfig(undefined, rosterDate) : Promise.resolve([]);
         const [roster, config] = await Promise.all([rosterPromise, configPromise]);
         const userId = Number(localStorage.getItem('user_id') || 0);
+        const memberId = Number(localStorage.getItem('member_id') || 0);
         const rosterMembers = roster.map((member: any) => ({
           ...member,
           name: member.name || member.full_name || member.display_name || 'Chưa có tên',
@@ -97,7 +105,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
           role: member.position || 'Member',
         }));
         setDailyMembers(rosterMembers);
-        setCurrentMemberId(rosterMembers.find((member: any) => member.user_id === userId)?.id || null);
+        setCurrentMemberId(rosterMembers.find((member: any) => member.user_id === userId)?.id || memberId || (!isAdmin && rosterMembers.length === 1 ? rosterMembers[0].id : null));
         if (isAdmin) {
           setConfigMembers(config.map((member: any) => ({
             ...member,
@@ -112,7 +120,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
       }
     };
     loadDailyRoster();
-  }, [isAdmin, selectedDate]);
+  }, [isAdmin, selectedDate, todayDate]);
 
   useEffect(() => {
     fetchLunchRecords().catch((err: unknown) => console.error('Error fetching lunch records:', err));
@@ -135,10 +143,8 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   const workDays = useMemo(() => workingDaysForMonth(selectedYear, selectedMonth), [selectedYear, selectedMonth]);
 
   useEffect(() => {
-    if (isAdmin || workDays.length === 0) return;
-    if (!selectedDate.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) {
-      setSelectedDate(workDays[0].ymd);
-    }
+    if (!isAdmin || workDays.length === 0) return;
+    if (!selectedDate.startsWith(`${selectedYear}-${String(selectedMonth).padStart(2, '0')}`)) setSelectedDate(workDays[0].ymd);
   }, [isAdmin, selectedDate, selectedMonth, selectedYear, workDays]);
 
   const recordsByCell = useMemo(() => {
@@ -192,7 +198,7 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   }, [recordsByCell, visibleMembers, workDays]);
 
   const saveStatus = async (memberId: number, date: string, status: LunchStatus) => {
-    if (isWeekendDate(date)) return;
+    if (isWeekendDate(date) || (!isAdmin && date !== todayDate)) return;
 
     const key = `${memberId}-${date}`;
     const current = recordsByCell.get(key);
@@ -267,24 +273,26 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
   };
 
   if (!isAdmin) {
-    const currentMember = currentMemberId ? members.find((m) => m.id === currentMemberId) : null;
+    const currentMember = currentMemberId ? dailyMembers.find((m) => m.id === currentMemberId) : null;
+    const todayStatus = currentMemberId ? getLunchStatus(recordsByCell.get(`${currentMemberId}-${todayDate}`)) : '';
+    const todayIsWeekend = isWeekendDate(todayDate);
     return (
-      <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-5">
-        <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+      <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-4 sm:p-5">
+        <div className="mb-4 flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-2xl font-bold text-[#061733]">Check Lunch</h2>
-            <p className="mt-1 text-sm text-[#565e74]">Theo dõi và cập nhật đăng ký cơm trưa trong tháng.</p>
+            <h2 className="text-xl font-bold text-[#061733]">Check Lunch</h2>
+            <p className="mt-1 text-sm text-[#565e74]">Đăng ký hôm nay · Lịch tháng chỉ xem</p>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-2">
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Tháng</span>
-              <select value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Xem tháng</span>
+              <select value={selectedMonth} onChange={(e) => setSelectedMonth(Number(e.target.value))} className="h-9 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100">
                 {Array.from({ length: 12 }, (_, i) => i + 1).map((month) => <option key={month} value={month}>Tháng {String(month).padStart(2, '0')}</option>)}
               </select>
             </label>
             <label className="block">
-              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Năm</span>
-              <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} className="h-10 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none">
+              <span className="mb-1 block text-xs font-semibold text-[#565e74]">Năm xem</span>
+              <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))} className="h-9 w-full rounded-lg border border-[#c2c6d6] bg-white px-3 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100">
                 {Array.from({ length: 7 }, (_, i) => new Date().getFullYear() - 3 + i).map((year) => <option key={year} value={year}>{year}</option>)}
               </select>
             </label>
@@ -293,81 +301,79 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
 
         {currentMemberId ? (
           <>
-            <div className="mb-4 grid gap-3 sm:grid-cols-4">
-              <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
-                <div className="text-xs text-[#565e74]">Thành viên</div>
-                <div className="mt-1 truncate text-lg font-bold">{currentMember?.name || 'Member'}</div>
+            <section className="mb-4 flex flex-col gap-3 rounded-lg border border-blue-200 bg-blue-50/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <div className="text-xs font-semibold text-blue-700">ĐĂNG KÝ CỦA BẠN · {formatDateLabel(todayDate)}</div>
+                <div className="mt-1 text-sm text-[#565e74]">{currentMember?.name || 'Member'} · Chỉ có thể thay đổi lựa chọn trong ngày hôm nay.</div>
               </div>
-              <div className="rounded-xl border border-[#c2c6d6]/70 bg-white p-4">
+              {todayIsWeekend ? (
+                <div className="flex h-10 items-center rounded-lg border border-slate-200 bg-slate-100 px-3 text-sm font-medium text-slate-500">Cuối tuần · Không làm việc</div>
+              ) : (
+                <select
+                  value={todayStatus}
+                  onChange={(event) => saveStatus(currentMemberId, todayDate, event.target.value as LunchStatus)}
+                  disabled={savingKey === `${currentMemberId}-${todayDate}`}
+                  aria-label="Đăng ký cơm trưa hôm nay"
+                  className={`h-10 w-full rounded-lg border px-3 text-sm font-bold outline-none transition sm:w-44 ${lunchStatusClass(todayStatus)} ${savingKey === `${currentMemberId}-${todayDate}` ? 'cursor-wait opacity-70' : ''}`}
+                >
+                  {MEMBER_LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
+                </select>
+              )}
+            </section>
+
+            <div className="mb-3 grid grid-cols-3 gap-2 sm:gap-3">
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
                 <div className="text-xs text-[#565e74]">Ngày làm việc</div>
-                <div className="mt-1 text-2xl font-bold">{workDays.length}</div>
+                <div className="mt-1 text-xl font-bold text-[#061733]">{workDays.length}</div>
               </div>
-              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-2.5">
                 <div className="text-xs text-[#565e74]">Đặt</div>
-                <div className="mt-1 text-2xl font-bold text-blue-700">{memberMonthlySummary.lunch}</div>
+                <div className="mt-1 text-xl font-bold text-blue-700">{memberMonthlySummary.lunch}</div>
               </div>
-              <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/70 px-3 py-2.5">
                 <div className="text-xs text-[#565e74]">Không đặt / Chưa chọn</div>
-                <div className="mt-1 text-2xl font-bold text-emerald-700">{memberMonthlySummary.noLunch} / {memberMonthlySummary.empty}</div>
+                <div className="mt-1 text-xl font-bold text-emerald-700">{memberMonthlySummary.noLunch} / {memberMonthlySummary.empty}</div>
               </div>
             </div>
 
-            <section className="rounded-xl border border-[#c2c6d6]/70 bg-white">
-              <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-4 py-3">
-                <h3 className="text-sm font-bold">Check Lunch - Tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
-                <span className="text-xs text-[#565e74]">Ngày đang chọn: {formatDateLabel(selectedDate)}</span>
+            <section className="overflow-hidden rounded-lg border border-[#c2c6d6]/70 bg-white">
+              <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-3 py-2.5">
+                <h3 className="text-sm font-bold text-[#061733]">Lịch sử tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
+                <span className="text-xs text-[#565e74]">{workDays.length} ngày làm việc</span>
               </div>
-              <div className="overflow-x-auto">
+              <div className="max-h-[52vh] overflow-auto">
                 <table className="min-w-full border-separate border-spacing-0 text-sm">
                   <thead>
-                    <tr>
-                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Ngày</th>
-                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Thứ</th>
-                      <th className="border-b border-[#c2c6d6]/70 bg-[#f8f9ff] px-4 py-3 text-left text-xs font-bold">Cơm trưa</th>
+                    <tr className="sticky top-0 z-10">
+                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-2 text-left text-xs font-bold">Ngày</th>
+                      <th className="border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-2 text-left text-xs font-bold">Thứ</th>
+                      <th className="border-b border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-2 text-left text-xs font-bold">Cơm trưa</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {calendarDays.map((day) => {
+                    {workDays.map((day) => {
                       const key = `${currentMemberId}-${day.ymd}`;
                       const status = getLunchStatus(recordsByCell.get(key));
-                      const isSelected = day.ymd === selectedDate;
-                      const isToday = day.ymd === dateToYMD(new Date());
-                      const rowWeekend = day.isWeekend;
+                      const isToday = day.ymd === todayDate;
 
                       return (
-                        <tr key={day.ymd} onClick={() => !rowWeekend && setSelectedDate(day.ymd)} className={`cursor-pointer ${rowWeekend ? 'bg-slate-100 text-slate-400 opacity-80' : isSelected ? 'bg-blue-50' : isToday ? 'bg-amber-50' : 'hover:bg-slate-50'}`} aria-disabled={rowWeekend}>
-                          <td className={`border-b border-r border-slate-100 px-4 py-3 font-bold ${rowWeekend ? 'text-slate-400' : isSelected ? 'text-blue-700' : 'text-[#061733]'}`}>
+                        <tr key={day.ymd} className={isToday ? 'bg-blue-50/70' : 'bg-white'}>
+                          <td className={`border-b border-r border-slate-100 px-3 py-2 font-semibold ${isToday ? 'text-blue-700' : 'text-[#061733]'}`}>
                             {`${String(day.day).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`}
-                            {isToday && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Hôm nay</span>}
+                            {isToday && <span className="ml-2 text-[10px] font-semibold text-blue-600">Hôm nay</span>}
                           </td>
-                          <td className={`border-b border-r border-slate-100 px-4 py-3 ${rowWeekend ? 'text-slate-400' : 'text-[#565e74]'}`}>
+                          <td className="border-b border-r border-slate-100 px-3 py-2 text-[#565e74]">
                             {getBusinessWeekdayLabel(day.ymd)}
                           </td>
-                          <td className={`border-b border-slate-100 px-4 py-2 ${rowWeekend ? 'bg-slate-100' : ''}`}>
-                            {rowWeekend ? (
-                              <div className="flex h-10 w-40 items-center justify-center rounded-lg border border-slate-200 bg-slate-200/80 text-xs font-semibold text-slate-500">
-                                Không làm việc
-                              </div>
-                            ) : (
-                              <select
-                                value={status}
-                                onClick={(e) => {
-                                  if (rowWeekend) e.stopPropagation();
-                                }}
-                                onChange={(e) => {
-                                  if (rowWeekend) return;
-                                  saveStatus(currentMemberId, day.ymd, e.target.value as LunchStatus);
-                                }}
-                                disabled={rowWeekend || savingKey === key}
-                                className={`h-10 w-40 rounded-lg border px-3 text-sm font-bold outline-none transition ${lunchStatusClass(status)} ${savingKey === key ? 'cursor-wait opacity-70' : ''}`}
-                              >
-                                {MEMBER_LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
-                              </select>
-                            )}
+                          <td className="border-b border-slate-100 px-3 py-2">
+                            <span className={`inline-flex min-w-24 justify-center rounded-md border px-2.5 py-1 text-xs font-semibold ${lunchStatusClass(status)}`}>
+                              {MEMBER_LUNCH_STATUS_OPTIONS.find((item) => item.value === status)?.label || 'Chưa chọn'}
+                            </span>
                           </td>
                         </tr>
                       );
                     })}
+                    {workDays.length === 0 && <tr><td colSpan={3} className="px-3 py-8 text-center text-sm text-slate-500">Không có ngày làm việc trong tháng này.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -498,53 +504,65 @@ function LunchCheckIn({ members, calendarDate, isAdmin }: { members: TeamMember[
         </div>
       </section>
 
-      <section className="rounded-xl border border-[#c2c6d6]/70 bg-white">
-        <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-4 py-3">
-          <h3 className="text-sm font-bold">Check Lunch - Tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
-          <span className="text-xs text-[#565e74]">{visibleMembers.length} thành viên · {workDays.length} ngày làm việc · {calendarDays.length - workDays.length} cuối tuần</span>
-        </div>
-        <div className="max-h-[68vh] overflow-auto">
-          <table className="min-w-max border-separate border-spacing-0 text-sm">
-            <thead>
-              <tr>
-                <th className="sticky left-0 top-0 z-30 w-28 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-left text-xs font-bold">Ngày</th>
-                {visibleMembers.map((member) => (
-                  <th key={member.id} className="sticky top-0 z-20 w-32 min-w-32 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-center">
-                    <div className="max-w-28 truncate text-xs font-bold">{member.name}</div>
-                    <div className="mt-1 max-w-28 truncate text-[10px] font-medium text-[#565e74]">{member.team || 'N/A'}</div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {workDays.map((day) => (
-                <tr key={day.ymd}>
-                  <th className="sticky left-0 z-10 w-28 border-b border-r border-[#c2c6d6]/70 bg-white px-3 py-3 text-left">
-                    <div className="text-xs font-bold">{`${String(day.day).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`}</div>
-                    <div className="mt-1 text-[11px] font-medium text-[#565e74]">T{day.weekday + 1}</div>
-                  </th>
-                  {visibleMembers.map((member) => {
-                    const key = `${member.id}-${day.ymd}`;
-                    const status = getLunchStatus(recordsByCell.get(key));
-                    return (
-                      <td key={key} className="w-32 min-w-32 border-b border-r border-slate-100 p-1.5">
-                        <select
-                          value={status}
-                          onChange={(e) => saveStatus(member.id, day.ymd, e.target.value as LunchStatus)}
-                          disabled={savingKey === key}
-                          className={`h-11 w-28 rounded-lg border px-2 text-xs font-bold outline-none transition ${lunchStatusClass(status)} ${savingKey === key ? 'cursor-wait opacity-70' : ''}`}
-                        >
-                          {LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
-                        </select>
-                      </td>
-                    );
-                  })}
+      {visibleMembers.length > 0 ? (
+        <section className="rounded-xl border border-[#c2c6d6]/70 bg-white">
+          <div className="flex items-center justify-between border-b border-[#c2c6d6]/70 px-4 py-3">
+            <h3 className="text-sm font-bold">Check Lunch - Tháng {String(selectedMonth).padStart(2, '0')}/{selectedYear}</h3>
+            <span className="text-xs text-[#565e74]">{visibleMembers.length} thành viên · {workDays.length} ngày làm việc · {calendarDays.length - workDays.length} cuối tuần</span>
+          </div>
+          <div className="max-h-[68vh] overflow-auto">
+            <table className="min-w-max border-separate border-spacing-0 text-sm">
+              <thead>
+                <tr>
+                  <th className="sticky left-0 top-0 z-30 w-28 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-left text-xs font-bold">Ngày</th>
+                  {visibleMembers.map((member) => (
+                    <th key={member.id} className="sticky top-0 z-20 w-32 min-w-32 border-b border-r border-[#c2c6d6]/70 bg-[#f8f9ff] px-3 py-3 text-center">
+                      <div className="max-w-28 truncate text-xs font-bold">{member.name}</div>
+                      <div className="mt-1 max-w-28 truncate text-[10px] font-medium text-[#565e74]">{member.team || 'N/A'}</div>
+                    </th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {workDays.map((day) => {
+                  const isSelected = day.ymd === selectedDate;
+                  const isToday = day.ymd === dateToYMD(new Date());
+                  return (
+                    <tr key={day.ymd} className={isSelected ? 'bg-blue-50 ring-1 ring-inset ring-blue-200' : isToday ? 'bg-amber-50/60' : 'bg-white'}>
+                      <th className={`sticky left-0 z-10 w-28 border-b border-r border-slate-200 px-3 py-2.5 text-left ${isSelected ? 'bg-blue-100 text-blue-800' : isToday ? 'bg-amber-50 text-amber-800' : 'bg-white text-[#061733]'}`}>
+                        <div className="text-xs font-bold">{`${String(day.day).padStart(2, '0')}/${String(selectedMonth).padStart(2, '0')}/${selectedYear}`}</div>
+                        <div className="mt-1 text-[11px] font-medium">T{day.weekday + 1}</div>
+                        {(isSelected || isToday) && <div className="mt-1 text-[10px] font-bold">{isSelected ? 'ĐANG CHỌN' : 'HÔM NAY'}</div>}
+                      </th>
+                      {visibleMembers.map((member) => {
+                        const key = `${member.id}-${day.ymd}`;
+                        const status = getLunchStatus(recordsByCell.get(key));
+                        return (
+                          <td key={key} className={`w-32 min-w-32 border-b border-r border-slate-100 p-1.5 ${isSelected ? 'bg-blue-50' : ''}`}>
+                            <select
+                              value={status}
+                              onChange={(e) => saveStatus(member.id, day.ymd, e.target.value as LunchStatus)}
+                              disabled={savingKey === key}
+                              className={`h-11 w-28 rounded-lg border px-2 text-xs font-bold outline-none transition ${lunchStatusClass(status)} ${savingKey === key ? 'cursor-wait opacity-70' : ''}`}
+                            >
+                              {LUNCH_STATUS_OPTIONS.map((item) => <option key={item.value || 'empty'} value={item.value}>{item.label}</option>)}
+                            </select>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      ) : (
+        <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-8 text-center">
+          <p className="text-sm font-semibold text-slate-700">{dailyMembers.length === 0 ? 'Chưa có member được chọn cho ngày này' : 'Không tìm thấy member phù hợp'}</p>
+          <p className="mt-1 text-xs text-slate-500">{dailyMembers.length === 0 ? 'Tick member phía trên để hiển thị bảng Check Lunch.' : 'Thử đổi team hoặc từ khóa tìm kiếm.'}</p>
         </div>
-      </section>
+      )}
     </div>
   );
 }
@@ -1005,24 +1023,8 @@ export default function LeaveRequestPage() {
     queryKey: QUERY_KEY,
     queryFn: async () => {
       try {
-        const [leaveData, membersData] = await Promise.all([
-          getLeaveRequests(),
-          getMembers({ light: true, scope: true }),
-        ]);
-
-        const mapped: TeamMember[] = membersData.map((m: any) => ({
-          id: m.id,
-          name: m.full_name || m.display_name || m.name || 'Unknown',
-          team: m.team || 'Unassigned',
-          role: m.position || 'Member',
-          email: m.email,
-          telegram_username: m.telegram_username,
-          phone: m.phone,
-          position: m.position,
-          user_id: m.user_id,
-        }));
-
-        return { requests: leaveData as LeaveRequest[], teamMembers: mapped };
+        const requests = await getLeaveRequests();
+        return { requests: requests as LeaveRequest[], teamMembers: [] as TeamMember[] };
       } catch (error) {
         console.error('Error fetching data:', error);
         return { requests: mockLeaveRequests, teamMembers: [] as TeamMember[] };
@@ -1035,7 +1037,28 @@ export default function LeaveRequestPage() {
   });
 
   const requests: LeaveRequest[] = leaveData?.requests || [];
-  const teamMembers: TeamMember[] = leaveData?.teamMembers || [];
+  const { data: memberData } = useQuery({
+    queryKey: ['leave-request-members'],
+    queryFn: async () => {
+      const membersData = await getMembers({ light: true, scope: true });
+      return membersData.map((m: any): TeamMember => ({
+        id: m.id,
+        name: m.full_name || m.display_name || m.name || 'Unknown',
+        team: m.team || 'Unassigned',
+        role: m.position || 'Member',
+        email: m.email,
+        telegram_username: m.telegram_username,
+        phone: m.phone,
+        position: m.position,
+        user_id: m.user_id,
+      }));
+    },
+    enabled: view === 'calendar',
+    staleTime: 5 * 60_000,
+    gcTime: 10 * 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const teamMembers: TeamMember[] = memberData || [];
 
   const editingId = useMemo(() => {
     const idParam = searchParams.get('edit');

@@ -7,7 +7,7 @@ export const setToken = (t: string | null) => {
   accessToken = t;
 };
 
-export const saveToken = (t: string, r: string, n: string, avatar?: string | null, email?: string | null) => {
+export const saveToken = (t: string, r: string, n: string, avatar?: string | null, email?: string | null, userId?: number | null, memberId?: number | null) => {
   if (typeof window === 'undefined') return;
   accessToken = t;
   localStorage.setItem('role', r);
@@ -16,6 +16,10 @@ export const saveToken = (t: string, r: string, n: string, avatar?: string | nul
   else localStorage.removeItem('avatar');
   if (email) localStorage.setItem('email', email);
   else localStorage.removeItem('email');
+  if (userId) localStorage.setItem('user_id', String(userId));
+  else localStorage.removeItem('user_id');
+  if (memberId) localStorage.setItem('member_id', String(memberId));
+  else localStorage.removeItem('member_id');
 };
 
 export const getToken = () => accessToken;
@@ -59,6 +63,8 @@ export const logout = () => {
   localStorage.removeItem('name');
   localStorage.removeItem('avatar');
   localStorage.removeItem('email');
+  localStorage.removeItem('user_id');
+  localStorage.removeItem('member_id');
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
   // Best-effort server-side revocation (works even when the Access JWT is
   // expired — the backend revokes via the HttpOnly refresh cookie).

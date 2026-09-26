@@ -7,6 +7,7 @@ is never exposed to the frontend or logged.
 """
 import logging
 import secrets
+from html import escape
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -235,15 +236,22 @@ def build_leave_request_message(leave_request) -> str:
 
     province = getattr(leave_request, "province", "") or ""
     location = province or _location_text(leave_request)
+    name = escape(_user_display_name(leave_request))
+    man_day = escape(str(getattr(leave_request, "man_day", "") or ""))
+    start_date = escape(_format_date(getattr(leave_request, "start_date", None)))
+    end_date = escape(_format_date(getattr(leave_request, "end_date", None)))
+    leave_type = escape(str(getattr(leave_request, "leave_type", "") or ""))
+    reason = escape(str(getattr(leave_request, "reason", "") or ""))
+    location = escape(location)
 
     lines = [
-        f"Thông báo nghỉ phép từ {_user_display_name(leave_request)}",
-        f"🟢 Số ngày nghỉ: {getattr(leave_request, 'man_day', '')}",
-        f"📅 Ngày bắt đầu: {_format_date(getattr(leave_request, 'start_date', None))}",
-        f"📅 Ngày kết thúc: {_format_date(getattr(leave_request, 'end_date', None))}",
-        f"🧑‍💻 Trạng thái: {getattr(leave_request, 'leave_type', '')}",
-        f"📝 Lý do: {getattr(leave_request, 'reason', '')}",
-        f"📍 Địa điểm: {location}",
+        f"<b>Thông báo nghỉ phép từ {name}</b>",
+        f"🟢 <b>Số ngày nghỉ:</b> {man_day}",
+        f"📅 <b>Ngày bắt đầu:</b> {start_date}",
+        f"📅 <b>Ngày kết thúc:</b> {end_date}",
+        f"🧑‍💻 <b>Trạng thái:</b> {leave_type}",
+        f"📝 <b>Lý do:</b> {reason}",
+        f"📍 <b>Địa điểm:</b> {location}",
     ]
     return "\n".join(lines)
 
