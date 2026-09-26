@@ -852,6 +852,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           id: l.id,
           title: l.title || "Không tiêu đề",
           content: l.ai_summary || l.content || "",
+          attached_files: Array.isArray(l.attached_files) ? l.attached_files : [],
         }));
         sendResponse({ summaries });
       } catch (err) {

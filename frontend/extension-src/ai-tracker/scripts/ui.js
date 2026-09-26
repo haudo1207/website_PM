@@ -934,7 +934,6 @@ function injectWidget(toolName) {
               <option value="skills">⚡ Kỹ năng</option>
             </select>
           </div>
-          <button class="go" id="markee-runQuickAction" type="button" title="Mở luồng Upload">→</button>
         </div>
 
         <div class="commandbar">
@@ -2290,8 +2289,6 @@ function injectWidget(toolName) {
     if (skinDrawer) skinDrawer.classList.remove("open");
   }
 
-  const runQuickActionBtn = document.getElementById("markee-runQuickAction");
-  if (runQuickActionBtn) runQuickActionBtn.onclick = () => openSkinDrawer();
   const drawerCloseBtn = document.getElementById("markee-drawerClose");
   if (drawerCloseBtn) drawerCloseBtn.onclick = closeSkinDrawer;
   const drawerCancelBtn = document.getElementById("markee-drawerCancel");
@@ -5644,137 +5641,87 @@ function injectWidget(toolName) {
     if (loadMoreBtn) loadMoreBtn.remove();
   }
 
+  // Was "GET_SKILLS" with skillType:"wip" — same root bug as
+  // initSkinDownloadFlow's refreshDownloadList() above: that action always
+  // hits /api/ai-skills, a table WIP logs are never written to (they're
+  // saved to a project's Feature Logs — SAVE_SCRAPED_MARKDOWN's isWipMode
+  // branch). This is the LEGACY classic "Pull" tab's version of that same
+  // list (shown inline the moment Module=Tóm tắt + Action=Download is
+  // picked, separately from the newer drawer) — it had the identical bug,
+  // just never fixed alongside the drawer's copy, so switching to Download
+  // still showed nothing for WIP even after that fix. Switched to
+  // GET_SUMMARIES (the real read-side of that write path) here too.
+  // Favorite/star has no backend equivalent for Feature Logs at all (that's
+  // an ai_skills-only concept, AiSkillFavorite keyed by skill_id) — dropped
+  // for this list rather than faked. Pagination is done client-side now
+  // (GET /projects/{id}/feature-logs has no limit/offset param at all,
+  // unlike /api/ai-skills — it always returns everything for the project).
   function fetchAndRenderWipSummaries(appendMode = false) {
     const list = document.getElementById("markee-skill-list");
     if (!list) return;
 
     if (!appendMode) {
-      // Fresh load: xóa list cũ, reset trang
       wipCurrentPage = 0;
       list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Đang tải...</div>`;
       const oldBtn = document.getElementById("markee-wip-load-more");
       if (oldBtn) oldBtn.remove();
     } else {
-      // Append mode: chỉ xóa nút cũ để append vào sau
       const oldBtn = document.getElementById("markee-wip-load-more");
       if (oldBtn) oldBtn.remove();
     }
 
-    const customerSelect = document.getElementById("markee-customer-select-pull");
     const projectSelect = document.getElementById("markee-project-select-pull");
     const featureInput = document.getElementById("markee-feature-input-pull");
-
     const projectId = projectSelect ? getSelectNumber(projectSelect) : null;
-    const customerId = customerSelect ? customerSelect.value : "";
     const featureName = featureInput ? featureInput.value.trim() : "";
 
-    let projectIds = null;
-    if (!projectId && customerId && projectSelect) {
-      projectIds = [];
-      for (let option of projectSelect.options) {
-        if (option.value) projectIds.push(Number(option.value));
-      }
-      if (projectIds.length === 0) {
-        list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chưa có dữ liệu</div>`;
-        return;
-      }
+    if (!projectId) {
+      list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chọn Dự án ở trên trước</div>`;
+      return;
     }
 
-    // Tính offset cho trang hiện tại
-    const offset = wipCurrentPage * WIP_PAGE_SIZE;
-
     const wipSearchInput = document.getElementById("wip-search-input");
-    const keyword = wipSearchInput ? wipSearchInput.value.trim() : "";
+    const keyword = wipSearchInput ? wipSearchInput.value.trim().toLowerCase() : "";
 
     chrome.runtime.sendMessage(
-      {
-        action: "GET_SKILLS",
-        skillType: "wip",
-        filterType: currentWipPullChipFilter || "all",
-        userId: currentUser,
-        projectId: projectId,
-        projectIds: projectIds,
-        featureName: featureName,
-        limit: WIP_PAGE_SIZE,
-        offset: offset,
-        keyword: keyword,
-      },
+      { action: "GET_SUMMARIES", projectId, featureName },
       (res) => {
-        // Nếu đồng bộ fresh load: xóa "Đang tải..."
         if (!appendMode) list.innerHTML = "";
 
-        const skills = res && Array.isArray(res.skills) ? res.skills : [];
+        let items = res && Array.isArray(res.summaries) ? res.summaries : [];
+        if (keyword) items = items.filter((it) => (it.title || "").toLowerCase().includes(keyword));
 
-        if (skills.length > 0) {
-          skills.forEach((s) => {
+        const offset = wipCurrentPage * WIP_PAGE_SIZE;
+        const pageItems = items.slice(offset, offset + WIP_PAGE_SIZE);
+
+        if (pageItems.length > 0) {
+          pageItems.forEach((it) => {
             const item = document.createElement("div");
             item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #12172a; padding: 6px; border-radius: 4px; border: 1px solid #232340; margin-bottom: 4px;";
 
-            let displayTitle = s.title || "Tóm tắt";
-            if (s.feature_name) displayTitle += ` [${s.feature_name}]`;
-            const rawAf = s.attached_file;
-            const fileInfoRender = Array.isArray(rawAf) ? rawAf[0] : rawAf;
-            const hasAttachment = !!(fileInfoRender && fileInfoRender.storage_path);
-            const fileIcon = hasAttachment ? " 📎" : "";
-
-            // Nút Favorite Star (Ưu thích)
-            const starBtn = document.createElement("button");
-            const isFav = !!s.is_favorite;
-            starBtn.innerHTML = isFav ? "⭐" : "☆";
-            starBtn.title = isFav ? "Bỏ ưu thích" : "Thêm vào ưu thích";
-            starBtn.style.cssText = `background: transparent; border: none; font-size: 13px; cursor: pointer; padding: 0 4px; color: ${isFav ? "#f59e0b" : "#64748b"};`;
-            starBtn.onclick = (e) => {
-              e.stopPropagation();
-              chrome.runtime.sendMessage(
-                {
-                  action: "TOGGLE_FAVORITE_SKILL",
-                  skillId: s.id,
-                  userId: currentUser,
-                },
-                (favRes) => {
-                  if (favRes && favRes.success) {
-                    s.is_favorite = favRes.isFavorite;
-                    starBtn.innerHTML = favRes.isFavorite ? "⭐" : "☆";
-                    starBtn.style.color = favRes.isFavorite ? "#f59e0b" : "#64748b";
-                    showToast(favRes.isFavorite ? "⭐ Đã thêm vào Ưu thích!" : "Đã bỏ khỏi Ưu thích", "success");
-                    if (currentWipPullChipFilter === "favorite" && !favRes.isFavorite) {
-                      item.remove();
-                    }
-                  }
-                }
-              );
-            };
+            const attachments = Array.isArray(it.attached_files) ? it.attached_files : [];
+            const hasAttachment = attachments.length > 0;
+            const fileIcon = hasAttachment ? ` 📎×${attachments.length}` : "";
 
             const titleSpan = document.createElement("span");
             titleSpan.style.cssText = "font-size: 11px; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; max-width: 170px;";
-            titleSpan.innerText = `📝 ${displayTitle}${fileIcon}`;
+            titleSpan.innerText = `📝 ${it.title || "Tóm tắt"}${fileIcon}`;
 
             const leftDiv = document.createElement("div");
             leftDiv.style.cssText = "display: flex; align-items: center; gap: 4px; overflow: hidden;";
-            leftDiv.appendChild(starBtn);
             leftDiv.appendChild(titleSpan);
 
             const btn = document.createElement("button");
-            btn.innerText = hasAttachment ? "Dùng + File" : "Dùng";
-            btn.title = hasAttachment ? `Kèm file: ${fileInfoRender.file_name || fileInfoRender.name || fileInfoRender.storage_path}` : "";
-            btn.style.cssText = `background: ${hasAttachment ? "#0d9488" : "#10b981"}; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer; white-space: nowrap;`;
-            btn.onclick = () => {
-              // Ghi nhận lịch sử "Dùng" ngầm vào user_recent_skills
-              chrome.runtime.sendMessage({
-                action: "SAVE_RECENT_SKILL",
-                skillId: s.id,
-                userId: currentUser,
-              });
-              reuseWipWithAttachment(s);
-            };
+            btn.innerText = "Dùng";
+            btn.style.cssText = "background: #10b981; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer; white-space: nowrap;";
+            btn.onclick = () => insertSkillToChat(it.content || "");
 
             item.appendChild(leftDiv);
             item.appendChild(btn);
             list.appendChild(item);
           });
 
-          // Hiển thị nút "Xem thêm" nếu số bản ghi trả về đóng WIP_PAGE_SIZE (có thể còn trang tiếp)
-          if (skills.length === WIP_PAGE_SIZE) {
+          if (offset + WIP_PAGE_SIZE < items.length) {
             const loadMoreBtn = document.createElement("button");
             loadMoreBtn.id = "markee-wip-load-more";
             loadMoreBtn.innerText = "⬇ Xem thêm";
@@ -5783,15 +5730,13 @@ function injectWidget(toolName) {
             loadMoreBtn.onmouseout = () => (loadMoreBtn.style.background = "#2a1013");
             loadMoreBtn.onclick = () => {
               wipCurrentPage += 1;
-              fetchAndRenderWipSummaries(true); // append mode
+              fetchAndRenderWipSummaries(true);
             };
             list.appendChild(loadMoreBtn);
           }
         } else if (!appendMode) {
-          // Chỉ hiển "Chưa có dữ liệu" nếu đây là fresh load và rỗng
           list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chưa có dữ liệu</div>`;
         }
-        // Nếu appendMode và rỗng: không append gì — "Xem thêm" đã bị remove ở trên
       },
     );
   }
