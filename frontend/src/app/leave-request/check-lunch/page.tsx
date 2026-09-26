@@ -175,6 +175,7 @@ export default function CheckLunchPage() {
       try {
         const role = localStorage.getItem('role') || '';
         const userId = Number(localStorage.getItem('user_id') || 0);
+        const memberId = Number(localStorage.getItem('member_id') || 0);
         const canManage = ADMIN_ROLES.has(role);
 
         setIsAdmin(canManage);
@@ -204,7 +205,7 @@ export default function CheckLunchPage() {
         }
 
         const member = membersRes.find((m: Member) => m.user_id === userId);
-        setCurrentMemberId(member?.id || null);
+        setCurrentMemberId(member?.id || memberId || (!canManage && membersRes.length === 1 ? membersRes[0].id : null));
       } catch (error) {
         console.error('Error fetching check lunch data:', error);
       } finally {
@@ -225,7 +226,8 @@ export default function CheckLunchPage() {
         const roster = await getWorkingLunchMembers({ enabled_only: true, date: selectedDate });
         setMembers(roster);
         const userId = Number(localStorage.getItem('user_id') || 0);
-        setCurrentMemberId(roster.find((member: Member) => member.user_id === userId)?.id || null);
+        const memberId = Number(localStorage.getItem('member_id') || 0);
+        setCurrentMemberId(roster.find((member: Member) => member.user_id === userId)?.id || memberId || (!isAdmin && roster.length === 1 ? roster[0].id : null));
         if (isAdmin) {
           const config = await getWorkingLunchConfig(undefined, selectedDate);
           setConfigMembers(config);
