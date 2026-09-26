@@ -1,7 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Brain, Search, Trash2, Paperclip, Download, ChevronDown, ChevronUp, Building2, FolderOpen, Loader2 } from 'lucide-react';
+import Navbar from '@/components/Navbar';
+import { isMemberOrAbove } from '@/lib/auth';
 import {
   getAiSkills, deleteAiSkill, getAiSkillAttachmentBlob, AiSkillEntry,
   getDepartments, getTeams, getCustomers, getProjects,
@@ -24,7 +27,14 @@ function formatDate(iso: string | null) {
 
 type Scope = 'all' | 'org' | 'project';
 
-export default function SkillsLibraryPage() {
+export default function SkillPage() {
+  const router = useRouter();
+  const [authorized, setAuthorized] = useState(false);
+  useEffect(() => {
+    if (!isMemberOrAbove()) router.push('/dashboard/overview');
+    else setAuthorized(true);
+  }, [router]);
+
   const [scope, setScope] = useState<Scope>('all');
   const [keyword, setKeyword] = useState('');
   const [departments, setDepartments] = useState<any[]>([]);
@@ -108,15 +118,20 @@ export default function SkillsLibraryPage() {
     }
   }
 
+  if (!authorized) return null;
+
   return (
-    <div className="max-w-5xl mx-auto p-4 md:p-6 space-y-4">
+    <div className="flex min-h-screen bg-[#F4F6FB]">
+      <Navbar />
+      <main className="flex-1 md:ml-64 pt-14 md:pt-0 p-4 md:p-8">
+      <div className="max-w-5xl mx-auto space-y-4">
       <div className="flex items-center gap-2.5">
-        <div className="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center shrink-0">
-          <Brain className="w-4.5 h-4.5 text-indigo-600" />
+        <div className="w-11 h-11 rounded-2xl bg-indigo-50 flex items-center justify-center shrink-0">
+          <Brain className="w-5 h-5 text-indigo-600" />
         </div>
         <div>
-          <h1 className="text-lg font-extrabold text-slate-900">Thư viện Kỹ năng</h1>
-          <p className="text-xs text-slate-400">
+          <h1 className="text-xl font-extrabold text-slate-900">Skill</h1>
+          <p className="text-sm text-slate-500 mt-0.5">
             Nội dung do AI (ChatGPT/Claude/Gemini) đúc kết, lưu qua extension "KPI Prototype" — {skills.length} mục
           </p>
         </div>
@@ -250,6 +265,8 @@ export default function SkillsLibraryPage() {
           )}
         </div>
       )}
+      </div>
+      </main>
     </div>
   );
 }
