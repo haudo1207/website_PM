@@ -126,7 +126,7 @@ export default function SkillPage() {
     <div className="flex min-h-screen bg-[#F4F6FB]">
       <Navbar />
       <main className="flex-1 md:ml-64 pt-14 md:pt-0 p-4 md:p-8">
-      <div className="max-w-5xl mx-auto space-y-4">
+      <div className="space-y-4">
       <div className="flex items-center gap-2.5">
         <div className="w-11 h-11 rounded-2xl bg-indigo-50 flex items-center justify-center shrink-0">
           <Brain className="w-5 h-5 text-indigo-600" />
