@@ -2430,19 +2430,6 @@ export default function OverviewTab() {
                       </FormulaTooltip>
                     </span>
                   </th>
-                  <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">
-                    <span className="inline-flex items-center gap-1">
-                      Phân Bổ Workspace
-                      <FormulaTooltip>
-                        <p className="font-bold text-white/90 mb-1">Phân Bổ Workspace</p>
-                        <p className="text-white/80 mb-1">Công thức:</p>
-                        <p className="text-white font-mono">Tỷ lệ % = manday của workspace / tổng manday của member</p>
-                        <p className="text-white/60 mt-1.5">Thanh ngang hiển thị tỷ lệ phân bổ manday theo từng Workspace (Dev, Infra, Marketing...).</p>
-                        <p className="text-white/60 mt-1">Số bên phải là tỷ lệ % giữa các workspace.</p>
-                        <p className="text-white/60 mt-1">Danh sách bên dưới hiển thị tên workspace và số manday cụ thể.</p>
-                      </FormulaTooltip>
-                    </span>
-                  </th>
                   <th className="px-4 py-3 text-center font-bold bg-slate-100 min-w-[140px]">
                     <span className="inline-flex items-center gap-1">
                       Tiến Độ Manday
@@ -2457,6 +2444,19 @@ export default function OverviewTab() {
                         </ul>
                         <p className="text-white/60 mt-1.5"><b>Lưu ý:</b> Không sử dụng <code>manday_actual</code>. Tiến độ đo <b>khối lượng Manday EST đã hoàn thành</b>, không phải số lượng task hoàn thành.</p>
                         <p className="text-white/50 mt-1">Kỳ = Năm/Tháng/Tuần hoặc bộ lọc nhanh đang chọn.</p>
+                      </FormulaTooltip>
+                    </span>
+                  </th>
+                  <th className="px-4 py-3 text-left font-bold bg-slate-100 min-w-[170px]">
+                    <span className="inline-flex items-center gap-1">
+                      Phân Bổ Workspace
+                      <FormulaTooltip>
+                        <p className="font-bold text-white/90 mb-1">Phân Bổ Workspace</p>
+                        <p className="text-white/80 mb-1">Công thức:</p>
+                        <p className="text-white font-mono">Tỷ lệ % = manday của workspace / tổng manday của member</p>
+                        <p className="text-white/60 mt-1.5">Thanh ngang hiển thị tỷ lệ phân bổ manday theo từng Workspace (Dev, Infra, Marketing...).</p>
+                        <p className="text-white/60 mt-1">Số bên phải là tỷ lệ % giữa các workspace.</p>
+                        <p className="text-white/60 mt-1">Danh sách bên dưới hiển thị tên workspace và số manday cụ thể.</p>
                       </FormulaTooltip>
                     </span>
                   </th>
@@ -2539,6 +2539,14 @@ export default function OverviewTab() {
                             <span className="text-sm font-black leading-none text-[#0058be] tabular-nums">{m.kpiTrungBinh}%</span>
                           </div>
                         </td>
+                        <td
+                          className="px-4 py-3.5"
+                          title={m.mandayRatioIssueCount > 0
+                            ? `${m.mandayRatioIssueCount} task có tổng KPI Ratio Assigned/Support khác 100%; hệ thống giữ nguyên ratio gốc, không tự normalize.`
+                            : undefined}
+                        >
+                          <ProgressBar value={m.mandayProgress} color={m.mandayProgress >= 80 ? 'bg-emerald-500' : m.mandayProgress >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
+                        </td>
                         <td className="px-4 py-3.5 text-left">
                           {(() => {
                             const entries = Object.entries(m.mandayByWs || {}).filter(([, v]) => (v as number) > 0);
@@ -2566,14 +2574,6 @@ export default function OverviewTab() {
                               </div>
                             );
                           })()}
-                        </td>
-                        <td
-                          className="px-4 py-3.5"
-                          title={m.mandayRatioIssueCount > 0
-                            ? `${m.mandayRatioIssueCount} task có tổng KPI Ratio Assigned/Support khác 100%; hệ thống giữ nguyên ratio gốc, không tự normalize.`
-                            : undefined}
-                        >
-                          <ProgressBar value={m.mandayProgress} color={m.mandayProgress >= 80 ? 'bg-emerald-500' : m.mandayProgress >= 60 ? 'bg-amber-500' : 'bg-red-500'} height="h-1.5" />
                         </td>
                       </tr>
                     );
