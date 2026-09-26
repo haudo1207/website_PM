@@ -810,6 +810,33 @@ export const updateProjectKnowledgeItem = (projectId: number, itemId: number, bo
 export const deleteProjectKnowledgeItem = (projectId: number, itemId: number) =>
   api.delete(`/projects/${projectId}/knowledge-items/${itemId}`).then(r => r.data);
 
+// AI Skill Library — "Kỹ năng" the KPI Prototype extension saves (see
+// backend/app/routers/ai_skills.py). Was ONLY browsable inside the
+// extension's own widget — pm-new itself had no page for it at all.
+export interface AiSkillEntry {
+  id: number;
+  title: string;
+  markdown_content: string;
+  asset_type: string;
+  category: string | null;
+  department_id: number | null;
+  department_name: string | null;
+  team_id: number | null;
+  team_name: string | null;
+  project_id: number | null;
+  project_name: string | null;
+  status: string;
+  created_by: string | null;
+  created_at: string | null;
+  is_favorite: boolean;
+  attachments: { id: number; file_name: string; mime_type: string | null; size_bytes: number | null }[];
+}
+export const getAiSkills = (params?: { department_id?: number; team_id?: number; project_id?: number; asset_type?: string; keyword?: string; limit?: number; offset?: number }) =>
+  api.get<AiSkillEntry[]>('/ai-skills', { params }).then(r => r.data);
+export const deleteAiSkill = (id: number) => api.delete(`/ai-skills/${id}`).then(r => r.data);
+export const getAiSkillAttachmentBlob = (skillId: number, idx: number) =>
+  api.get(`/ai-skills/${skillId}/attachments/${idx}`, { responseType: 'blob' }).then(r => r.data as Blob);
+
 // "Nhật ký hoạt động" (Activity Log) — passive AUTO_LOG rows from the KPI
 // Prototype extension (one per message sent to ChatGPT/Claude/Gemini while
 // this project was selected), written by the extension's own background.js
