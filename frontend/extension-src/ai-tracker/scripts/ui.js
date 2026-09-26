@@ -797,7 +797,7 @@ function injectWidget(toolName) {
       #markee-widget .summary-extra.open{display:block;}
       #markee-widget .summary-detail-grid{display:flex;flex-direction:column;gap:6px;}
       #markee-widget .summary-detail-field label{display:block;margin-bottom:4px;color:#8f99ff;font-size:9px;font-weight:900;letter-spacing:.04em;}
-      #markee-widget .summary-detail-select,#markee-widget .summary-detail-input,#markee-widget .drawer-select,#markee-widget .drawer-input,#markee-widget .su-select,#markee-widget .sd-select{width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;}
+      #markee-widget .summary-detail-select,#markee-widget .summary-detail-input,#markee-widget .drawer-select,#markee-widget .drawer-input,#markee-widget .su-select,#markee-widget .sd-select,#markee-widget .scope-select{width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;}
       #markee-widget .summary-feature-row,#markee-widget .feature-row{display:grid;grid-template-columns:1fr auto;gap:5px;}
       #markee-widget .summary-feature-create,#markee-widget .create-feature{height:30px;padding:0 8px;border-radius:7px;border:1px solid rgba(25,197,143,.32);background:rgba(25,197,143,.08);color:#8ce4c6;font-size:9.5px;font-weight:900;cursor:pointer;white-space:nowrap;}
       #markee-widget .download-context-note{display:none;font-size:9.5px;color:#8b98bd;margin-top:6px;line-height:1.4;}
@@ -934,7 +934,6 @@ function injectWidget(toolName) {
               <option value="skills">⚡ Kỹ năng</option>
             </select>
           </div>
-          <button class="go" id="markee-runQuickAction" type="button" title="Mở luồng Upload">→</button>
         </div>
 
         <div class="commandbar">
@@ -986,6 +985,11 @@ function injectWidget(toolName) {
                       <input class="summary-detail-input" id="markee-summaryFeatureInput" placeholder="Chọn hoặc nhập tính năng mới..." autocomplete="off">
                       <button class="summary-feature-create" id="markee-summaryCreateFeature" type="button">＋ Tạo</button>
                     </div>
+                  </div>
+
+                  <div class="summary-detail-field summary-detail-feature">
+                    <label>TIÊU ĐỀ</label>
+                    <input class="summary-detail-input" id="markee-summaryTitleInput" placeholder="Để trống sẽ tự lấy tiêu đề AI trả lời..." autocomplete="off">
                   </div>
                 </div>
 
@@ -1052,6 +1056,13 @@ function injectWidget(toolName) {
                 <button class="scope-tab" data-scope="project" type="button">📁 Khách hàng &amp; Dự án</button>
               </div>
 
+              <div class="scope-fields scope-visible">
+                <div class="scope-field" style="grid-column:1 / -1;">
+                  <label class="scope-label">TIÊU ĐỀ</label>
+                  <input type="text" class="scope-select" id="markee-skillTitleInput" placeholder="Để trống sẽ tự lấy tiêu đề AI trả lời..." autocomplete="off">
+                </div>
+              </div>
+
               <div class="scope-fields scope-visible" id="markee-orgScopeFields">
                 <div class="scope-field">
                   <label class="scope-label">PHÒNG BAN</label>
@@ -1073,6 +1084,25 @@ function injectWidget(toolName) {
                   <select class="scope-select" id="markee-skillProject" disabled><option value="">-- Tất cả --</option></select>
                 </div>
               </div>
+            </div>
+
+            <div class="card card-grow">
+              <div class="card-head">
+                <div class="card-title">📁 Chọn nhanh dự án</div>
+                <div class="count" id="markee-skillProjectCount">0 dự án</div>
+              </div>
+              <div class="project-control-row skill-project-control-row">
+                <button class="filter fav" data-filter="favorite" type="button">⭐ Ưu thích</button>
+                <button class="filter all active" data-filter="all" type="button">📁 Tất cả</button>
+                <button class="filter recent" data-filter="recent" type="button">🕒 Gần đây</button>
+
+                <div class="search-wrap">
+                  <span class="search-ico">🔍</span>
+                  <input class="search" id="markee-skillProjectSearch" placeholder="Tìm dự án...">
+                </div>
+              </div>
+
+              <div class="project-list" id="markee-skillProjectList"></div>
             </div>
 
             <div class="card">
@@ -1208,7 +1238,7 @@ function injectWidget(toolName) {
 
               <div class="skill-upload-name">
                 <label><span>TÊN KỸ NĂNG</span><span>Tự lấy từ tên file nếu bỏ trống</span></label>
-                <input id="markee-skillUploadName" placeholder="Ví dụ: Thiết kế Landing Page...">
+                <input class="su-select" id="markee-skillUploadName" placeholder="Ví dụ: Thiết kế Landing Page...">
               </div>
 
               <div class="skill-drop" id="markee-skillDrop">
@@ -1395,7 +1425,7 @@ function injectWidget(toolName) {
             <div>
               <label>🛠 TÍNH NĂNG</label>
               <div style="position:relative;">
-                <input type="text" id="markee-feature-input-push" placeholder="Nhập hoặc chọn tính năng..." autocomplete="off">
+                <input type="text" class="su-select" id="markee-feature-input-push" placeholder="Nhập hoặc chọn tính năng..." autocomplete="off">
                 <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 160px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
               </div>
               <datalist id="feature-suggestions-push"></datalist>
@@ -1403,7 +1433,7 @@ function injectWidget(toolName) {
 
             <div>
               <div>📁 DỰ ÁN: <span id="wip-project-current-name">—</span></div>
-              <input type="text" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off">
+              <input type="text" class="su-select" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off">
               <div id="wip-project-search-results"></div>
             </div>
           </div>
@@ -1415,8 +1445,8 @@ function injectWidget(toolName) {
         </div>
 
         <div>
-          <select id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
-          <select id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
+          <select class="su-select" id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
+          <select class="su-select" id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
           <div id="wip-push-quick-list"></div>
           <div id="wip-push-card-customer"><span id="wip-push-customer-text"></span></div>
           <div id="wip-push-collapsible-area"></div>
@@ -1468,10 +1498,10 @@ function injectWidget(toolName) {
           </label>
 
           <div>
-            <select id="markee-department-select"><option value="">-- Tất cả Phòng ban --</option></select>
-            <select id="markee-team-select" disabled><option value="">-- Tất cả Team --</option></select>
-            <input type="text" id="markee-project-input-push" placeholder="-- Chat tự do --">
-            <select id="markee-asset-type-select">
+            <select class="su-select" id="markee-department-select"><option value="">-- Tất cả Phòng ban --</option></select>
+            <select class="su-select" id="markee-team-select" disabled><option value="">-- Tất cả Team --</option></select>
+            <input type="text" class="su-select" id="markee-project-input-push" placeholder="-- Chat tự do --">
+            <select class="su-select" id="markee-asset-type-select">
               <option value="Skill" selected>Skill (Mặc định)</option>
               <option value="Prompt">Prompt</option>
               <option value="SOP">SOP</option>
@@ -1495,7 +1525,7 @@ function injectWidget(toolName) {
       <div id="markee-pull-wip-view" style="display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
         <div>
           <span>🔍</span>
-          <input type="text" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off">
+          <input type="text" class="su-select" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off">
         </div>
         <div id="markee-wip-chips-container">
           <button type="button" class="markee-wip-chip-btn markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
@@ -1503,8 +1533,8 @@ function injectWidget(toolName) {
           <button type="button" class="markee-wip-chip-btn" data-filter="recent">Gần đây</button>
         </div>
         <div>
-          <select id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
-          <select id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
+          <select class="su-select" id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
+          <select class="su-select" id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
           <datalist id="feature-suggestions-pull"></datalist>
           <div id="custom-feature-dropdown-pull"></div>
           <div id="wip-pull-card-customer"><span id="wip-pull-customer-text"></span></div>
@@ -1515,7 +1545,7 @@ function injectWidget(toolName) {
       <div id="markee-pull-skill-view" style="display: none; flex-direction: column; gap: 6px; flex-shrink: 0;">
         <div>
           <span>🔍</span>
-          <input type="text" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." autocomplete="off">
+          <input type="text" class="su-select" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." autocomplete="off">
         </div>
         <div id="markee-skill-chips-container">
           <button type="button" class="markee-chip-btn markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
@@ -1523,9 +1553,9 @@ function injectWidget(toolName) {
           <button type="button" class="markee-chip-btn" data-filter="recent">Gần đây</button>
         </div>
         <div>
-          <select id="markee-pull-department"><option value="">-- Tất cả --</option></select>
-          <select id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
-          <input type="text" id="markee-pull-project">
+          <select class="su-select" id="markee-pull-department"><option value="">-- Tất cả --</option></select>
+          <select class="su-select" id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
+          <input type="text" class="su-select" id="markee-pull-project">
           <div id="dropdown-options-pull"></div>
         </div>
       </div>
@@ -1594,7 +1624,15 @@ function injectWidget(toolName) {
     document.getElementById("wip-project-search-input"),
     document.getElementById("wip-project-search-results"),
     document.getElementById("wip-project-current-name"),
-    (id, name) => syncSkillAttachLabel(id, name),
+    (id, name) => {
+      syncSkillAttachLabel(id, name);
+      // Bug: chọn dự án ở đây trước chỉ đổi label hiển thị, không cập nhật
+      // state global (chrome.storage.local selected_project_id) mà
+      // saveWipSummary()/getSelectedProjectAsync() thực sự đọc lúc Lưu Tóm
+      // tắt — nên nội dung vẫn bị lưu vào dự án đã chọn trước đó ở nơi
+      // khác, không phải dự án vừa chọn ở đây.
+      chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: id, projectName: name });
+    },
     "dark",
   );
   chrome.runtime.sendMessage({ action: "GET_SELECTED_PROJECT" }, (state) => {
@@ -1644,6 +1682,13 @@ function injectWidget(toolName) {
     }
     switchTab(action === "upload" ? "push" : "pull");
     updateSkinCommandLabels();
+    // Trước đây chuyển Action=Download chỉ đổi label nút thành "⬇️ Mở
+    // Download" — phải bấm thêm 1 lần nữa mới thật sự tải/hiện dữ liệu.
+    // Theo yêu cầu: Download luôn lấy ngay dự án đang chọn ra dùng, không
+    // cần bước bấm mở riêng nữa. Ngược lại, quay về Upload thì đóng drawer
+    // để không để sót màn Download đang mở đè lên panel Upload.
+    if (action === "download") openSkinDrawer();
+    else closeSkinDrawer();
   }
 
   function applySkinModule(moduleVal) {
@@ -1654,10 +1699,15 @@ function injectWidget(toolName) {
     updateModeVisibility();
     if (isSkills) {
       refreshSkinSkillsPanel();
+      refreshSkinSkillProjectList();
     } else {
       refreshSkinProjectList();
     }
     updateSkinCommandLabels();
+    // Đổi Module trong khi đang ở Download thì phải nạp lại drawer theo
+    // flow mới (download Tóm tắt vs download Kỹ năng) — vẫn không cần bấm
+    // mở lại.
+    if (skinActionSelect && skinActionSelect.value === "download") openSkinDrawer();
   }
 
   function updateSkinCommandLabels() {
@@ -2080,6 +2130,130 @@ function injectWidget(toolName) {
   let skinSkillProjectId = null;
   let skinSkillsInitDone = false;
 
+  // "Chọn nhanh dự án" cho panel Kỹ năng — bản sao của refreshSkinProjectList()
+  // bên Tóm tắt (per yêu cầu: Kỹ năng cũng cần có chọn nhanh giống vậy).
+  // Chọn 1 dự án ở đây set CẢ HAI: state global (SET_SELECTED_PROJECT, cái
+  // "Lệnh Kỹ năng"/getSelectedProjectAsync() đọc) LẪN scope "📁 Khách hàng
+  // & Dự án" ở card phía trên (cái scanAndSave() đọc lúc Lưu Kỹ năng) — để
+  // 2 nơi không lệch nhau như trước (chọn 1 dự án ở đây, "Lệnh Kỹ năng" lại
+  // hiện dự án khác).
+  let skinSkillProjectFilter = "all";
+  let skinSkillProjectFilterInitDone = false;
+  function refreshSkinSkillProjectList() {
+    const listEl = document.getElementById("markee-skillProjectList");
+    const countEl = document.getElementById("markee-skillProjectCount");
+    const searchEl = document.getElementById("markee-skillProjectSearch");
+    if (!listEl) return;
+    if (!skinSkillProjectFilterInitDone) {
+      skinSkillProjectFilterInitDone = true;
+      const controlRow = listEl.parentElement ? listEl.parentElement.querySelector(".skill-project-control-row") : null;
+      if (controlRow) {
+        controlRow.querySelectorAll(".filter").forEach((btn) => {
+          btn.addEventListener("click", () => {
+            controlRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+            skinSkillProjectFilter = btn.dataset.filter;
+            refreshSkinSkillProjectList();
+          });
+        });
+      }
+      if (searchEl) searchEl.addEventListener("input", () => refreshSkinSkillProjectList());
+    }
+
+    chrome.runtime.sendMessage({ action: "GET_FAVORITE_PROJECTS" }, (resFav) => {
+      const favoriteProjects = resFav && Array.isArray(resFav.projects) ? resFav.projects : [];
+      const favIds = new Set(favoriteProjects.map((p) => Number(p.id)));
+      chrome.runtime.sendMessage({ action: "GET_PROJECTS" }, (resAll) => {
+        const allProjects = resAll && Array.isArray(resAll.projects) ? resAll.projects : [];
+        chrome.storage.local.get(["markee_recent_project_ids"], (stored) => {
+          const recentIds = stored && Array.isArray(stored.markee_recent_project_ids) ? stored.markee_recent_project_ids.map(Number) : [];
+          let base = allProjects;
+          if (skinSkillProjectFilter === "favorite") base = favoriteProjects;
+          else if (skinSkillProjectFilter === "recent") {
+            const recentSet = new Set(recentIds);
+            base = allProjects.filter((p) => recentSet.has(Number(p.id)));
+          }
+          const keyword = searchEl ? searchEl.value.trim().toLowerCase() : "";
+          const filtered = base.filter((p) => !keyword || (p.name || "").toLowerCase().includes(keyword));
+          if (countEl) countEl.textContent = `${filtered.length} dự án`;
+          const currentSelectedId = skinSkillScope === "project" && skinSkillProjectId ? String(skinSkillProjectId) : null;
+
+          listEl.innerHTML = "";
+          if (filtered.length === 0) {
+            listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px 0;">Không có dự án nào</div>`;
+            return;
+          }
+          filtered.forEach((p) => {
+            const custName = p.customer_name || (p.customer && p.customer.name) || "";
+            const isSelected = currentSelectedId === String(p.id);
+            const isFav = favIds.has(Number(p.id));
+            const row = document.createElement("div");
+            row.className = "item" + (isSelected ? " selected" : "");
+            row.dataset.project = p.id;
+            row.innerHTML = `
+              <div class="item-icon">📁</div>
+              <div class="item-main"><div class="item-title">${p.name}${custName ? ` <span style="color:#8f9abb;font-weight:700">(${custName})</span>` : ""}</div></div>
+              <div class="star${isFav ? " active" : ""}">${isFav ? "⭐" : "☆"}</div>
+            `;
+            const starEl = row.querySelector(".star");
+            if (starEl) {
+              starEl.onclick = (e) => {
+                e.stopPropagation();
+                chrome.runtime.sendMessage({ action: "TOGGLE_FAVORITE_PROJECT", projectId: p.id, userEmail: currentUser }, (response) => {
+                  if (response && response.success) refreshSkinSkillProjectList();
+                });
+              };
+            }
+            row.onclick = () => {
+              const newRecent = [p.id, ...recentIds.filter((id) => Number(id) !== Number(p.id))].slice(0, 10);
+              chrome.storage.local.set({ markee_recent_project_ids: newRecent });
+              chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: p.id, projectName: p.name });
+
+              // Đồng bộ luôn vào scope "📁 Khách hàng & Dự án" phía trên —
+              // chuyển tab scope sang "project" và set đúng dự án vừa chọn.
+              skinSkillScope = "project";
+              skinSkillProjectId = p.id;
+              const scopeSwitchEl = document.querySelector("#markee-skillsPanel .scope-switch");
+              if (scopeSwitchEl) {
+                scopeSwitchEl.querySelectorAll(".scope-tab").forEach((t) => t.classList.toggle("active", t.dataset.scope === "project"));
+              }
+              const orgFields = document.getElementById("markee-orgScopeFields");
+              const projFields = document.getElementById("markee-projectScopeFields");
+              if (orgFields) orgFields.classList.add("scope-hidden");
+              if (projFields) projFields.classList.remove("scope-hidden");
+
+              const custSel = document.getElementById("markee-skillCustomer");
+              const projSel = document.getElementById("markee-skillProject");
+              if (custSel && custName) {
+                if (Array.from(custSel.options).every((o) => o.value !== custName)) {
+                  const opt = document.createElement("option");
+                  opt.value = custName;
+                  opt.textContent = custName;
+                  custSel.appendChild(opt);
+                }
+                custSel.value = custName;
+                skinSkillCustomerId = custName;
+                if (projSel) {
+                  projSel.disabled = false;
+                  chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: custName }, (res) => {
+                    const projects = res && Array.isArray(res.projects) ? res.projects : [];
+                    projSel.innerHTML = `<option value="">-- Tất cả --</option>` + projects.map((pp) => `<option value="${pp.id}">${pp.name}</option>`).join("");
+                    projSel.value = String(p.id);
+                  });
+                }
+              }
+
+              showToast(`⚡ Đã chọn dự án: ${p.name}`);
+              refreshSkinSkillProjectList();
+              refreshSkinSkillsPanel();
+            };
+            listEl.appendChild(row);
+          });
+        });
+      });
+    });
+  }
+
   function refreshSkinSkillsPanel() {
     const scopeCountEl = document.getElementById("markee-skillScopeCount");
     const listEl = document.getElementById("markee-skillListVisible");
@@ -2149,7 +2323,21 @@ function injectWidget(toolName) {
           refreshSkinSkillsPanel();
         });
       }
-      if (projSel) projSel.addEventListener("change", () => { skinSkillProjectId = projSel.value || null; refreshSkinSkillsPanel(); });
+      if (projSel) {
+        projSel.addEventListener("change", () => {
+          skinSkillProjectId = projSel.value || null;
+          // Chọn dự án qua cascade dropdown này (thay vì qua "Chọn nhanh dự
+          // án") cũng phải cập nhật state global — nếu không, "Lệnh Kỹ
+          // năng" (đọc getSelectedProjectAsync()) lại hiện dự án khác với
+          // cái vừa chọn ở đây.
+          if (skinSkillProjectId) {
+            const projName = projSel.options[projSel.selectedIndex] ? projSel.options[projSel.selectedIndex].textContent : "";
+            chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: Number(skinSkillProjectId), projectName: projName });
+          }
+          refreshSkinSkillsPanel();
+          refreshSkinSkillProjectList();
+        });
+      }
 
       const filterRow = document.querySelector("#markee-skillsPanel .skill-control-row");
       if (filterRow) {
@@ -2267,6 +2455,19 @@ function injectWidget(toolName) {
       download: "🗂️ Download Tóm tắt",
     };
     if (skinDrawerTitle) skinDrawerTitle.textContent = titles[flow] || titles.upload;
+    // #markee-drawerSubmit is ONE static button shared by all 4 flows —
+    // its label never changed with the flow, so opening a Download drawer
+    // still showed "Upload & tiếp tục" (a leftover label from the Upload
+    // flow) even though the button's own click handler correctly does a
+    // download-side action.
+    const submitLabels = {
+      upload: "Upload & tiếp tục",
+      skillUpload: "Upload & tiếp tục",
+      skillDownload: "Lấy đã chọn",
+      download: "Lấy đã chọn",
+    };
+    const submitBtnEl = document.getElementById("markee-drawerSubmit");
+    if (submitBtnEl) submitBtnEl.textContent = submitLabels[flow] || submitLabels.upload;
     skinDrawer.classList.add("open");
     if (flow === "upload") initSkinUploadFlow();
     else if (flow === "skillUpload") initSkinSkillUploadFlow();
@@ -2277,8 +2478,6 @@ function injectWidget(toolName) {
     if (skinDrawer) skinDrawer.classList.remove("open");
   }
 
-  const runQuickActionBtn = document.getElementById("markee-runQuickAction");
-  if (runQuickActionBtn) runQuickActionBtn.onclick = () => openSkinDrawer();
   const drawerCloseBtn = document.getElementById("markee-drawerClose");
   if (drawerCloseBtn) drawerCloseBtn.onclick = closeSkinDrawer;
   const drawerCancelBtn = document.getElementById("markee-drawerCancel");
@@ -2500,19 +2699,57 @@ function injectWidget(toolName) {
     const resultText = document.getElementById("markee-sdResultText");
     if (!listEl) return;
     const searchEl = document.getElementById("markee-sdSearch");
-    chrome.runtime.sendMessage({
+    // #markee-sdDepartment/sdPosition/sdCustomer/sdProject used to be dead
+    // stubs — never populated, never wired to any event, never read here.
+    // The "🏢 Phòng ban & Vị trí" / "📁 Khách hàng & Dự án" scope switch in
+    // this drawer had zero effect on the list: every query below sent no
+    // department/team/project filter at all, always the full unfiltered
+    // set regardless of scope tab or field selections.
+    const sdActiveTab = document.querySelector("#markee-skillDownloadFlow .sd-scope-tab.active");
+    const sdScope = sdActiveTab ? sdActiveTab.dataset.sdScope : "org";
+    const sdDept = document.getElementById("markee-sdDepartment");
+    const sdPos = document.getElementById("markee-sdPosition");
+    const sdProj = document.getElementById("markee-sdProject");
+    const payload = {
       action: "GET_SKILLS",
       skillType: "skill",
       keyword: searchEl ? searchEl.value.trim() : "",
       filterType: "all",
       userId: currentUser,
-    }, (res) => {
+    };
+    if (sdScope === "org") {
+      if (sdDept && sdDept.value) payload.departmentIds = [Number(sdDept.value)];
+      if (sdPos && sdPos.value) payload.teamIds = [Number(sdPos.value)];
+    } else if (sdProj && sdProj.value) {
+      payload.projectIds = [Number(sdProj.value)];
+    }
+    chrome.runtime.sendMessage(payload, (res) => {
       const skills = res && Array.isArray(res.skills) ? res.skills : [];
       if (resultText) resultText.textContent = `${skills.length} kỹ năng phù hợp`;
-      listEl.innerHTML = skills.map((s) => `
-        <div class="item"><div class="item-icon">⚡</div><div class="item-main"><div class="item-title">${s.title || "Kỹ năng"}</div></div>
-        <input type="checkbox" class="markee-sd-check" data-skill-id="${s.id}"></div>
-      `).join("") || `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+      listEl.innerHTML = "";
+      if (skills.length === 0) {
+        listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+        return;
+      }
+      skills.forEach((s) => {
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="item-icon">⚡</div><div class="item-main"><div class="item-title">${s.title || "Kỹ năng"}</div></div>
+          <button class="use violet" type="button">Dùng</button>
+          <input type="checkbox" class="markee-sd-check" data-skill-id="${s.id}">
+        `;
+        // Was checkbox-only, same gap as the WIP download list above — a
+        // real "Dùng" button now pastes the skill straight into the chat.
+        const useBtn = row.querySelector(".use");
+        if (useBtn) {
+          useBtn.onclick = () => {
+            insertSkillToChat(s.markdown_content || "");
+            chrome.runtime.sendMessage({ action: "SAVE_RECENT_SKILL", skillId: s.id, userId: currentUser });
+          };
+        }
+        listEl.appendChild(row);
+      });
     });
   }
 
@@ -2529,9 +2766,61 @@ function injectWidget(toolName) {
             const isOrg = tab.dataset.sdScope === "org";
             document.getElementById("markee-sdOrgFields").classList.toggle("hidden", !isOrg);
             document.getElementById("markee-sdProjectFields").classList.toggle("hidden", isOrg);
+            refreshSkinSkillDownloadList();
           });
         });
       }
+      // Populate + wire the Phòng ban/Vị trí and Khách hàng/Dự án selects —
+      // were pure static "-- Tất cả --" stubs before, referenced nowhere
+      // else in the file: no populate call, no change listener, no read.
+      const sdDeptSel = document.getElementById("markee-sdDepartment");
+      const sdPosSel = document.getElementById("markee-sdPosition");
+      if (sdDeptSel) {
+        chrome.runtime.sendMessage({ action: "GET_DEPARTMENTS" }, (res) => {
+          const depts = res && Array.isArray(res.departments) ? res.departments : [];
+          sdDeptSel.innerHTML = `<option value="">-- Tất cả --</option>` + depts.map((d) => `<option value="${d.id}">${d.name}</option>`).join("");
+        });
+        sdDeptSel.addEventListener("change", () => {
+          if (sdPosSel) {
+            sdPosSel.disabled = !sdDeptSel.value;
+            sdPosSel.innerHTML = `<option value="">-- Tất cả --</option>`;
+            if (sdDeptSel.value) {
+              chrome.runtime.sendMessage({ action: "GET_TEAMS", departmentIds: [Number(sdDeptSel.value)] }, (res) => {
+                const teams = res && Array.isArray(res.teams) ? res.teams : [];
+                sdPosSel.innerHTML = `<option value="">-- Tất cả --</option>` + teams.map((t) => `<option value="${t.id}">${t.name}</option>`).join("");
+              });
+            }
+          }
+          refreshSkinSkillDownloadList();
+        });
+      }
+      if (sdPosSel) sdPosSel.addEventListener("change", refreshSkinSkillDownloadList);
+
+      const sdCustSel = document.getElementById("markee-sdCustomer");
+      const sdProjSel = document.getElementById("markee-sdProject");
+      if (sdCustSel) {
+        chrome.runtime.sendMessage({ action: "GET_CUSTOMERS" }, (res) => {
+          const customers = res && Array.isArray(res.customers) ? res.customers : [];
+          sdCustSel.innerHTML = `<option value="">-- Tất cả --</option>` + customers.map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+          enableSelectSearch(sdCustSel, "Tìm khách hàng...");
+        });
+        sdCustSel.addEventListener("change", () => {
+          if (sdProjSel) {
+            sdProjSel.disabled = !sdCustSel.value;
+            sdProjSel.innerHTML = `<option value="">-- Tất cả --</option>`;
+            if (sdCustSel.value) {
+              chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: sdCustSel.value }, (res) => {
+                const projects = res && Array.isArray(res.projects) ? res.projects : [];
+                sdProjSel.innerHTML = `<option value="">-- Tất cả --</option>` + projects.map((p) => `<option value="${p.id}">${p.name}</option>`).join("");
+                enableSelectSearch(sdProjSel, "Tìm dự án...");
+              });
+            }
+          }
+          refreshSkinSkillDownloadList();
+        });
+      }
+      if (sdProjSel) sdProjSel.addEventListener("change", refreshSkinSkillDownloadList);
+
       const searchEl = document.getElementById("markee-sdSearch");
       if (searchEl) {
         let t = null;
@@ -2575,22 +2864,49 @@ function injectWidget(toolName) {
 
     function refreshDownloadList() {
       if (!listEl) return;
+      if (!projSelect || !projSelect.value) {
+        if (countEl) countEl.textContent = "0 mục";
+        listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chọn Dự án ở trên trước</div>`;
+        return;
+      }
+      // Was "GET_SKILLS" with skillType:"wip" — that always hit
+      // /api/ai-skills, a table WIP logs are never written to (they're
+      // saved to a project's Feature Logs instead, see SAVE_SCRAPED_MARKDOWN's
+      // isWipMode branch) — so this list showed "Chưa có dữ liệu" 100% of
+      // the time regardless of how much real WIP content existed.
+      // GET_SUMMARIES is the real, symmetric read side of that same write
+      // path (background.js, fixed earlier for fetchAndRenderSummaries()).
       chrome.runtime.sendMessage({
-        action: "GET_SKILLS",
-        skillType: "wip",
-        filterType: "all",
-        userId: currentUser,
-        projectId: projSelect && projSelect.value ? Number(projSelect.value) : null,
+        action: "GET_SUMMARIES",
+        projectId: Number(projSelect.value),
         featureName: featSelect ? featSelect.value : "",
-        limit: 50,
-        offset: 0,
       }, (res) => {
-        const items = res && Array.isArray(res.skills) ? res.skills : [];
+        const items = res && Array.isArray(res.summaries) ? res.summaries : [];
         if (countEl) countEl.textContent = `${items.length} mục`;
-        listEl.innerHTML = items.map((it) => `
-          <div class="item"><div class="item-icon">📝</div><div class="item-main"><div class="item-title">${it.title || "WIP"}</div></div>
-          <input type="checkbox" class="markee-dl-check" data-skill-id="${it.id}"></div>
-        `).join("") || `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+        listEl.innerHTML = "";
+        if (items.length === 0) {
+          listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+          return;
+        }
+        items.forEach((it) => {
+          const row = document.createElement("div");
+          row.className = "item";
+          row.innerHTML = `
+            <div class="item-icon">📝</div><div class="item-main"><div class="item-title">${it.title || "WIP"}</div></div>
+            <button class="use violet" type="button">Dùng</button>
+            <input type="checkbox" class="markee-dl-check" data-skill-id="${it.id}">
+          `;
+          // Was checkbox-only — "select items, hit submit" never actually
+          // did anything (the submit handler below just shows a toast
+          // telling the user to click a "Dùng/Copy" button that was never
+          // rendered here at all). A real "Dùng" button now pastes the
+          // content straight into the chat box, matching every other
+          // "Dùng" affordance in this widget (fetchAndRenderSkills,
+          // fetchAndRenderWipSummaries).
+          const useBtn = row.querySelector(".use");
+          if (useBtn) useBtn.onclick = () => insertSkillToChat(it.content || "");
+          listEl.appendChild(row);
+        });
       });
     }
 
@@ -2802,10 +3118,28 @@ function injectWidget(toolName) {
     input.style.cssText = "width:100%;height:30px;border-radius:8px;border:1px solid rgba(89,96,255,.52);background:#0f1425;color:#fff;padding:0 8px;outline:none;font-size:10.8px;box-sizing:border-box;cursor:pointer;";
     wrap.appendChild(input);
 
+    // Appended to <body> (not `wrap`) and positioned `fixed` from the
+    // input's own on-screen rect — every `.card` in this widget has
+    // `overflow:hidden` (rounded-corner containment), which silently
+    // CLIPS an absolutely-positioned descendant that extends past the
+    // card's box. A native <select>'s own dropdown popup is drawn by the
+    // browser in a layer that ignores page CSS entirely, so it was never
+    // affected — only this custom combobox was: inside a card, its
+    // suggestion list rendered with display:block same as anywhere else,
+    // just invisible, clipped to nothing. Escaping to <body> with `fixed`
+    // positioning sidesteps every ancestor's overflow/stacking context,
+    // regardless of which card a given combobox happens to sit inside.
     const list = document.createElement("div");
     list.className = "mk-combo-list";
-    list.style.cssText = "position:absolute;left:0;right:0;top:calc(100% + 2px);max-height:180px;overflow-y:auto;background:#111629;border:1px solid #4e46dc;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.6);z-index:1000000;display:none;";
-    wrap.appendChild(list);
+    list.style.cssText = "position:fixed;max-height:180px;overflow-y:auto;background:#111629;border:1px solid #4e46dc;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,.6);z-index:2147483647;display:none;";
+    document.body.appendChild(list);
+
+    function positionList() {
+      const r = input.getBoundingClientRect();
+      list.style.left = `${r.left}px`;
+      list.style.width = `${r.width}px`;
+      list.style.top = `${r.bottom + 2}px`;
+    }
 
     let highlighted = -1;
 
@@ -2855,12 +3189,22 @@ function injectWidget(toolName) {
 
     function openList() {
       renderList();
+      positionList();
       list.style.display = "block";
     }
     function closeList() {
       list.style.display = "none";
       highlighted = -1;
     }
+
+    // `list` is now `position:fixed` on <body>, independent of any
+    // scrollable ancestor — if the widget's own panel scrolls while the
+    // list is open, it would stay frozen in place instead of tracking the
+    // input. Simplest safe fix: just close it (matches normal dropdown
+    // behavior elsewhere — nothing here needs an open list to survive a
+    // scroll).
+    window.addEventListener("scroll", () => { if (list.style.display !== "none") closeList(); }, true);
+    window.addEventListener("resize", () => { if (list.style.display !== "none") closeList(); });
 
     input.addEventListener("focus", () => {
       input.value = "";
@@ -5486,137 +5830,87 @@ function injectWidget(toolName) {
     if (loadMoreBtn) loadMoreBtn.remove();
   }
 
+  // Was "GET_SKILLS" with skillType:"wip" — same root bug as
+  // initSkinDownloadFlow's refreshDownloadList() above: that action always
+  // hits /api/ai-skills, a table WIP logs are never written to (they're
+  // saved to a project's Feature Logs — SAVE_SCRAPED_MARKDOWN's isWipMode
+  // branch). This is the LEGACY classic "Pull" tab's version of that same
+  // list (shown inline the moment Module=Tóm tắt + Action=Download is
+  // picked, separately from the newer drawer) — it had the identical bug,
+  // just never fixed alongside the drawer's copy, so switching to Download
+  // still showed nothing for WIP even after that fix. Switched to
+  // GET_SUMMARIES (the real read-side of that write path) here too.
+  // Favorite/star has no backend equivalent for Feature Logs at all (that's
+  // an ai_skills-only concept, AiSkillFavorite keyed by skill_id) — dropped
+  // for this list rather than faked. Pagination is done client-side now
+  // (GET /projects/{id}/feature-logs has no limit/offset param at all,
+  // unlike /api/ai-skills — it always returns everything for the project).
   function fetchAndRenderWipSummaries(appendMode = false) {
     const list = document.getElementById("markee-skill-list");
     if (!list) return;
 
     if (!appendMode) {
-      // Fresh load: xóa list cũ, reset trang
       wipCurrentPage = 0;
       list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Đang tải...</div>`;
       const oldBtn = document.getElementById("markee-wip-load-more");
       if (oldBtn) oldBtn.remove();
     } else {
-      // Append mode: chỉ xóa nút cũ để append vào sau
       const oldBtn = document.getElementById("markee-wip-load-more");
       if (oldBtn) oldBtn.remove();
     }
 
-    const customerSelect = document.getElementById("markee-customer-select-pull");
     const projectSelect = document.getElementById("markee-project-select-pull");
     const featureInput = document.getElementById("markee-feature-input-pull");
-
     const projectId = projectSelect ? getSelectNumber(projectSelect) : null;
-    const customerId = customerSelect ? customerSelect.value : "";
     const featureName = featureInput ? featureInput.value.trim() : "";
 
-    let projectIds = null;
-    if (!projectId && customerId && projectSelect) {
-      projectIds = [];
-      for (let option of projectSelect.options) {
-        if (option.value) projectIds.push(Number(option.value));
-      }
-      if (projectIds.length === 0) {
-        list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chưa có dữ liệu</div>`;
-        return;
-      }
+    if (!projectId) {
+      list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chọn Dự án ở trên trước</div>`;
+      return;
     }
 
-    // Tính offset cho trang hiện tại
-    const offset = wipCurrentPage * WIP_PAGE_SIZE;
-
     const wipSearchInput = document.getElementById("wip-search-input");
-    const keyword = wipSearchInput ? wipSearchInput.value.trim() : "";
+    const keyword = wipSearchInput ? wipSearchInput.value.trim().toLowerCase() : "";
 
     chrome.runtime.sendMessage(
-      {
-        action: "GET_SKILLS",
-        skillType: "wip",
-        filterType: currentWipPullChipFilter || "all",
-        userId: currentUser,
-        projectId: projectId,
-        projectIds: projectIds,
-        featureName: featureName,
-        limit: WIP_PAGE_SIZE,
-        offset: offset,
-        keyword: keyword,
-      },
+      { action: "GET_SUMMARIES", projectId, featureName },
       (res) => {
-        // Nếu đồng bộ fresh load: xóa "Đang tải..."
         if (!appendMode) list.innerHTML = "";
 
-        const skills = res && Array.isArray(res.skills) ? res.skills : [];
+        let items = res && Array.isArray(res.summaries) ? res.summaries : [];
+        if (keyword) items = items.filter((it) => (it.title || "").toLowerCase().includes(keyword));
 
-        if (skills.length > 0) {
-          skills.forEach((s) => {
+        const offset = wipCurrentPage * WIP_PAGE_SIZE;
+        const pageItems = items.slice(offset, offset + WIP_PAGE_SIZE);
+
+        if (pageItems.length > 0) {
+          pageItems.forEach((it) => {
             const item = document.createElement("div");
             item.style.cssText = "display: flex; justify-content: space-between; align-items: center; background: #12172a; padding: 6px; border-radius: 4px; border: 1px solid #232340; margin-bottom: 4px;";
 
-            let displayTitle = s.title || "Tóm tắt";
-            if (s.feature_name) displayTitle += ` [${s.feature_name}]`;
-            const rawAf = s.attached_file;
-            const fileInfoRender = Array.isArray(rawAf) ? rawAf[0] : rawAf;
-            const hasAttachment = !!(fileInfoRender && fileInfoRender.storage_path);
-            const fileIcon = hasAttachment ? " 📎" : "";
-
-            // Nút Favorite Star (Ưu thích)
-            const starBtn = document.createElement("button");
-            const isFav = !!s.is_favorite;
-            starBtn.innerHTML = isFav ? "⭐" : "☆";
-            starBtn.title = isFav ? "Bỏ ưu thích" : "Thêm vào ưu thích";
-            starBtn.style.cssText = `background: transparent; border: none; font-size: 13px; cursor: pointer; padding: 0 4px; color: ${isFav ? "#f59e0b" : "#64748b"};`;
-            starBtn.onclick = (e) => {
-              e.stopPropagation();
-              chrome.runtime.sendMessage(
-                {
-                  action: "TOGGLE_FAVORITE_SKILL",
-                  skillId: s.id,
-                  userId: currentUser,
-                },
-                (favRes) => {
-                  if (favRes && favRes.success) {
-                    s.is_favorite = favRes.isFavorite;
-                    starBtn.innerHTML = favRes.isFavorite ? "⭐" : "☆";
-                    starBtn.style.color = favRes.isFavorite ? "#f59e0b" : "#64748b";
-                    showToast(favRes.isFavorite ? "⭐ Đã thêm vào Ưu thích!" : "Đã bỏ khỏi Ưu thích", "success");
-                    if (currentWipPullChipFilter === "favorite" && !favRes.isFavorite) {
-                      item.remove();
-                    }
-                  }
-                }
-              );
-            };
+            const attachments = Array.isArray(it.attached_files) ? it.attached_files : [];
+            const hasAttachment = attachments.length > 0;
+            const fileIcon = hasAttachment ? ` 📎×${attachments.length}` : "";
 
             const titleSpan = document.createElement("span");
             titleSpan.style.cssText = "font-size: 11px; color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; max-width: 170px;";
-            titleSpan.innerText = `📝 ${displayTitle}${fileIcon}`;
+            titleSpan.innerText = `📝 ${it.title || "Tóm tắt"}${fileIcon}`;
 
             const leftDiv = document.createElement("div");
             leftDiv.style.cssText = "display: flex; align-items: center; gap: 4px; overflow: hidden;";
-            leftDiv.appendChild(starBtn);
             leftDiv.appendChild(titleSpan);
 
             const btn = document.createElement("button");
-            btn.innerText = hasAttachment ? "Dùng + File" : "Dùng";
-            btn.title = hasAttachment ? `Kèm file: ${fileInfoRender.file_name || fileInfoRender.name || fileInfoRender.storage_path}` : "";
-            btn.style.cssText = `background: ${hasAttachment ? "#0d9488" : "#10b981"}; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer; white-space: nowrap;`;
-            btn.onclick = () => {
-              // Ghi nhận lịch sử "Dùng" ngầm vào user_recent_skills
-              chrome.runtime.sendMessage({
-                action: "SAVE_RECENT_SKILL",
-                skillId: s.id,
-                userId: currentUser,
-              });
-              reuseWipWithAttachment(s);
-            };
+            btn.innerText = "Dùng";
+            btn.style.cssText = "background: #10b981; color: #fff; border: none; border-radius: 4px; font-size: 9px; padding: 4px 8px; cursor: pointer; white-space: nowrap;";
+            btn.onclick = () => insertSkillToChat(it.content || "");
 
             item.appendChild(leftDiv);
             item.appendChild(btn);
             list.appendChild(item);
           });
 
-          // Hiển thị nút "Xem thêm" nếu số bản ghi trả về đóng WIP_PAGE_SIZE (có thể còn trang tiếp)
-          if (skills.length === WIP_PAGE_SIZE) {
+          if (offset + WIP_PAGE_SIZE < items.length) {
             const loadMoreBtn = document.createElement("button");
             loadMoreBtn.id = "markee-wip-load-more";
             loadMoreBtn.innerText = "⬇ Xem thêm";
@@ -5625,15 +5919,13 @@ function injectWidget(toolName) {
             loadMoreBtn.onmouseout = () => (loadMoreBtn.style.background = "#2a1013");
             loadMoreBtn.onclick = () => {
               wipCurrentPage += 1;
-              fetchAndRenderWipSummaries(true); // append mode
+              fetchAndRenderWipSummaries(true);
             };
             list.appendChild(loadMoreBtn);
           }
         } else if (!appendMode) {
-          // Chỉ hiển "Chưa có dữ liệu" nếu đây là fresh load và rỗng
           list.innerHTML = `<div style="font-size: 10px; color: #64748b; text-align: center;">Chưa có dữ liệu</div>`;
         }
-        // Nếu appendMode và rỗng: không append gì — "Xem thêm" đã bị remove ở trên
       },
     );
   }
@@ -5726,7 +6018,11 @@ function injectWidget(toolName) {
     const found = findTaggedMarkdown("WIP");
     if (!found) return showToast(`⛔ Không tìm thấy nội dung "WIP" hợp lệ!`, "error");
     const validContent = found.content;
-    const docTitle = found.title;
+    // Tiêu đề tự lấy từ dòng "# WIP: ..." AI trả lời — cho phép người dùng
+    // ghi đè bằng ô "TIÊU ĐỀ" ngay trên panel nếu muốn đặt tên khác.
+    const titleInputEl = document.getElementById("markee-summaryTitleInput");
+    const titleOverride = titleInputEl ? titleInputEl.value.trim() : "";
+    const docTitle = titleOverride || found.title;
 
     const featureInput = document.getElementById("markee-feature-input-push");
 
@@ -5885,6 +6181,7 @@ function injectWidget(toolName) {
       const drawerAttachedEl = document.getElementById("markee-drawerAttached");
       if (summaryAttachedEl) summaryAttachedEl.innerHTML = "";
       if (drawerAttachedEl) drawerAttachedEl.innerHTML = "";
+      if (titleInputEl) titleInputEl.value = "";
     });
   }
 
@@ -5910,13 +6207,68 @@ function injectWidget(toolName) {
     const found = findTaggedMarkdown(docTypePrefix);
     if (!found) return showToast(`⛔ Không tìm thấy nội dung "${docTypePrefix}" hợp lệ!`, "error");
     const validContent = found.content;
-    const docTitle = found.title;
+    // Cho phép ghi đè tiêu đề tự lấy từ AI bằng ô "TIÊU ĐỀ" trên panel
+    // "Phạm vi kỹ năng" (chỉ áp dụng khi lưu Kỹ năng — SKILL).
+    const skillTitleInputEl = docTypePrefix === "SKILL" ? document.getElementById("markee-skillTitleInput") : null;
+    const skillTitleOverride = skillTitleInputEl ? skillTitleInputEl.value.trim() : "";
+    const docTitle = skillTitleOverride || found.title;
 
-    const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
     let pId = null;
-    if (!attachProjectCb || attachProjectCb.checked) {
-      const selectedProject = await getSelectedProjectAsync();
-      pId = selectedProject.projectId || null;
+    let deptId = null;
+    let teamId = null;
+
+    if (docTypePrefix === "SKILL") {
+      // The Upload drawer's own "🏢 Phòng ban & Vị trí" / "📁 Khách hàng &
+      // Dự án" scope switch never actually controlled what got saved:
+      // project_id always came from the checkbox+globally-selected project
+      // below (checked by default) and department_id/team_id always came
+      // from #markee-department-select/#markee-team-select — legacy
+      // selects that get auto-populated with whatever department loaded
+      // FIRST as soon as the drawer opens, regardless of which scope tab
+      // is active or what the user actually picked. Net effect: picking
+      // "Phòng ban & Vị trí" never stopped the save from still being tied
+      // to whatever project was globally selected — the scope switch had
+      // no real effect. Read the drawer's OWN fields directly instead.
+      const suProj = document.getElementById("markee-suProject");
+      const suDept = document.getElementById("markee-suDepartment");
+      const suPos = document.getElementById("markee-suPosition");
+      const activeScopeTab = document.querySelector("#markee-skillUploadFlow .su-scope-tab.active");
+      const drawerScope = activeScopeTab ? activeScopeTab.dataset.suScope : null;
+
+      if (drawerScope === "project" && suProj && suProj.value) {
+        pId = Number(suProj.value);
+      } else if (drawerScope === "org" && suDept && suDept.value) {
+        deptId = Number(suDept.value);
+        teamId = suPos && suPos.value ? Number(suPos.value) : null;
+      } else if (skinSkillScope === "project" && skinSkillProjectId) {
+        // Drawer chưa mở — nhưng ô "📁 Khách hàng & Dự án" ngay trên panel
+        // chính (card "⚡ Phạm vi kỹ năng") đã có lựa chọn thật. Trước đây
+        // ô này chỉ dùng để LỌC danh sách kỹ năng hiển thị, không hề ảnh
+        // hưởng tới việc lưu — nên Upload Kỹ năng luôn "ăn theo" dự án
+        // global đang chọn sẵn ở nơi khác, y hệt Download, dù người dùng
+        // vừa chọn dự án khác ngay tại đây.
+        pId = Number(skinSkillProjectId);
+      } else if (skinSkillScope === "org" && skinSkillDeptId) {
+        deptId = Number(skinSkillDeptId);
+        teamId = skinSkillPositionId ? Number(skinSkillPositionId) : null;
+      } else {
+        // Drawer never opened/touched — saved directly via "💾 Lưu Kỹ
+        // năng" from the classic tab, so fall back to ITS OWN checkbox +
+        // department/team selects (the ones this always read before).
+        const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
+        if (!attachProjectCb || attachProjectCb.checked) {
+          const selectedProject = await getSelectedProjectAsync();
+          pId = selectedProject.projectId || null;
+        }
+        deptId = getSelectNumber(departmentSelect);
+        teamId = getSelectNumber(teamSelect);
+      }
+    } else {
+      const attachProjectCb = document.getElementById("skill-attach-project-checkbox");
+      if (!attachProjectCb || attachProjectCb.checked) {
+        const selectedProject = await getSelectedProjectAsync();
+        pId = selectedProject.projectId || null;
+      }
     }
     let finalSkillType = docTypePrefix === "SKILL" ? document.getElementById("markee-asset-type-select").value : skillTypeVal;
 
@@ -5944,8 +6296,8 @@ function injectWidget(toolName) {
         skill_type: finalSkillType,
         status: skillTypeVal === "wip" ? "approved" : "pending",
         project_id: pId,
-        department_id: getSelectNumber(departmentSelect),
-        team_id: getSelectNumber(teamSelect),
+        department_id: deptId,
+        team_id: teamId,
         session_tokens: estimateTokens(document.body.innerText),
       },
     }, (res) => {
@@ -5956,6 +6308,7 @@ function injectWidget(toolName) {
       window.markeeStagedAttachFiles.skill = [];
       const skillFileListEl = document.getElementById("markee-skillFileList");
       if (skillFileListEl) skillFileListEl.innerHTML = "";
+      if (skillTitleInputEl) skillTitleInputEl.value = "";
     });
   }
   document.getElementById("btn-save-skill").onclick = () => scanAndSave("SKILL", "dynamic");

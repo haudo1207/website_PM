@@ -181,9 +181,14 @@ def calc_kpi_ot(days_late=None, kpi_base=None, priority_name: str = None):
     - Critical: abs(days_late) * 3
     - Cap at 50% KPI Base
     - Early bonus is additionally capped at 20 points
-    - Late is negative, early is positive
+    - Sớm vẫn được cộng thưởng bình thường; theo yêu cầu, TRỄ không còn bị
+      trừ điểm tự động nữa (0 điểm cho trễ, không phạt theo số ngày trễ).
+      Phạt trễ giờ chỉ còn qua remark thủ công của PM (Setting → Cấu hình
+      hiệu suất), không tự động theo days_late nữa.
     """
-    if days_late is None or days_late == 0:
+    # days_late > 0 (trễ) → 0 điểm (không phạt); chỉ days_late < 0 (sớm) mới
+    # tính tiếp bên dưới để ra điểm thưởng.
+    if days_late is None or days_late >= 0:
         return Decimal("0")
 
     priority_multipliers = {
@@ -196,12 +201,8 @@ def calc_kpi_ot(days_late=None, kpi_base=None, priority_name: str = None):
     multiplier = priority_multipliers.get(pname, Decimal("1"))
 
     raw_value = Decimal(str(abs(days_late))) * multiplier
-    cap = Decimal(str(kpi_base or 0)) * Decimal("0.5")
-    if days_late < 0:
-        cap = min(cap, Decimal("20"))
-    capped_value = min(raw_value, cap)
-
-    return -capped_value if days_late > 0 else capped_value
+    cap = min(Decimal(str(kpi_base or 0)) * Decimal("0.5"), Decimal("20"))
+    return min(raw_value, cap)
 
 
 def calc_legacy_remark_kpi_ot(remark: str = None, priority_name: str = None):
@@ -357,6 +358,10 @@ def recalculate_task(task, db):
         parent_done = parent_group.status and parent_group.status.strip().lower() == "done"
 
     # 5. KPI Perform, OT, Final
+    # KPI Task Con vẫn chờ Task Cha (TaskGroup) Done mới chốt (parent_done
+    # gate) — giữ nguyên như trước. Phần đã đổi là calc_kpi_ot(): trễ giờ
+    # luôn ra 0 (không còn tự động trừ điểm theo số ngày trễ nữa), sớm thì
+    # vẫn được cộng thưởng bình thường.
     if is_done:
         if parent_done:
             task.kpi_perform = remark_perform
