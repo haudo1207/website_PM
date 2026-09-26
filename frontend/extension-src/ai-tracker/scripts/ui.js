@@ -1395,7 +1395,7 @@ function injectWidget(toolName) {
             <div>
               <label>🛠 TÍNH NĂNG</label>
               <div style="position:relative;">
-                <input type="text" id="markee-feature-input-push" placeholder="Nhập hoặc chọn tính năng..." autocomplete="off">
+                <input type="text" class="su-select" id="markee-feature-input-push" placeholder="Nhập hoặc chọn tính năng..." autocomplete="off">
                 <div id="custom-feature-dropdown-push" style="display: none; position: absolute; left: 0; right: 0; top: 100%; margin-top: 4px; background: #111629; border: 1px solid #4e46dc; border-radius: 8px; box-shadow: 0 10px 25px rgba(0, 0, 0, 0.6); max-height: 160px; overflow-y: auto; z-index: 999999; padding: 4px 0;"></div>
               </div>
               <datalist id="feature-suggestions-push"></datalist>
@@ -1403,7 +1403,7 @@ function injectWidget(toolName) {
 
             <div>
               <div>📁 DỰ ÁN: <span id="wip-project-current-name">—</span></div>
-              <input type="text" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off">
+              <input type="text" class="su-select" id="wip-project-search-input" placeholder="Tìm kiếm dự án..." autocomplete="off">
               <div id="wip-project-search-results"></div>
             </div>
           </div>
@@ -1415,8 +1415,8 @@ function injectWidget(toolName) {
         </div>
 
         <div>
-          <select id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
-          <select id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
+          <select class="su-select" id="markee-customer-select-push"><option value="">-- Chọn Khách hàng --</option></select>
+          <select class="su-select" id="markee-project-select-push" disabled><option value="">-- Chọn Dự án --</option></select>
           <div id="wip-push-quick-list"></div>
           <div id="wip-push-card-customer"><span id="wip-push-customer-text"></span></div>
           <div id="wip-push-collapsible-area"></div>
@@ -1495,7 +1495,7 @@ function injectWidget(toolName) {
       <div id="markee-pull-wip-view" style="display: flex; flex-direction: column; gap: 6px; flex-shrink: 0;">
         <div>
           <span>🔍</span>
-          <input type="text" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off">
+          <input type="text" class="su-select" id="markee-feature-input-pull" placeholder="Lọc theo tính năng..." autocomplete="off">
         </div>
         <div id="markee-wip-chips-container">
           <button type="button" class="markee-wip-chip-btn markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
@@ -1503,8 +1503,8 @@ function injectWidget(toolName) {
           <button type="button" class="markee-wip-chip-btn" data-filter="recent">Gần đây</button>
         </div>
         <div>
-          <select id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
-          <select id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
+          <select class="su-select" id="markee-customer-select-pull"><option value="">-- Chọn Khách hàng --</option></select>
+          <select class="su-select" id="markee-project-select-pull" disabled><option value="">-- Chọn Dự án --</option></select>
           <datalist id="feature-suggestions-pull"></datalist>
           <div id="custom-feature-dropdown-pull"></div>
           <div id="wip-pull-card-customer"><span id="wip-pull-customer-text"></span></div>
@@ -1515,7 +1515,7 @@ function injectWidget(toolName) {
       <div id="markee-pull-skill-view" style="display: none; flex-direction: column; gap: 6px; flex-shrink: 0;">
         <div>
           <span>🔍</span>
-          <input type="text" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." autocomplete="off">
+          <input type="text" class="su-select" id="markee-skill-search-input" placeholder="Tìm kỹ năng..." autocomplete="off">
         </div>
         <div id="markee-skill-chips-container">
           <button type="button" class="markee-chip-btn markee-chip-fav" data-filter="favorite">⭐ Ưu thích</button>
@@ -1523,9 +1523,9 @@ function injectWidget(toolName) {
           <button type="button" class="markee-chip-btn" data-filter="recent">Gần đây</button>
         </div>
         <div>
-          <select id="markee-pull-department"><option value="">-- Tất cả --</option></select>
-          <select id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
-          <input type="text" id="markee-pull-project">
+          <select class="su-select" id="markee-pull-department"><option value="">-- Tất cả --</option></select>
+          <select class="su-select" id="markee-pull-team" disabled><option value="">-- Tất cả --</option></select>
+          <input type="text" class="su-select" id="markee-pull-project">
           <div id="dropdown-options-pull"></div>
         </div>
       </div>
