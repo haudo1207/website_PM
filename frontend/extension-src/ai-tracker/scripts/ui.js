@@ -2267,6 +2267,19 @@ function injectWidget(toolName) {
       download: "🗂️ Download Tóm tắt",
     };
     if (skinDrawerTitle) skinDrawerTitle.textContent = titles[flow] || titles.upload;
+    // #markee-drawerSubmit is ONE static button shared by all 4 flows —
+    // its label never changed with the flow, so opening a Download drawer
+    // still showed "Upload & tiếp tục" (a leftover label from the Upload
+    // flow) even though the button's own click handler correctly does a
+    // download-side action.
+    const submitLabels = {
+      upload: "Upload & tiếp tục",
+      skillUpload: "Upload & tiếp tục",
+      skillDownload: "Lấy đã chọn",
+      download: "Lấy đã chọn",
+    };
+    const submitBtnEl = document.getElementById("markee-drawerSubmit");
+    if (submitBtnEl) submitBtnEl.textContent = submitLabels[flow] || submitLabels.upload;
     skinDrawer.classList.add("open");
     if (flow === "upload") initSkinUploadFlow();
     else if (flow === "skillUpload") initSkinSkillUploadFlow();
@@ -2509,10 +2522,30 @@ function injectWidget(toolName) {
     }, (res) => {
       const skills = res && Array.isArray(res.skills) ? res.skills : [];
       if (resultText) resultText.textContent = `${skills.length} kỹ năng phù hợp`;
-      listEl.innerHTML = skills.map((s) => `
-        <div class="item"><div class="item-icon">⚡</div><div class="item-main"><div class="item-title">${s.title || "Kỹ năng"}</div></div>
-        <input type="checkbox" class="markee-sd-check" data-skill-id="${s.id}"></div>
-      `).join("") || `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+      listEl.innerHTML = "";
+      if (skills.length === 0) {
+        listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+        return;
+      }
+      skills.forEach((s) => {
+        const row = document.createElement("div");
+        row.className = "item";
+        row.innerHTML = `
+          <div class="item-icon">⚡</div><div class="item-main"><div class="item-title">${s.title || "Kỹ năng"}</div></div>
+          <button class="use violet" type="button">Dùng</button>
+          <input type="checkbox" class="markee-sd-check" data-skill-id="${s.id}">
+        `;
+        // Was checkbox-only, same gap as the WIP download list above — a
+        // real "Dùng" button now pastes the skill straight into the chat.
+        const useBtn = row.querySelector(".use");
+        if (useBtn) {
+          useBtn.onclick = () => {
+            insertSkillToChat(s.markdown_content || "");
+            chrome.runtime.sendMessage({ action: "SAVE_RECENT_SKILL", skillId: s.id, userId: currentUser });
+          };
+        }
+        listEl.appendChild(row);
+      });
     });
   }
 
@@ -2575,22 +2608,49 @@ function injectWidget(toolName) {
 
     function refreshDownloadList() {
       if (!listEl) return;
+      if (!projSelect || !projSelect.value) {
+        if (countEl) countEl.textContent = "0 mục";
+        listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chọn Dự án ở trên trước</div>`;
+        return;
+      }
+      // Was "GET_SKILLS" with skillType:"wip" — that always hit
+      // /api/ai-skills, a table WIP logs are never written to (they're
+      // saved to a project's Feature Logs instead, see SAVE_SCRAPED_MARKDOWN's
+      // isWipMode branch) — so this list showed "Chưa có dữ liệu" 100% of
+      // the time regardless of how much real WIP content existed.
+      // GET_SUMMARIES is the real, symmetric read side of that same write
+      // path (background.js, fixed earlier for fetchAndRenderSummaries()).
       chrome.runtime.sendMessage({
-        action: "GET_SKILLS",
-        skillType: "wip",
-        filterType: "all",
-        userId: currentUser,
-        projectId: projSelect && projSelect.value ? Number(projSelect.value) : null,
+        action: "GET_SUMMARIES",
+        projectId: Number(projSelect.value),
         featureName: featSelect ? featSelect.value : "",
-        limit: 50,
-        offset: 0,
       }, (res) => {
-        const items = res && Array.isArray(res.skills) ? res.skills : [];
+        const items = res && Array.isArray(res.summaries) ? res.summaries : [];
         if (countEl) countEl.textContent = `${items.length} mục`;
-        listEl.innerHTML = items.map((it) => `
-          <div class="item"><div class="item-icon">📝</div><div class="item-main"><div class="item-title">${it.title || "WIP"}</div></div>
-          <input type="checkbox" class="markee-dl-check" data-skill-id="${it.id}"></div>
-        `).join("") || `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+        listEl.innerHTML = "";
+        if (items.length === 0) {
+          listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px;">Chưa có dữ liệu</div>`;
+          return;
+        }
+        items.forEach((it) => {
+          const row = document.createElement("div");
+          row.className = "item";
+          row.innerHTML = `
+            <div class="item-icon">📝</div><div class="item-main"><div class="item-title">${it.title || "WIP"}</div></div>
+            <button class="use violet" type="button">Dùng</button>
+            <input type="checkbox" class="markee-dl-check" data-skill-id="${it.id}">
+          `;
+          // Was checkbox-only — "select items, hit submit" never actually
+          // did anything (the submit handler below just shows a toast
+          // telling the user to click a "Dùng/Copy" button that was never
+          // rendered here at all). A real "Dùng" button now pastes the
+          // content straight into the chat box, matching every other
+          // "Dùng" affordance in this widget (fetchAndRenderSkills,
+          // fetchAndRenderWipSummaries).
+          const useBtn = row.querySelector(".use");
+          if (useBtn) useBtn.onclick = () => insertSkillToChat(it.content || "");
+          listEl.appendChild(row);
+        });
       });
     }
 

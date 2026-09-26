@@ -751,6 +751,28 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           });
           if (!res.ok) throw new Error(`Lưu skill thất bại (${res.status}): ${await res.text().catch(() => "")}`);
           const saved = await res.json();
+
+          // Mirror project-scoped Kỹ năng saves into that project's own
+          // Knowledge Hub (pm-new's own "curated reference" list, GET
+          // /projects/{id}/knowledge-items — see ProjectPrototypeTab.tsx),
+          // so the AI's distilled skill doesn't only live inside the
+          // extension — per direct user request: previously the ONLY way
+          // to get it into Knowledge Hub was to manually copy the content
+          // over by hand, duplicating work the AI already did. Best-effort:
+          // an org-wide skill (no project_id — saved under Phòng ban/Vị trí
+          // scope instead) has nowhere to mirror to, and a failure here must
+          // never fail the actual Skill save that already succeeded above.
+          if (saved.project_id) {
+            try {
+              await apiFetch(`/api/projects/${saved.project_id}/knowledge-items`, {
+                method: "POST",
+                body: JSON.stringify({ title: payload.title, content: payload.markdown_content }),
+              });
+            } catch (khErr) {
+              console.log("🟡 [WARN] Mirror vào Knowledge Hub thất bại (Skill vẫn đã lưu):", khErr.message);
+            }
+          }
+
           chrome.tabs.sendMessage(sender.tab.id, {
             action: "SHOW_SUCCESS",
             title: payload.title,
@@ -806,7 +828,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const projectId = message.projectId;
       if (!projectId) return sendResponse({ summaries: [] });
       try {
-        const r = await apiFetch(`/api/projects/${projectId}/feature-logs`);
+        // Optional Tính năng filter — the caller only ever has the
+        // FEATURE'S NAME (GET_PROJECT_FEATURES discards ids), but
+        // GET /api/projects/{id}/feature-logs only filters by feature_id,
+        // so resolve name -> id here first.
+        let featureId = null;
+        if (message.featureName) {
+          try {
+            const fr = await apiFetch(`/api/projects/${projectId}/features`);
+            const feats = await fr.json();
+            const match = (Array.isArray(feats) ? feats : []).find(
+              (f) => (f.name || "").trim().toLowerCase() === String(message.featureName).trim().toLowerCase()
+            );
+            if (match) featureId = match.id;
+          } catch {
+            // Resolution failed — fall through to unfiltered (whole project).
+          }
+        }
+        const qs = featureId ? `?feature_id=${featureId}` : "";
+        const r = await apiFetch(`/api/projects/${projectId}/feature-logs${qs}`);
         const logs = await r.json();
         const summaries = (Array.isArray(logs) ? logs : []).map((l) => ({
           id: l.id,
