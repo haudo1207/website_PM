@@ -387,8 +387,17 @@ export default function PeopleSkillIntelligence() {
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillNode | null>(null);
-  const [skillCandidates, setSkillCandidates] = useState<any[]>([]);
-  const [skillCandidatesLoading, setSkillCandidatesLoading] = useState(false);
+  // Lựa chọn phía Skill Directory — chỉ là UI state cục bộ, không ghi DB hay
+  // động vào member/task/skill/KPI/capacity. Phạm vi: bản đồ danh mục skill.
+  const [chosenForSkillDirectory, setChosenForSkillDirectory] = useState<Set<number>>(new Set());
+  const isChosenForSkillDirectory = (id: number) => chosenForSkillDirectory.has(id);
+  function toggleChosenForSkillDirectory(id: number) {
+    setChosenForSkillDirectory((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (peopleView !== 'skills' || !admin) return;
@@ -401,14 +410,97 @@ export default function PeopleSkillIntelligence() {
     }).catch(() => setCategories([])).finally(() => setCategoriesLoading(false));
   }, [peopleView, admin, categories.length]);
 
-  useEffect(() => {
-    if (!selectedSkill) { setSkillCandidates([]); return; }
-    setSkillCandidatesLoading(true);
-    getMembers({ skill_id: selectedSkill.id })
-      .then((data: any[]) => setSkillCandidates(Array.isArray(data) ? data.sort((a, b) => (b.kpi_total || 0) - (a.kpi_total || 0)) : []))
-      .catch(() => setSkillCandidates([]))
-      .finally(() => setSkillCandidatesLoading(false));
-  }, [selectedSkill]);
+  // ── Skill Directory — aggregation từ Hồ sơ nhân sự (members state, đã
+  // lọc employment_status=ON) + allTasks + classifyPct + giaoMap đã có.
+  // KHÔNG gọi API mới; KHÔNG tạo công thức capacity/KPI/evidence mới.
+  // Map<skillId, Member[]> — ON members thực sự có skill này (đếm distinct).
+  const membersBySkillId = useMemo(() => {
+    const m = new Map<number, any[]>();
+    for (const mem of members) {
+      const seen = new Set<number>();
+      for (const s of mem.skills || []) {
+        const sid = s?.id;
+        if (sid == null || seen.has(sid)) continue;
+        seen.add(sid);
+        if (!m.has(sid)) m.set(sid, []);
+        m.get(sid)!.push(mem);
+      }
+    }
+    return m;
+  }, [members]);
+
+  // Evidence: Map<`${memberId}|${skillId}`, count> — đếm task của member
+  // (assigned + support) mà khớp skill. Ưu tiên match theo skill_vendor_id
+  // (mapping DB), fallback theo skill_vendor_name nếu ID không có.
+  const taskEvidenceByMemberSkill = useMemo(() => {
+    const m = new Map<string, number>();
+    const memberById = new Map<number, any>();
+    for (const mem of members) memberById.set(mem.id, mem);
+    for (const t of allTasks) {
+      const vid = t.skill_vendor_id != null ? Number(t.skill_vendor_id) : null;
+      const vname = t.skill_vendor_name;
+      for (const midRaw of [t.assigned_id, t.support_id]) {
+        if (midRaw == null) continue;
+        const mid = Number(midRaw);
+        let resolvedSid: number | null = null;
+        if (vid != null) {
+          resolvedSid = vid;
+        } else if (vname) {
+          const mem = memberById.get(mid);
+          const ms = mem ? (mem.skills || []).find((ss: any) => ss.name === vname) : null;
+          if (ms) resolvedSid = ms.id;
+        }
+        if (resolvedSid == null) continue;
+        const key = `${mid}|${resolvedSid}`;
+        m.set(key, (m.get(key) || 0) + 1);
+      }
+    }
+    return m;
+  }, [allTasks, members]);
+
+  const totalEvidenceBySkillId = useMemo(() => {
+    const agg = new Map<number, number>();
+    taskEvidenceByMemberSkill.forEach((count, key) => {
+      const sidStr = key.split('|')[1];
+      const sid = Number(sidStr);
+      agg.set(sid, (agg.get(sid) || 0) + count);
+    });
+    return agg;
+  }, [taskEvidenceByMemberSkill]);
+
+  // Skill Area → Skill hierarchy, chỉ giữ những nhánh thực sự có ON member.
+  // Skill Area member count = distinct members sở hữu ≥1 skill trong area.
+  const skillDirectory = useMemo(() => {
+    return categories
+      .map((c) => {
+        const skillEntries = c.groups
+          .flatMap((g) => g.skills)
+          .map((s) => {
+            const list = membersBySkillId.get(s.id) || [];
+            return {
+              ...s,
+              memberCount: list.length,
+              evidenceTotal: totalEvidenceBySkillId.get(s.id) || 0,
+            };
+          })
+          .filter((s) => s.memberCount > 0);
+        const seen = new Set<number>();
+        for (const s of skillEntries) for (const mem of membersBySkillId.get(s.id) || []) seen.add(mem.id);
+        return { ...c, memberCount: seen.size, skillEntries };
+      })
+      .filter((c) => c.memberCount > 0);
+  }, [categories, membersBySkillId, totalEvidenceBySkillId]);
+
+  const skillMembers = useMemo(() => {
+    if (!selectedSkill) return [] as any[];
+    const list = membersBySkillId.get(selectedSkill.id) || [];
+    return [...list].sort((a, b) => {
+      const ea = taskEvidenceByMemberSkill.get(`${a.id}|${selectedSkill.id}`) || 0;
+      const eb = taskEvidenceByMemberSkill.get(`${b.id}|${selectedSkill.id}`) || 0;
+      if (ea !== eb) return eb - ea;
+      return (a.display_name || '').localeCompare(b.display_name || '');
+    });
+  }, [selectedSkill, membersBySkillId, taskEvidenceByMemberSkill]);
 
   // ── Project Skill — mượn/trả người ──────────────────────────────────
   const [loanProjects, setLoanProjects] = useState<any[]>([]);
@@ -809,26 +901,29 @@ export default function PeopleSkillIntelligence() {
               <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1 max-h-[70vh] overflow-y-auto">
                 {categoriesLoading ? (
                   <div className="flex items-center justify-center py-8 text-slate-400 gap-2 text-[12px]"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
-                ) : categories.map((c) => (
+                ) : skillDirectory.length === 0 ? (
+                  <div className="text-center py-8 text-[11.5px] text-slate-400">Chưa có nhân sự nào được gắn skill để dựng thư mục.</div>
+                ) : skillDirectory.map((c) => (
                   <div key={c.id}>
                     <button
                       onClick={() => setExpandedCategoryId(expandedCategoryId === c.id ? null : c.id)}
                       className="w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-[12.5px] font-bold text-slate-700 hover:bg-slate-50"
                     >
                       <span className="flex items-center gap-1.5"><ChevronRight className={`w-3.5 h-3.5 transition-transform ${expandedCategoryId === c.id ? 'rotate-90' : ''}`} />{c.name}</span>
+                      <span className="text-[11px] font-bold text-slate-400 bg-slate-100 rounded-full px-1.5 py-0.5">{c.memberCount}</span>
                     </button>
                     {expandedCategoryId === c.id && (
                       <div className="pl-6 space-y-0.5 pb-1">
-                        {c.groups.flatMap((g) => g.skills).map((s) => (
+                        {c.skillEntries.map((s) => (
                           <button
                             key={s.id}
-                            onClick={() => setSelectedSkill(s)}
-                            className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[12px] ${selectedSkill?.id === s.id ? 'bg-[#0058be] text-white font-bold' : 'text-slate-500 hover:bg-slate-50'}`}
+                            onClick={() => { setSelectedSkill({ id: s.id, name: s.name, group_id: 0, is_active: s.is_active, is_used: s.is_used }); setExpandedCategoryId(c.id); }}
+                            className={`w-full text-left flex items-center justify-between px-2.5 py-1.5 rounded-lg text-[12px] ${selectedSkill?.id === s.id ? 'bg-[#0058be] text-white font-bold' : 'text-slate-500 hover:bg-slate-50'}`}
                           >
-                            {s.name}
+                            <span>{s.name}</span>
+                            <span className={`text-[10.5px] font-bold rounded-full px-1.5 py-0.5 ${selectedSkill?.id === s.id ? 'bg-white/20 text-white' : 'text-slate-400 bg-slate-100'}`}>{s.memberCount}</span>
                           </button>
                         ))}
-                        {c.groups.every(g => g.skills.length === 0) && <div className="text-[11px] text-slate-300 px-2.5 py-1">Chưa có skill nào</div>}
                       </div>
                     )}
                   </div>
@@ -846,40 +941,52 @@ export default function PeopleSkillIntelligence() {
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <h3 className="font-extrabold text-slate-800">{selectedSkill.name}</h3>
-                        <p className="text-[11.5px] text-slate-400">{skillCandidates.length} người có skill này · xếp theo Tổng KPI đã hoàn thành</p>
+                        <p className="text-[11.5px] text-slate-400">{skillMembers.length} người có skill này · Capacity lấy từ Team Load (Giao% cùng kỳ lọc)</p>
                       </div>
                     </div>
-                    {skillCandidatesLoading ? (
-                      <div className="flex items-center justify-center py-10 text-slate-400 gap-2 text-[12.5px]"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
+                    {skillMembers.length === 0 ? (
+                      <div className="text-center py-10 text-slate-400 text-[12.5px]">Chưa có ai được gắn skill này.</div>
                     ) : (
                       <div className="space-y-2">
-                        {skillCandidates.map((m) => {
-                          const openCount = openTaskCountByMember.get(m.id) || 0;
+                        {skillMembers.map((m) => {
+                          const giao = giaoMap.get(m.id) ?? 0;
+                          const cap = classifyPct(giao, workloadSettings);
+                          const evidence = taskEvidenceByMemberSkill.get(`${m.id}|${selectedSkill.id}`) || 0;
+                          const roleParts = [m.position, m.department].filter(Boolean);
                           return (
                             <div key={m.id} onClick={() => openMemberProfile(m)} className="flex items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2.5 hover:border-[#0058be] cursor-pointer transition-colors">
-                              <div className="flex items-center gap-2.5">
+                              <div className="flex items-center gap-2.5 min-w-0">
                                 <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center justify-center shrink-0">{initials(m.display_name)}</div>
-                                <div>
-                                  <div className="font-bold text-slate-800 text-[12.5px]">{m.display_name}</div>
-                                  <div className="text-[11px] text-slate-400">{[m.team, m.department].filter(Boolean).join(' · ')}</div>
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-800 text-[12.5px] truncate">{m.display_name}</div>
+                                  <div className="text-[11px] text-slate-400 truncate">
+                                    {roleParts.length > 0 ? roleParts.join(' · ') : [m.team, m.department].filter(Boolean).join(' · ') || '—'}
+                                  </div>
                                 </div>
                               </div>
-                              <div className="text-right">
-                                <div className="text-[12.5px] font-extrabold text-[#0058be]">{Number(m.kpi_total || 0).toFixed(1)}</div>
-                                <div className="text-[10.5px] text-slate-400">{openCount === 0 ? 'Rảnh' : `${openCount} việc đang mở`}</div>
+                              <div className="text-right shrink-0">
+                                <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Task Evidence</div>
+                                <div className="text-[12.5px] font-extrabold text-[#0058be] tabular-nums">{evidence}</div>
+                              </div>
+                              <div className="text-right shrink-0 w-[112px]">
+                                <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Capacity</div>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <span className={`text-[12.5px] font-extrabold tabular-nums ${giao > 120 ? 'text-rose-600' : giao >= 90 ? 'text-emerald-600' : giao >= 50 ? 'text-[#0058be]' : 'text-slate-500'}`}>{giao.toFixed(0)}%</span>
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${cap.tone}`}>{cap.label}</span>
+                                </div>
                               </div>
                               <button
-                                onClick={(e) => { e.stopPropagation(); toggleShortlist({ id: m.id, name: m.display_name, team: m.team }); }}
+                                onClick={(e) => { e.stopPropagation(); toggleChosenForSkillDirectory(m.id); }}
                                 className={`shrink-0 text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
-                                  isShortlisted(m.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                                  isChosenForSkillDirectory(m.id) ? 'bg-[#0058be] text-white border-[#0058be]' : 'border-slate-300 text-slate-500 hover:border-[#0058be] hover:text-[#0058be]'
                                 }`}
+                                title="Chỉ là lựa chọn tạm trong Skill Directory; không thay đổi dữ liệu nhân sự."
                               >
-                                {isShortlisted(m.id) ? '✓ Đã thêm' : '+ Shortlist'}
+                                {isChosenForSkillDirectory(m.id) ? '✓ Đã chọn' : '+ Chọn'}
                               </button>
                             </div>
                           );
                         })}
-                        {skillCandidates.length === 0 && <div className="text-center py-10 text-slate-400 text-[12.5px]">Chưa có ai được gắn skill này.</div>}
                       </div>
                     )}
                   </>
