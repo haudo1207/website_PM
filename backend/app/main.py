@@ -29,6 +29,7 @@ from .routers import project_documents as project_documents_router
 from .routers import ai_skills as ai_skills_router
 from .routers import ai_sessions as ai_sessions_router
 from .routers import public_share as public_share_router
+from .routers import member_loans as member_loans_router
 from .routers import workload_settings as workload_settings_router
 from .routers import calendar as calendar_router
 from .routers import meeting_bot as meeting_bot_router
@@ -47,6 +48,7 @@ from .models import working_lunch as working_lunch_model
 from .models import telegram_connection as telegram_connection_model
 from .models import zalo as zalo_model
 from .models import workload_setting as workload_setting_model
+from .models import member_loan_request as member_loan_request_model
 from sqlalchemy import text
 
 
@@ -1709,6 +1711,7 @@ app.include_router(meeting_bot_router.router,       prefix="/api/meeting-bot")
 app.include_router(ai_skills_router.router,     prefix="/api")
 app.include_router(ai_sessions_router.router,   prefix="/api")
 app.include_router(public_share_router.router,  prefix="/api")
+app.include_router(member_loans_router.router,  prefix="/api/project-skill")
 
 @app.get("/api/extension/ai-tracker/version")
 def extension_ai_tracker_version():

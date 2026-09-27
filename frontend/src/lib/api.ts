@@ -1165,6 +1165,35 @@ export const getTeamDetail = (
   api.get<{ team: TeamComparisonTeam }>('/system-audit/team-detail', {
     params: { leader_user_id, ...(params || {}) },
   }).then(r => r.data);
+// Raw task rows behind Team Load's Section 4 member drill-down (MemberDetailModal) —
+// see MultiTeamProjectComparison.tsx's own comment for why this endpoint (not
+// /api/all-tasks-global or /api/projects) is the correct source for it.
+export const getTeamComparisonTasks = () =>
+  api.get<any[]>('/system-audit/team-comparison-tasks').then(r => r.data);
+
+// Project Skill — mượn/trả người giữa các dự án.
+export interface MemberLoanRequest {
+  id: number;
+  project_id: number;
+  project_name: string | null;
+  member_id: number;
+  member_name: string | null;
+  requested_by_user_id: number | null;
+  requested_by_name: string | null;
+  status: 'pending' | 'accepted' | 'rejected';
+  message: string | null;
+  reason: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+export const getEligibleLoanMembers = (excludeOwnTeam = true) =>
+  api.get('/project-skill/eligible-members', { params: { exclude_own_team: excludeOwnTeam } }).then(r => r.data);
+export const createMemberLoanRequest = (projectId: number, memberId: number, message?: string) =>
+  api.post<MemberLoanRequest>('/project-skill/requests', { project_id: projectId, member_id: memberId, message }).then(r => r.data);
+export const getMemberLoanRequests = (scope: 'incoming' | 'outgoing') =>
+  api.get<MemberLoanRequest[]>('/project-skill/requests', { params: { scope } }).then(r => r.data);
+export const respondMemberLoanRequest = (loanId: number, decision: 'accepted' | 'rejected', reason?: string) =>
+  api.post<MemberLoanRequest>(`/project-skill/requests/${loanId}/respond`, { decision, reason }).then(r => r.data);
 
 // ── Workload Settings (Super Admin only) ─────────────────────
 export const getWorkloadSettings = () =>
