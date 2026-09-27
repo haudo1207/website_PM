@@ -101,6 +101,10 @@ YÊU CẦU:
 - Không suy đoán.
 - Ưu tiên các quyết định, kết quả, lỗi đang gặp và bước tiếp theo.
 - Nếu thiếu dữ liệu thì ghi "Chưa xác định".
+- Viết ngắn gọn, đúng trọng tâm — mỗi gạch đầu dòng 1 ý, không viết
+  thành đoạn văn dài, không lặp lại ý đã nói ở mục khác, không thêm câu
+  mở đầu/kết thúc thừa. Vẫn giữ đủ 8 mục bên dưới, nhưng nội dung mỗi
+  mục phải cô đọng, không lan man.
 
 CHỈ TRẢ VỀ DUY NHẤT MỘT MARKDOWN CODE BLOCK:
 \`\`\`markdown
