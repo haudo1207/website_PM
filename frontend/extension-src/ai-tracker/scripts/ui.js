@@ -92,44 +92,46 @@ Wait for the user input. Start with: "Skill đã sẵn sàng. Vui lòng cung c�
 \`\`\`
 `;
 
-const SUMMARY_PROMPT = `Bạn là trợ lý hệ thống. Hãy đọc lại toàn bộ phiên hội thoại phía trên và tạo một bản WIP (Work In Progress Handover) dưới dạng Markdown.
+const SUMMARY_PROMPT = `Bạn là trợ lý hệ thống. Hãy đọc lại toàn bộ phiên hội thoại phía trên và tạo một bản WIP (Work In Progress Handover) kiêm đặc tả tính năng dưới dạng Markdown.
 
-MỤC ĐÍCH: Lưu trạng thái công việc đang làm dở để có thể mở một phiên chat mới và tiếp tục làm việc ngay mà không cần giải thích lại.
+MỤC ĐÍCH: Lưu trạng thái công việc đang làm dở, đồng thời mô tả tính năng theo hướng đặc tả (spec) — để (1) mở phiên chat mới tiếp tục làm ngay không cần giải thích lại, (2) người khác (Dev/QA) đọc vào biết ngay dùng ra sao, phải làm gì, khi nào coi là xong.
 
 YÊU CẦU:
-- Chỉ ghi thông tin thực sự xuất hiện trong cuộc hội thoại.
-- Không suy đoán.
-- Ưu tiên các quyết định, kết quả, lỗi đang gặp và bước tiếp theo.
-- Nếu thiếu dữ liệu thì ghi "Chưa xác định".
+- Chỉ ghi thông tin thực sự xuất hiện trong cuộc hội thoại. Không suy đoán.
+- Mỗi mục PHẢI chứa đúng loại nội dung ghi trong hướng dẫn của mục đó bên
+  dưới — không nhét nội dung của mục khác vào cho đủ chỗ, không ghi chung
+  chung. Nếu 1 mục thực sự không có dữ liệu phù hợp thì ghi "Chưa xác
+  định", không bịa.
 - Viết ngắn gọn, đúng trọng tâm — mỗi gạch đầu dòng 1 ý, không viết
   thành đoạn văn dài, không lặp lại ý đã nói ở mục khác, không thêm câu
-  mở đầu/kết thúc thừa. Vẫn giữ đủ 8 mục bên dưới, nhưng nội dung mỗi
-  mục phải cô đọng, không lan man.
+  mở đầu/kết thúc thừa.
 
 CHỈ TRẢ VỀ DUY NHẤT MỘT MARKDOWN CODE BLOCK:
 \`\`\`markdown
 # WIP: [Tên công việc]
 
-## 1. MỤC TIÊU CHÍNH
-- ...
+## 1. MỤC TIÊU & TRẠNG THÁI HIỆN TẠI
+- Vì sao làm việc này (mục tiêu) và hiện đang ở giai đoạn nào.
 
-## 2. TRẠNG THÁI HIỆN TẠI
-- ...
+## 2. LUỒNG SỬ DỤNG CHÍNH
+- Các bước cụ thể, đúng thứ tự, người dùng thao tác để dùng được tính
+  năng này (bước 1, 2, 3...). Đọc xong hiểu cách dùng trong 30 giây.
 
-## 3. NHỮNG GÌ ĐÃ HOÀN THÀNH
-- ...
+## 3. TÍNH NĂNG ĐÃ/PHẢI TRIỂN KHAI
+- Từng phần việc/tính năng con cụ thể, mỗi dòng đánh dấu rõ [Đã xong]
+  hoặc [Cần làm].
 
-## 4. CÁC QUYẾT ĐỊNH ĐÃ CHỐT
-- ...
+## 4. ACCEPTANCE CRITERIA
+- Điều kiện cụ thể, tick được đúng/sai, để biết khi nào coi là làm xong.
 
-## 5. DỮ LIỆU / TÀI NGUYÊN LIÊN QUAN
-- ...
+## 5. DỮ LIỆU & TRẠNG THÁI
+- Field/biến/API/file thực tế liên quan (tên biến, tên file, endpoint...).
 
-## 6. VẤN ĐỀ ĐANG TỒN TẠI (OPEN ISSUES)
-- ...
+## 6. QUY TẮC SỬ DỤNG & QUYẾT ĐỊNH ĐÃ CHỐT
+- Rule giúp không thao tác sai + quyết định đã chốt, không đổi nữa.
 
-## 7. NEXT STEPS
-- ...
+## 7. VẤN ĐỀ TỒN TẠI & NEXT STEPS
+- Việc chưa xử lý xong + việc cần làm tiếp theo.
 
 ## 8. PROMPT TIẾP TỤC CÔNG VIỆC
 [Một câu lệnh cụ thể để gửi cho AI trong phiên chat mới]

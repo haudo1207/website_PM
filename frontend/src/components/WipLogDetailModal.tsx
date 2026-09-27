@@ -1,8 +1,7 @@
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import WipContentSections from '@/components/WipContentSections';
 import {
   X, Minimize2, Download, Info, Sparkles, Loader2, RefreshCw, CheckCircle2, FileText, ListTodo, Upload,
 } from 'lucide-react';
@@ -327,8 +326,8 @@ export default function WipLogDetailModal({
 
           <div className="flex-1 overflow-auto p-4 md:p-6">
             {!activeFile ? (
-              <div className="max-w-3xl mx-auto bg-white rounded-xl border border-slate-200 p-6 md:p-8 prose prose-sm prose-slate max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{log.content}</ReactMarkdown>
+              <div className="max-w-3xl mx-auto bg-white rounded-xl border border-slate-200 p-6 md:p-8">
+                <WipContentSections content={log.content} />
               </div>
             ) : !isPreviewableMime(activeFile.mime_type) ? (
               <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-400">
@@ -380,9 +379,7 @@ export default function WipLogDetailModal({
               <div className="flex-1 flex flex-col min-h-0 p-4 overflow-hidden bg-white">
                 <h5 className="font-bold text-slate-800 flex items-center gap-1.5 text-xs mb-2.5 shrink-0">Nội dung bài viết / Mô tả:</h5>
                 <div className="flex-1 overflow-y-auto bg-slate-50/70 p-4 rounded-xl border border-slate-200 text-slate-800 text-xs leading-relaxed">
-                  <div className="prose prose-sm prose-slate max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{log.content}</ReactMarkdown>
-                  </div>
+                  <WipContentSections content={log.content} />
                 </div>
               </div>
             ) : (
