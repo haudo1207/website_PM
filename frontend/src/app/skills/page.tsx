@@ -26,10 +26,8 @@ function formatDate(iso: string | null) {
 }
 
 type Scope = 'all' | 'org' | 'project';
-type MainTab = 'knowledge' | 'people';
 
 export default function SkillPage() {
-  const [mainTab, setMainTab] = useState<MainTab>('knowledge');
   const router = useRouter();
   const [authorized, setAuthorized] = useState(false);
   useEffect(() => {
@@ -163,31 +161,6 @@ export default function SkillPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-1 border-b border-slate-200">
-        <button
-          onClick={() => setMainTab('knowledge')}
-          className={`px-3.5 py-2 text-[13px] font-bold border-b-2 transition-colors ${
-            mainTab === 'knowledge' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          Knowledge Hub
-        </button>
-        <button
-          onClick={() => setMainTab('people')}
-          className={`px-3.5 py-2 text-[13px] font-bold border-b-2 transition-colors ${
-            mainTab === 'people' ? 'border-[#0058be] text-[#0058be]' : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          People &amp; Skill Intelligence
-        </button>
-      </div>
-
-      {mainTab === 'people' ? (
-        <div className="text-center py-16 text-[12.5px] text-slate-400 bg-white border border-slate-200 rounded-xl">
-          Đang phát triển — chưa có nội dung.
-        </div>
-      ) : (
-      <>
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2.5 text-[12.5px] text-red-700">{error}</div>
       )}
@@ -359,8 +332,6 @@ export default function SkillPage() {
             </div>
           )}
         </div>
-      )}
-      </>
       )}
       </div>
       </main>

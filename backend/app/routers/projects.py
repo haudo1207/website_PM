@@ -281,14 +281,33 @@ def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional
     target_b = (business_unit or "").strip().lower()
     if not target_b or target_b == "all":
         return q
+    # A project the caller is explicitly assigned to (project_members) always
+    # stays visible under the current Workspace tab, even when its own
+    # business/data_scope belongs to a different Workspace — mirrors the
+    # membership-overrides-Workspace rule in access.py's can_access_project.
+    # (Regression fix: this override was accidentally dropped by 9f044ab
+    # "feat(projects): add scoped metrics and manday progress" while that
+    # commit was refactoring this function for unrelated manday/KPI metrics —
+    # restored verbatim.)
+    member_id = getattr(current_user, "member_id", None)
+    assigned_project_ids = (
+        db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
+        if member_id else None
+    )
     ws = resolve_workspace(db, target_b)
     if ws:
         b_val = ws.name
-        return q.filter(or_(
+        filters = [
             Project.business == b_val,
+            Project.business == "All",
             and_(Project.business.is_(None), Project.data_scope == target_b),
             and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
-        ))
+        ]
+        if assigned_project_ids is not None:
+            filters.append(Project.id.in_(assigned_project_ids))
+        return q.filter(or_(*filters))
+    if assigned_project_ids is not None:
+        return q.filter(Project.id.in_(assigned_project_ids))
     return q.filter(Project.id == -1)
 
 
