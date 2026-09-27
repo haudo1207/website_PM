@@ -30,6 +30,7 @@ import { Users, Search, Loader2, Sparkles, Briefcase, ChevronRight, Send, Check,
 import { isAdmin } from '@/lib/auth';
 import {
   getMembers, getTeamComparison, getTeamComparisonTasks, getCategories, getProjects,
+  getDepartments,
   getEligibleLoanMembers, createMemberLoanRequest, getMemberLoanRequests, respondMemberLoanRequest,
   TeamComparisonMember, WorkloadSetting, MemberLoanRequest,
 } from '@/lib/api';
@@ -196,9 +197,11 @@ export default function PeopleSkillIntelligence() {
       getTeamComparisonTasks().catch(() => []),
       getProjects().catch(() => []),
       getEligibleLoanMembers(true).catch(() => []),
-    ]).then(([mem, cmp, tasks, projects, eligible]) => {
+      getDepartments().catch(() => []),
+    ]).then(([mem, cmp, tasks, projects, eligible, departments]) => {
       setLoanProjects(Array.isArray(projects) ? projects : []);
       setEligibleMembers(Array.isArray(eligible) ? eligible : []);
+      setDeptMaster(Array.isArray(departments) ? departments : []);
       setMembers(Array.isArray(mem) ? mem.filter((m: any) => (m.employment_status || 'ON') === 'ON') : []);
       applyTeamComparison(cmp);
       const taskList = Array.isArray(tasks) ? tasks : [];
@@ -328,21 +331,42 @@ export default function PeopleSkillIntelligence() {
 
 
   const [search, setSearch] = useState('');
-  const [teamFilter, setTeamFilter] = useState('');
+  const [capacityFilter, setCapacityFilter] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
-  const teamOptions = useMemo(() => Array.from(new Set(members.map(m => m.team).filter(Boolean))).sort(), [members]);
-  const deptOptions = useMemo(() => Array.from(new Set(members.map(m => m.department).filter(Boolean))).sort(), [members]);
+  // Danh sách TEAM chuẩn từ nguồn của Accounts → Quản lý thành viên
+  // (/system-categories/departments — cột "Team" của MembersView).
+  const [deptMaster, setDeptMaster] = useState<{ name: string }[]>([]);
+  // Options Capacity — đúng phân loại Workload Settings của Team Load
+  // Section 4; fallback 4 nhãn mặc định khi chưa tải được settings.
+  const capacityOptions = useMemo(() => {
+    if (workloadSettings.length === 4) {
+      return [...workloadSettings]
+        .sort((a, b) => (a.min_kpi ?? 0) - (b.min_kpi ?? 0))
+        .map((ws) => ({ key: ws.status_key, label: ws.status_label }));
+    }
+    return [
+      { key: 'not_working', label: 'Không làm việc' },
+      { key: 'capacity', label: 'Còn capacity' },
+      { key: 'normal', label: 'Bình thường' },
+      { key: 'overload', label: 'Quá tải' },
+    ];
+  }, [workloadSettings]);
+  const deptOptions = useMemo(() => {
+    const fromMaster = deptMaster.map((d) => d.name).filter(Boolean);
+    const source = fromMaster.length > 0 ? fromMaster : members.map((m) => m.department).filter(Boolean);
+    return Array.from(new Set<string>(source)).sort();
+  }, [deptMaster, members]);
 
   const filteredMembers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return members.filter(m => {
-      if (teamFilter && m.team !== teamFilter) return false;
+      if (capacityFilter && classifyPct(giaoMap.get(m.id) ?? 0, workloadSettings).key !== capacityFilter) return false;
       if (deptFilter && m.department !== deptFilter) return false;
       if (!q) return true;
       const hay = [m.display_name, m.full_name, m.team, m.department, ...(m.skills || []).map((s: any) => s.name)].filter(Boolean).join(' ').toLowerCase();
       return hay.includes(q);
     });
-  }, [members, search, teamFilter, deptFilter]);
+  }, [members, search, capacityFilter, deptFilter, giaoMap, workloadSettings]);
 
   function openMemberProfile(m: any) {
     setSelectedMemberModal({
@@ -549,10 +573,10 @@ export default function PeopleSkillIntelligence() {
                     className="w-full pl-8 pr-3 py-1.5 text-[12.5px] bg-white text-slate-800 placeholder:text-slate-400 border border-slate-300 rounded-full outline-none focus:ring-1 focus:ring-[#0058be]"
                   />
                 </div>
-                <select value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)}
+                <select value={capacityFilter} onChange={(e) => setCapacityFilter(e.target.value)}
                   className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
-                  <option value="">Tất cả team</option>
-                  {teamOptions.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <option value="">Tất cả capacity</option>
+                  {capacityOptions.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
                 </select>
                 <select value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)}
                   className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
@@ -716,7 +740,7 @@ export default function PeopleSkillIntelligence() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-2.5 text-slate-600 font-semibold whitespace-nowrap">{m.team || '—'}</td>
+                            <td className="px-4 py-2.5 text-slate-600 font-semibold whitespace-nowrap">{m.department || '—'}</td>
                             <td className="px-4 py-2.5">
                               <div className="flex flex-wrap gap-1">
                                 {skillNames.slice(0, 3).map((name: string) => (
