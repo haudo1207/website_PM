@@ -9,11 +9,21 @@
 // markee_kpi_people_skills_profile360_v3.html) và "Project Skill".
 //
 // Dữ liệu tái dùng 100% từ những chỗ đã có, không tự bịa công thức mới:
-// - Giao% (tải công việc, không đổi dù Done hay chưa) — y hệt Team Load,
-//   từ GET /system-audit/team-comparison (chỉ Leader/Super Admin gọi được).
-// - "Việc đang mở" (task CHƯA Done) + "Dự án hiện tại" — tính từ GET
-//   /system-audit/team-comparison-tasks (cùng nguồn Team Load dùng cho
-//   MemberDetailModal).
+// - CAPACITY — y hệt Team Load Section 4: Giao% = GET /system-audit/
+//   team-comparison?start_date&end_date → member.giao_pct, phân loại bằng
+//   workload_settings cùng kỳ (classifyPct ở dưới), hiển thị progress bar
+//   + % theo đúng màu sắc KpiAverageProgressBar của Section 4.
+// - KPI KỲ — đúng giá trị "Total KPI" trên Member Card Team Load Section 4:
+//   member.kpi từ cùng response /team-comparison theo kỳ đang chọn.
+// - "Việc đang mở" (Open/Total trong kỳ, Done loại khỏi Open) + "Dự án hiện
+//   tại" (project có ≥1 task được giao trong kỳ, kể cả Done) — tính từ GET
+//   /system-audit/team-comparison-tasks, lọc kỳ bằng checkTaskInPeriod (cùng
+//   semantics Overview).
+// - "Skill nổi bật" — cùng logic "PHÂN BỔ THEO SKILL" của MemberDetailModal
+//   (manday desc trên task trong kỳ), fallback sang skill đã gán của Member.
+// - Bộ lọc thời gian — cùng semantics/UI Overview/Team Load, mặc định
+//   "Tuần này". Nhân sự hiển thị = Member có employment_status ON (Accounts
+//   → Quản lý thành viên).
 // - Hồ sơ chi tiết khi bấm vào 1 người: tái dùng thẳng MemberDetailModal.
 import { useEffect, useMemo, useState } from 'react';
 import { Users, Search, Loader2, Sparkles, Briefcase, ChevronRight, Send, Check, X } from 'lucide-react';
@@ -23,7 +33,19 @@ import {
   getEligibleLoanMembers, createMemberLoanRequest, getMemberLoanRequests, respondMemberLoanRequest,
   TeamComparisonMember, WorkloadSetting, MemberLoanRequest,
 } from '@/lib/api';
+import {
+  CYCLE_TEMPLATE, getMondayToSundayRange, getPrevWeekRange, getNextWeekRange,
+  getWeekOfMonth, checkTaskInPeriod,
+} from '@/app/dashboard/constants';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
+
+function formatYMD(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 type MainTab = 'people-skill' | 'project-skill';
 type PeopleView = 'people' | 'skills';
@@ -79,10 +101,82 @@ export default function PeopleSkillIntelligence() {
   const [members, setMembers] = useState<any[]>([]);
   const [membersLoading, setMembersLoading] = useState(false);
   const [giaoMap, setGiaoMap] = useState<Map<number, number>>(new Map());
+  const [kpiMap, setKpiMap] = useState<Map<number, number>>(new Map());
   const [workloadSettings, setWorkloadSettings] = useState<WorkloadSetting[]>([]);
   const [allTasks, setAllTasks] = useState<any[]>([]);
   const [allProjects, setAllProjects] = useState<{ id: any; name: string }[]>([]);
   const [selectedMemberModal, setSelectedMemberModal] = useState<any | null>(null);
+
+  // ── Bộ lọc thời gian — cùng semantics/UI với Overview/Team Load, mặc
+  //     định "Tuần này". Kỳ này drive TOÀN BỘ cột động (Skill nổi bật, Dự
+  //     án hiện tại, KPI Kỳ, Capacity, Việc đang mở) qua cùng một cửa sổ.
+  const initialNow = new Date();
+  const [selectedYear, setSelectedYear] = useState<number | 'all'>(initialNow.getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | 'all'>(initialNow.getMonth() + 1);
+  const [selectedWeek, setSelectedWeek] = useState<number | 'all'>(getWeekOfMonth(initialNow));
+  const [activeQuickFilter, setActiveQuickFilter] = useState<string | null>('Tuần này');
+
+  const applyQuickFilter = (type: string) => {
+    setActiveQuickFilter(type);
+    const now = new Date();
+    if (type === 'Tuần trước') {
+      const d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tuần này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek(getWeekOfMonth(now));
+    } else if (type === 'Tuần tới') {
+      const d = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek(getWeekOfMonth(d));
+    } else if (type === 'Tháng trước') {
+      const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng này') {
+      setSelectedYear(now.getFullYear()); setSelectedMonth(now.getMonth() + 1); setSelectedWeek('all');
+    } else if (type === 'Tháng tới') {
+      const d = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      setSelectedYear(d.getFullYear()); setSelectedMonth(d.getMonth() + 1); setSelectedWeek('all');
+    }
+  };
+
+  // Cửa sổ ngày — dẫn xuất y hệt timeWindow của Team Load (MultiTeamProject-
+  // Comparison), dùng chung cho API /team-comparison và checkTaskInPeriod.
+  const timeWindow = useMemo(() => {
+    if (activeQuickFilter === 'Tuần này') {
+      const r = getMondayToSundayRange(new Date());
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (activeQuickFilter === 'Tuần trước') {
+      const d = new Date();
+      d.setDate(d.getDate() - 7);
+      const r = getMondayToSundayRange(d);
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (activeQuickFilter === 'Tuần tới') {
+      const d = new Date();
+      d.setDate(d.getDate() + 7);
+      const r = getMondayToSundayRange(d);
+      return { start_date: formatYMD(r.monday), end_date: formatYMD(r.sunday) };
+    }
+    if (typeof selectedMonth === 'number') {
+      const cycle = CYCLE_TEMPLATE[selectedMonth];
+      const yr = typeof selectedYear === 'number' ? selectedYear : new Date().getFullYear();
+      if (cycle) {
+        const s = new Date(`${yr + cycle.startYo}-${cycle.startMd}T00:00:00`);
+        const e = new Date(`${yr + cycle.endYo}-${cycle.endMd}T23:59:59`);
+        return { start_date: formatYMD(s), end_date: formatYMD(e) };
+      }
+      const s = new Date(yr, selectedMonth - 1, 1);
+      const e = new Date(yr, selectedMonth, 0);
+      return { start_date: formatYMD(s), end_date: formatYMD(e) };
+    }
+    if (typeof selectedYear === 'number') {
+      return {
+        start_date: `${selectedYear}-01-01`,
+        end_date: `${selectedYear}-12-31`,
+      };
+    }
+    return {} as { start_date?: string; end_date?: string };
+  }, [selectedYear, selectedMonth, activeQuickFilter]);
 
   const [shortlist, setShortlist] = useState<{ id: number; name: string; team?: string | null }[]>([]);
   const isShortlisted = (id: number) => shortlist.some((s) => s.id === id);
@@ -105,15 +199,8 @@ export default function PeopleSkillIntelligence() {
     ]).then(([mem, cmp, tasks, projects, eligible]) => {
       setLoanProjects(Array.isArray(projects) ? projects : []);
       setEligibleMembers(Array.isArray(eligible) ? eligible : []);
-      setMembers(Array.isArray(mem) ? mem : []);
-      const map = new Map<number, number>();
-      if (cmp?.teams) {
-        for (const t of cmp.teams) {
-          for (const m of t.members || []) map.set(m.member_id, m.giao_pct ?? 0);
-        }
-      }
-      setGiaoMap(map);
-      setWorkloadSettings(cmp?.workload_settings || []);
+      setMembers(Array.isArray(mem) ? mem.filter((m: any) => (m.employment_status || 'ON') === 'ON') : []);
+      applyTeamComparison(cmp);
       const taskList = Array.isArray(tasks) ? tasks : [];
       setAllTasks(taskList);
       const projMap = new Map<string, { id: any; name: string }>();
@@ -124,7 +211,43 @@ export default function PeopleSkillIntelligence() {
       }
       setAllProjects(Array.from(projMap.values()));
     }).finally(() => setMembersLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admin]);
+
+  function applyTeamComparison(cmp: any) {
+    const map = new Map<number, number>();
+    const kmap = new Map<number, number>();
+    if (cmp?.teams) {
+      for (const t of cmp.teams) {
+        for (const m of t.members || []) {
+          map.set(m.member_id, m.giao_pct ?? 0);
+          kmap.set(m.member_id, m.kpi ?? 0);
+        }
+      }
+    }
+    setGiaoMap(map);
+    setKpiMap(kmap);
+    setWorkloadSettings(cmp?.workload_settings || []);
+  }
+
+  // KPI Kỳ + Capacity theo kỳ đã chọn — gọi lại ĐÚNG API của Team Load
+  // Section 4 (/system-audit/team-comparison) với cùng start_date/end_date,
+  // không tự tính KPI/capacity ở UI.
+  useEffect(() => {
+    if (!admin) return;
+    getTeamComparison({ start_date: timeWindow.start_date, end_date: timeWindow.end_date })
+      .then((cmp) => applyTeamComparison(cmp))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [admin, timeWindow.start_date, timeWindow.end_date]);
+
+  // Task thuộc kỳ đang chọn — lọc bằng checkTaskInPeriod (cùng semantics
+  // Overview/MemberDetailModal), dùng chung cho mọi cột động để không cột
+  // nào rơi vào cửa sổ ngày khác nhau.
+  const tasksInPeriod = useMemo(
+    () => allTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)),
+    [allTasks, selectedYear, selectedMonth, selectedWeek, activeQuickFilter]
+  );
 
   const openTaskCountByMember = useMemo(() => {
     const map = new Map<number, number>();
@@ -139,12 +262,51 @@ export default function PeopleSkillIntelligence() {
     return map;
   }, [allTasks]);
 
-  // "Dự án hiện tại" — dự án có nhiều task đang mở nhất cho người đó (tie-break
-  // bằng task có start_date gần nhất); "N dự án đang/đã tham gia" — tổng số dự
-  // án khác nhau người đó có task (bất kể trạng thái).
-  const currentProjectByMember = useMemo(() => {
-    const perMember = new Map<number, Map<string, { name: string; openCount: number; latest: string }>>();
-    for (const t of allTasks) {
+  // "Việc đang mở" theo kỳ: Open = mọi trạng thái KHÁC Done; Total = mọi
+  // task được giao (assigned + support) trong kỳ.
+  const periodTaskStatsByMember = useMemo(() => {
+    const map = new Map<number, { open: number; total: number }>();
+    for (const t of tasksInPeriod) {
+      for (const key of [t.assigned_id, t.support_id]) {
+        if (key == null) continue;
+        const mid = Number(key);
+        const s = map.get(mid) || { open: 0, total: 0 };
+        s.total += 1;
+        if ((t.status || '').toLowerCase() !== 'done') s.open += 1;
+        map.set(mid, s);
+      }
+    }
+    return map;
+  }, [tasksInPeriod]);
+
+  // "Skill nổi bật" — cùng logic "PHÂN BỔ THEO SKILL" của MemberDetailModal
+  // (manday desc trên task trong kỳ); rỗng thì fallback skill đã gán ở
+  // Accounts → Quản lý thành viên.
+  const topSkillsByMember = useMemo(() => {
+    const perMember = new Map<number, Map<string, number>>();
+    for (const t of tasksInPeriod) {
+      const name = t.skill_vendor_name;
+      if (!name) continue;
+      for (const key of [t.assigned_id, t.support_id]) {
+        if (key == null) continue;
+        const mid = Number(key);
+        if (!perMember.has(mid)) perMember.set(mid, new Map());
+        const skills = perMember.get(mid)!;
+        skills.set(name, (skills.get(name) || 0) + (t.manday_actual || t.manday_est || 0));
+      }
+    }
+    const result = new Map<number, string[]>();
+    perMember.forEach((skills, mid) => {
+      result.set(mid, Array.from(skills.entries()).sort((a, b) => b[1] - a[1]).map(([n]) => n));
+    });
+    return result;
+  }, [tasksInPeriod]);
+
+  // "Dự án hiện tại" theo kỳ: mọi project có ≥1 task được giao trong kỳ
+  // (kể cả Done), sắp xếp theo số task giảm dần.
+  const periodProjectsByMember = useMemo(() => {
+    const perMember = new Map<number, Map<string, { name: string; count: number }>>();
+    for (const t of tasksInPeriod) {
       if (t.project_id == null) continue;
       for (const key of [t.assigned_id, t.support_id]) {
         if (key == null) continue;
@@ -152,23 +314,18 @@ export default function PeopleSkillIntelligence() {
         if (!perMember.has(mid)) perMember.set(mid, new Map());
         const projMap = perMember.get(mid)!;
         const pkey = String(t.project_id);
-        const status = (t.status || '').toLowerCase();
-        const isOpen = !OPEN_STATUSES_EXCLUDE.has(status);
-        const existing = projMap.get(pkey) || { name: t.projectName || `Project #${t.project_id}`, openCount: 0, latest: '' };
-        if (isOpen) existing.openCount += 1;
-        const d = t.start_date || t.end_date_est || '';
-        if (d > existing.latest) existing.latest = d;
+        const existing = projMap.get(pkey) || { name: t.projectName || `Project #${t.project_id}`, count: 0 };
+        existing.count += 1;
         projMap.set(pkey, existing);
       }
     }
-    const result = new Map<number, { name: string; totalProjects: number }>();
-    Array.from(perMember.entries()).forEach(([mid, projMap]) => {
-      const entries = Array.from(projMap.values());
-      entries.sort((a, b) => (b.openCount - a.openCount) || (b.latest > a.latest ? 1 : -1));
-      result.set(mid, { name: entries[0]?.name || '—', totalProjects: entries.length });
+    const result = new Map<number, { name: string; count: number }[]>();
+    perMember.forEach((projMap, mid) => {
+      result.set(mid, Array.from(projMap.values()).sort((a, b) => b.count - a.count));
     });
     return result;
-  }, [allTasks]);
+  }, [tasksInPeriod]);
+
 
   const [search, setSearch] = useState('');
   const [teamFilter, setTeamFilter] = useState('');
@@ -402,6 +559,60 @@ export default function PeopleSkillIntelligence() {
                   <option value="">Tất cả phòng ban</option>
                   {deptOptions.map((d) => <option key={d} value={d}>{d}</option>)}
                 </select>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-[11px] font-bold text-slate-500 hidden sm:block">Bộ lọc thời gian:</span>
+                  <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg px-2 py-1 shadow-sm text-[11px] font-bold">
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Năm:</span>
+                      <select
+                        value={selectedYear}
+                        onChange={(e) => { setSelectedYear(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
+                        className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                      >
+                        <option value="all">Tất cả</option>
+                        {[...Array(5)].map((_, i) => <option key={i} value={new Date().getFullYear() - 2 + i}>{new Date().getFullYear() - 2 + i}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-px h-4 bg-slate-200 self-center"></div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Tháng:</span>
+                      <select
+                        value={selectedMonth}
+                        onChange={(e) => { setSelectedMonth(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
+                        className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                      >
+                        <option value="all">Tất cả</option>
+                        {[...Array(12)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                      </select>
+                    </div>
+                    <div className="w-px h-4 bg-slate-200 self-center"></div>
+                    <div className="flex items-center gap-1">
+                      <span className="text-slate-500">Tuần:</span>
+                      <select
+                        value={selectedWeek}
+                        onChange={(e) => { setSelectedWeek(e.target.value === 'all' ? 'all' : Number(e.target.value)); setActiveQuickFilter(null); }}
+                        className="bg-transparent border-none text-[#0058be] font-bold focus:outline-none cursor-pointer"
+                      >
+                        <option value="all">Tất cả</option>
+                        {[...Array(5)].map((_, i) => <option key={i + 1} value={i + 1}>{i + 1}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 overflow-x-auto">
+                    {['Tuần trước', 'Tuần này', 'Tuần tới', 'Tháng trước', 'Tháng này', 'Tháng tới'].map(label => (
+                      <button
+                        key={label}
+                        onClick={() => applyQuickFilter(label)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap shadow-sm active:scale-95 ${activeQuickFilter === label
+                          ? 'bg-[#0058be] text-white border border-[#0058be] shadow-md font-black'
+                          : 'bg-white border border-slate-200 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 text-slate-600'
+                          }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <span className="text-[11.5px] text-slate-400 font-semibold ml-auto">{filteredMembers.length} người</span>
               </div>
 
@@ -410,24 +621,90 @@ export default function PeopleSkillIntelligence() {
                   <Loader2 className="w-4 h-4 animate-spin" /> Đang tải...
                 </div>
               ) : (
-                <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+                <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
                   <table className="w-full text-[12.5px]">
                     <thead>
                       <tr className="bg-slate-50 text-slate-400 text-[10px] uppercase font-bold tracking-wider">
                         <th className="text-left px-4 py-2.5">Nhân sự</th>
+                        <th className="text-left px-4 py-2.5">Team</th>
                         <th className="text-left px-4 py-2.5">Skill nổi bật</th>
-                        <th className="text-left px-4 py-2.5">Dự án hiện tại</th>
-                        <th className="text-right px-4 py-2.5">Tải công việc (Giao%)</th>
-                        <th className="text-right px-4 py-2.5">Việc đang mở</th>
-                        <th className="text-right px-4 py-2.5"></th>
+                        <th className="text-left px-4 py-2.5 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">Dự án hiện tại
+                            <FormulaTooltip align="left">
+                              <p className="font-bold text-white/90 mb-1">Dự án hiện tại</p>
+                              <p className="text-white/80 mb-1">Nguồn dữ liệu:</p>
+                              <p className="text-white font-mono">Project có ≥1 Task được giao (assigned + support) cho người này trong kỳ đang chọn</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>Kể cả task đã Done</b> — Done KHÔNG loại project ra khỏi danh sách; mọi task được giao trong kỳ đều tính là tham gia project đó.</li>
+                                <li><b>Kỳ:</b> cùng bộ lọc thời gian đang chọn ở trên (mặc định Tuần này), dùng chung logic <code>checkTaskInPeriod</code> với Overview/Team Load.</li>
+                                <li><b>Thứ tự:</b> project có nhiều task được giao nhất trong kỳ hiển thị trước.</li>
+                              </ul>
+                            </FormulaTooltip>
+                          </span>
+                        </th>
+                        <th className="text-right px-4 py-2.5 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 justify-end">KPI Kỳ
+                            <FormulaTooltip align="right">
+                              <p className="font-bold text-white/90 mb-1">KPI Kỳ</p>
+                              <p className="text-white/80 mb-1">Công thức (đã được Portal tính sẵn):</p>
+                              <p className="text-white font-mono">KPI Kỳ = Σ kpi_assigned + Σ kpi_support (task Done trong kỳ)</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>kpi_assigned / kpi_support:</b> Tính từ <code>utils/kpi_engine.py</code> cho từng task <b>Done</b> (Cancel = 0) có <code>end_date_actual</code> rơi vào kỳ đang chọn.</li>
+                                <li><b>Phạm vi:</b> ĐÚNG giá trị "Total KPI" trên Member Card của Team Load Section 4 (nguồn <code>/system-audit/team-comparison</code>) — không có phép tính KPI thứ hai ở UI.</li>
+                                <li><b>Đây là giá trị KPI, không phải KPI%</b> — theo dõi bộ lọc thời gian đang chọn.</li>
+                              </ul>
+                            </FormulaTooltip>
+                          </span>
+                        </th>
+                        <th className="text-left px-4 py-2.5 w-[160px] whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1">Capacity
+                            <FormulaTooltip align="left">
+                              <p className="font-bold text-white/90 mb-1">Capacity</p>
+                              <p className="text-white/80 mb-1">Công thức (y hệt Team Load Section 4):</p>
+                              <p className="text-white font-mono">Capacity = Giao ÷ Weeks Divisor × 100%</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>Giao:</b> Σ (priority_kpi_base × manday_est) của MỌI task được giao trong kỳ, bất kể trạng thái (Done/Doing/chưa làm) — nguồn <code>/system-audit/team-comparison</code>.</li>
+                                <li><b>Weeks Divisor:</b> số tuần của kỳ lọc — Tuần = 1, Tháng = 4–5 (lịch tài chính), Năm = 52.</li>
+                                <li><b>Phân loại màu:</b> theo Workload Settings (Settings → Workload): {">"}120% Quá tải (đỏ) · 90–120% Bình thường (xanh lá) · 50–90% Còn capacity (xanh dương) · {"<"}50% Không làm việc (xám).</li>
+                              </ul>
+                              <p className="text-white/50 mt-1.5">Dùng Giao% (không phải KPI%) để đánh giá tải, vì Giao tính cả task chưa Done.</p>
+                            </FormulaTooltip>
+                          </span>
+                        </th>
+                        <th className="text-right px-4 py-2.5 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 justify-end">Việc đang mở
+                            <FormulaTooltip align="right">
+                              <p className="font-bold text-white/90 mb-1">Việc đang mở</p>
+                              <p className="text-white/80 mb-1">Công thức:</p>
+                              <p className="text-white font-mono">Open / Total trong kỳ đang chọn</p>
+                              <p className="text-white/60 mt-1.5">Trong đó:</p>
+                              <ul className="text-white/70 list-disc ml-3 mt-0.5 space-y-0.5">
+                                <li><b>Tử số (Open):</b> số task được giao (assigned + support) trong kỳ có trạng thái KHÁC Done.</li>
+                                <li><b>Mẫu số (Total):</b> tổng mọi task được giao trong kỳ, gồm cả task Done.</li>
+                                <li><b>Done → loại khỏi Open;</b> mọi trạng thái còn lại (Waiting, In Process, Block, Overdue, Cancel...) đều tính là đang mở. Không định nghĩa lại trạng thái task.</li>
+                                <li><b>Phạm vi:</b> cả tử số và mẫu số dùng cùng kỳ đang chọn (checkTaskInPeriod — cùng semantics Overview).</li>
+                              </ul>
+                            </FormulaTooltip>
+                          </span>
+                        </th>
+                        <th className="text-right px-4 py-2.5">Shortlist</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredMembers.map((m) => {
                         const giao = giaoMap.get(m.id) ?? 0;
                         const badge = classifyPct(giao, workloadSettings);
-                        const openCount = openTaskCountByMember.get(m.id) || 0;
-                        const proj = currentProjectByMember.get(m.id);
+                        const kpiKy = kpiMap.get(m.id) ?? 0;
+                        const stats = periodTaskStatsByMember.get(m.id) || { open: 0, total: 0 };
+                        const projects = periodProjectsByMember.get(m.id) || [];
+                        const taskSkills = topSkillsByMember.get(m.id) || [];
+                        const skillNames = taskSkills.length > 0
+                          ? taskSkills
+                          : (m.skills || []).slice(0, 3).map((s: any) => s.name);
+                        const barCls = badge.key === 'overload' ? 'bg-rose-500' : badge.key === 'normal' ? 'bg-emerald-500' : badge.key === 'capacity' ? 'bg-[#0058be]' : 'bg-slate-300';
                         return (
                           <tr key={m.id} onClick={() => openMemberProfile(m)} className="border-t border-slate-100 hover:bg-slate-50 cursor-pointer">
                             <td className="px-4 py-2.5">
@@ -435,27 +712,51 @@ export default function PeopleSkillIntelligence() {
                                 <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center justify-center shrink-0">{initials(m.display_name)}</div>
                                 <div>
                                   <div className="font-bold text-slate-800">{m.display_name}</div>
-                                  <div className="text-[11px] text-slate-400">{[m.team, m.department].filter(Boolean).join(' · ')}</div>
+                                  <div className="text-[11px] text-slate-400">{m.department || ''}</div>
                                 </div>
                               </div>
                             </td>
+                            <td className="px-4 py-2.5 text-slate-600 font-semibold whitespace-nowrap">{m.team || '—'}</td>
                             <td className="px-4 py-2.5">
                               <div className="flex flex-wrap gap-1">
-                                {(m.skills || []).slice(0, 3).map((s: any) => (
-                                  <span key={s.id} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{s.name}</span>
+                                {skillNames.slice(0, 3).map((name: string) => (
+                                  <span key={name} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">{name}</span>
                                 ))}
-                                {(m.skills || []).length > 3 && <span className="text-[10px] text-slate-400">+{m.skills.length - 3}</span>}
-                                {(m.skills || []).length === 0 && <span className="text-[11px] text-slate-300">—</span>}
+                                {taskSkills.length > 3 && <span className="text-[10px] text-slate-400">+{taskSkills.length - 3}</span>}
+                                {skillNames.length === 0 && <span className="text-[11px] text-slate-300">—</span>}
                               </div>
                             </td>
                             <td className="px-4 py-2.5">
-                              <div className="font-bold text-slate-800">{proj?.name || '—'}</div>
-                              <div className="text-[11px] text-slate-400">{proj ? `${proj.totalProjects} dự án đang/đã tham gia` : 'Chưa có task'}</div>
+                              {projects.length === 0 ? (
+                                <span className="text-[11px] text-slate-300">—</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-1 max-w-[240px]">
+                                  {projects.slice(0, 2).map((p) => (
+                                    <span key={p.name} className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-50 text-[#0058be] border border-blue-100 truncate max-w-[140px]" title={`${p.name} · ${p.count} task trong kỳ`}>{p.name}</span>
+                                  ))}
+                                  {projects.length > 2 && <span className="text-[10px] text-slate-400 whitespace-nowrap">+{projects.length - 2} dự án</span>}
+                                </div>
+                              )}
                             </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <span className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-full border ${badge.tone}`}>{giao.toFixed(0)}% · {badge.label}</span>
+                            <td className="px-4 py-2.5 text-right font-extrabold text-[#0058be] tabular-nums">{kpiKy.toFixed(1)}</td>
+                            <td className="px-4 py-2.5">
+                              <div className="flex items-center gap-2">
+                                <div className="flex-1 bg-slate-100 rounded-full overflow-hidden h-2 min-w-[60px]">
+                                  <div className={`${barCls} h-2 rounded-full transition-all duration-500`} style={{ width: `${Math.max(0, Math.min(100, giao))}%` }} />
+                                </div>
+                                <span className={`shrink-0 text-[10px] font-bold tabular-nums ${giao > 120 ? 'text-rose-600' : giao >= 90 ? 'text-emerald-600' : 'text-slate-500'}`}>{giao.toFixed(0)}%</span>
+                              </div>
+                              <span className={`inline-block mt-1 text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${badge.tone}`}>{badge.label}</span>
                             </td>
-                            <td className="px-4 py-2.5 text-right font-bold text-slate-700">{openCount === 0 ? <span className="text-emerald-600">Rảnh</span> : openCount}</td>
+                            <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                              {stats.total === 0 ? (
+                                <span className="text-[11px] text-slate-300">—</span>
+                              ) : (
+                                <span className="font-bold text-slate-700">{stats.open}/{stats.total}
+                                  <span className="ml-1 font-semibold text-[10.5px] text-slate-400">{stats.open === 0 ? '— Done hết' : '— In process'}</span>
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-2.5 text-right">
                               <button
                                 onClick={(e) => { e.stopPropagation(); toggleShortlist({ id: m.id, name: m.display_name, team: m.team }); }}
@@ -470,7 +771,7 @@ export default function PeopleSkillIntelligence() {
                         );
                       })}
                       {filteredMembers.length === 0 && (
-                        <tr><td colSpan={6} className="text-center py-12 text-slate-400">Không tìm thấy nhân sự phù hợp.</td></tr>
+                        <tr><td colSpan={8} className="text-center py-12 text-slate-400">Không tìm thấy nhân sự phù hợp.</td></tr>
                       )}
                     </tbody>
                   </table>
