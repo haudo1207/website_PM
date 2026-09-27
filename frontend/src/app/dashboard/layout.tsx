@@ -7,7 +7,7 @@ import { ReactNode, useEffect, useState } from 'react';
 import { isSuperAdmin, isLeader, isMember, isViewer } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 
-type Tab = 'report' | 'overview' | 'calendar' | 'system-audit' | 'kpi-matrix' | 'team-load';
+type Tab = 'report' | 'overview' | 'calendar' | 'system-audit' | 'kpi-matrix' | 'team-load' | 'people-skill';
 
 const ALL_TABS: { id: Tab; label: string; path: string }[] = [
   { id: 'overview',     label: 'Overview',     path: '/dashboard/overview' },
@@ -16,6 +16,7 @@ const ALL_TABS: { id: Tab; label: string; path: string }[] = [
   { id: 'system-audit', label: 'System Audit', path: '/dashboard/system-audit' },
   { id: 'kpi-matrix',   label: 'KPI Matrix',   path: '/dashboard/kpi-matrix' },
   { id: 'team-load',    label: 'Team Load',    path: '/dashboard/team-load' },
+  { id: 'people-skill', label: 'People & Skill', path: '/dashboard/people-skill' },
 ];
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
@@ -54,12 +55,19 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     // multi-team project comparison is a governance / cross-team view
     // with no meaning for them.
     const canTeamLoad = isSuperAdmin() || isLeader();
+    // People & Skill: Hồ sơ nhân sự / Skill Directory bên trong tab này chỉ
+    // Super Admin/Leader thấy (component tự lọc), nhưng Member vẫn cần vào
+    // được tab để xem/trả lời yêu cầu "Project Skill" (mượn người) liên
+    // quan tới chính họ. Chỉ Viewer (read-only, không thuộc team nào) bị
+    // loại hẳn.
+    const canPeopleSkill = !isViewer();
 
     const filtered = ALL_TABS.filter(t => {
       if (t.id === 'system-audit') return canAudit;
       if (t.id === 'overview') return canOverview;
       if (t.id === 'kpi-matrix') return canKpiMatrix;
       if (t.id === 'team-load') return canTeamLoad;
+      if (t.id === 'people-skill') return canPeopleSkill;
       // 'calendar' deliberately has NO role gate here — every logged-in
       // role can open the tab. That is route access only; the actual data
       // returned by GET /api/calendar/tasks is independently locked to
@@ -91,6 +99,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     if (pathname.includes('/team-load') && !canTeamLoad) {
       router.replace('/dashboard/report');
     }
+    if (pathname.includes('/people-skill') && !canPeopleSkill) {
+      router.replace('/dashboard/report');
+    }
   }, [pathname, router]);
 
   let activeTab: Tab = 'report';
@@ -104,6 +115,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     activeTab = 'kpi-matrix';
   } else if (pathname === '/dashboard/team-load') {
     activeTab = 'team-load';
+  } else if (pathname === '/dashboard/people-skill') {
+    activeTab = 'people-skill';
   } else {
     activeTab = 'report';
   }
@@ -115,6 +128,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
     'system-audit': 'Dashboard kiểm toán hệ thống dành cho Super Admin & Leader (giới hạn theo Workspace được giao)',
     'kpi-matrix':   'Ma trận KPI thành viên theo tháng dành cho Super Admin & Leader',
     'team-load':    'So sánh Project theo nhiều Team — Super Admin & Leader (giới hạn theo Workspace được giao)',
+    'people-skill': 'Tìm người theo Skill, xem hồ sơ 360 và mượn/trả người giữa các dự án',
   };
 
   const currentDateStr = new Date().toLocaleDateString('vi-VN', { month: 'numeric', year: 'numeric' });
