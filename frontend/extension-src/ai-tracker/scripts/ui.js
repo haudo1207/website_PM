@@ -101,6 +101,10 @@ YÊU CẦU:
 - Không suy đoán.
 - Ưu tiên các quyết định, kết quả, lỗi đang gặp và bước tiếp theo.
 - Nếu thiếu dữ liệu thì ghi "Chưa xác định".
+- Viết ngắn gọn, đúng trọng tâm — mỗi gạch đầu dòng 1 ý, không viết
+  thành đoạn văn dài, không lặp lại ý đã nói ở mục khác, không thêm câu
+  mở đầu/kết thúc thừa. Vẫn giữ đủ 8 mục bên dưới, nhưng nội dung mỗi
+  mục phải cô đọng, không lan man.
 
 CHỈ TRẢ VỀ DUY NHẤT MỘT MARKDOWN CODE BLOCK:
 \`\`\`markdown
@@ -1086,25 +1090,6 @@ function injectWidget(toolName) {
               </div>
             </div>
 
-            <div class="card card-grow">
-              <div class="card-head">
-                <div class="card-title">📁 Chọn nhanh dự án</div>
-                <div class="count" id="markee-skillProjectCount">0 dự án</div>
-              </div>
-              <div class="project-control-row skill-project-control-row">
-                <button class="filter fav" data-filter="favorite" type="button">⭐ Ưu thích</button>
-                <button class="filter all active" data-filter="all" type="button">📁 Tất cả</button>
-                <button class="filter recent" data-filter="recent" type="button">🕒 Gần đây</button>
-
-                <div class="search-wrap">
-                  <span class="search-ico">🔍</span>
-                  <input class="search" id="markee-skillProjectSearch" placeholder="Tìm dự án...">
-                </div>
-              </div>
-
-              <div class="project-list" id="markee-skillProjectList"></div>
-            </div>
-
             <div class="card">
               <div class="card-head">
                 <div class="card-title">⚡ Kỹ năng phù hợp</div>
@@ -1699,7 +1684,6 @@ function injectWidget(toolName) {
     updateModeVisibility();
     if (isSkills) {
       refreshSkinSkillsPanel();
-      refreshSkinSkillProjectList();
     } else {
       refreshSkinProjectList();
     }
@@ -2130,130 +2114,6 @@ function injectWidget(toolName) {
   let skinSkillProjectId = null;
   let skinSkillsInitDone = false;
 
-  // "Chọn nhanh dự án" cho panel Kỹ năng — bản sao của refreshSkinProjectList()
-  // bên Tóm tắt (per yêu cầu: Kỹ năng cũng cần có chọn nhanh giống vậy).
-  // Chọn 1 dự án ở đây set CẢ HAI: state global (SET_SELECTED_PROJECT, cái
-  // "Lệnh Kỹ năng"/getSelectedProjectAsync() đọc) LẪN scope "📁 Khách hàng
-  // & Dự án" ở card phía trên (cái scanAndSave() đọc lúc Lưu Kỹ năng) — để
-  // 2 nơi không lệch nhau như trước (chọn 1 dự án ở đây, "Lệnh Kỹ năng" lại
-  // hiện dự án khác).
-  let skinSkillProjectFilter = "all";
-  let skinSkillProjectFilterInitDone = false;
-  function refreshSkinSkillProjectList() {
-    const listEl = document.getElementById("markee-skillProjectList");
-    const countEl = document.getElementById("markee-skillProjectCount");
-    const searchEl = document.getElementById("markee-skillProjectSearch");
-    if (!listEl) return;
-    if (!skinSkillProjectFilterInitDone) {
-      skinSkillProjectFilterInitDone = true;
-      const controlRow = listEl.parentElement ? listEl.parentElement.querySelector(".skill-project-control-row") : null;
-      if (controlRow) {
-        controlRow.querySelectorAll(".filter").forEach((btn) => {
-          btn.addEventListener("click", () => {
-            controlRow.querySelectorAll(".filter").forEach((b) => b.classList.remove("active"));
-            btn.classList.add("active");
-            skinSkillProjectFilter = btn.dataset.filter;
-            refreshSkinSkillProjectList();
-          });
-        });
-      }
-      if (searchEl) searchEl.addEventListener("input", () => refreshSkinSkillProjectList());
-    }
-
-    chrome.runtime.sendMessage({ action: "GET_FAVORITE_PROJECTS" }, (resFav) => {
-      const favoriteProjects = resFav && Array.isArray(resFav.projects) ? resFav.projects : [];
-      const favIds = new Set(favoriteProjects.map((p) => Number(p.id)));
-      chrome.runtime.sendMessage({ action: "GET_PROJECTS" }, (resAll) => {
-        const allProjects = resAll && Array.isArray(resAll.projects) ? resAll.projects : [];
-        chrome.storage.local.get(["markee_recent_project_ids"], (stored) => {
-          const recentIds = stored && Array.isArray(stored.markee_recent_project_ids) ? stored.markee_recent_project_ids.map(Number) : [];
-          let base = allProjects;
-          if (skinSkillProjectFilter === "favorite") base = favoriteProjects;
-          else if (skinSkillProjectFilter === "recent") {
-            const recentSet = new Set(recentIds);
-            base = allProjects.filter((p) => recentSet.has(Number(p.id)));
-          }
-          const keyword = searchEl ? searchEl.value.trim().toLowerCase() : "";
-          const filtered = base.filter((p) => !keyword || (p.name || "").toLowerCase().includes(keyword));
-          if (countEl) countEl.textContent = `${filtered.length} dự án`;
-          const currentSelectedId = skinSkillScope === "project" && skinSkillProjectId ? String(skinSkillProjectId) : null;
-
-          listEl.innerHTML = "";
-          if (filtered.length === 0) {
-            listEl.innerHTML = `<div style="font-size:10px;color:#64748b;text-align:center;padding:12px 0;">Không có dự án nào</div>`;
-            return;
-          }
-          filtered.forEach((p) => {
-            const custName = p.customer_name || (p.customer && p.customer.name) || "";
-            const isSelected = currentSelectedId === String(p.id);
-            const isFav = favIds.has(Number(p.id));
-            const row = document.createElement("div");
-            row.className = "item" + (isSelected ? " selected" : "");
-            row.dataset.project = p.id;
-            row.innerHTML = `
-              <div class="item-icon">📁</div>
-              <div class="item-main"><div class="item-title">${p.name}${custName ? ` <span style="color:#8f9abb;font-weight:700">(${custName})</span>` : ""}</div></div>
-              <div class="star${isFav ? " active" : ""}">${isFav ? "⭐" : "☆"}</div>
-            `;
-            const starEl = row.querySelector(".star");
-            if (starEl) {
-              starEl.onclick = (e) => {
-                e.stopPropagation();
-                chrome.runtime.sendMessage({ action: "TOGGLE_FAVORITE_PROJECT", projectId: p.id, userEmail: currentUser }, (response) => {
-                  if (response && response.success) refreshSkinSkillProjectList();
-                });
-              };
-            }
-            row.onclick = () => {
-              const newRecent = [p.id, ...recentIds.filter((id) => Number(id) !== Number(p.id))].slice(0, 10);
-              chrome.storage.local.set({ markee_recent_project_ids: newRecent });
-              chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: p.id, projectName: p.name });
-
-              // Đồng bộ luôn vào scope "📁 Khách hàng & Dự án" phía trên —
-              // chuyển tab scope sang "project" và set đúng dự án vừa chọn.
-              skinSkillScope = "project";
-              skinSkillProjectId = p.id;
-              const scopeSwitchEl = document.querySelector("#markee-skillsPanel .scope-switch");
-              if (scopeSwitchEl) {
-                scopeSwitchEl.querySelectorAll(".scope-tab").forEach((t) => t.classList.toggle("active", t.dataset.scope === "project"));
-              }
-              const orgFields = document.getElementById("markee-orgScopeFields");
-              const projFields = document.getElementById("markee-projectScopeFields");
-              if (orgFields) orgFields.classList.add("scope-hidden");
-              if (projFields) projFields.classList.remove("scope-hidden");
-
-              const custSel = document.getElementById("markee-skillCustomer");
-              const projSel = document.getElementById("markee-skillProject");
-              if (custSel && custName) {
-                if (Array.from(custSel.options).every((o) => o.value !== custName)) {
-                  const opt = document.createElement("option");
-                  opt.value = custName;
-                  opt.textContent = custName;
-                  custSel.appendChild(opt);
-                }
-                custSel.value = custName;
-                skinSkillCustomerId = custName;
-                if (projSel) {
-                  projSel.disabled = false;
-                  chrome.runtime.sendMessage({ action: "GET_PROJECTS_BY_CUSTOMER", customerId: custName }, (res) => {
-                    const projects = res && Array.isArray(res.projects) ? res.projects : [];
-                    projSel.innerHTML = `<option value="">-- Tất cả --</option>` + projects.map((pp) => `<option value="${pp.id}">${pp.name}</option>`).join("");
-                    projSel.value = String(p.id);
-                  });
-                }
-              }
-
-              showToast(`⚡ Đã chọn dự án: ${p.name}`);
-              refreshSkinSkillProjectList();
-              refreshSkinSkillsPanel();
-            };
-            listEl.appendChild(row);
-          });
-        });
-      });
-    });
-  }
-
   function refreshSkinSkillsPanel() {
     const scopeCountEl = document.getElementById("markee-skillScopeCount");
     const listEl = document.getElementById("markee-skillListVisible");
@@ -2326,16 +2186,14 @@ function injectWidget(toolName) {
       if (projSel) {
         projSel.addEventListener("change", () => {
           skinSkillProjectId = projSel.value || null;
-          // Chọn dự án qua cascade dropdown này (thay vì qua "Chọn nhanh dự
-          // án") cũng phải cập nhật state global — nếu không, "Lệnh Kỹ
-          // năng" (đọc getSelectedProjectAsync()) lại hiện dự án khác với
-          // cái vừa chọn ở đây.
+          // Chọn dự án qua cascade dropdown này cũng phải cập nhật state
+          // global — nếu không, "Lệnh Kỹ năng" (đọc getSelectedProjectAsync())
+          // lại hiện dự án khác với cái vừa chọn ở đây.
           if (skinSkillProjectId) {
             const projName = projSel.options[projSel.selectedIndex] ? projSel.options[projSel.selectedIndex].textContent : "";
             chrome.runtime.sendMessage({ action: "SET_SELECTED_PROJECT", projectId: Number(skinSkillProjectId), projectName: projName });
           }
           refreshSkinSkillsPanel();
-          refreshSkinSkillProjectList();
         });
       }
 
