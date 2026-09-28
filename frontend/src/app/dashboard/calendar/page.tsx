@@ -120,8 +120,14 @@ export default function CalendarPage() {
             const emailKey = String(m.leader_email || '').trim().toLowerCase();
             return (!!nameKey && leaderNames.has(nameKey)) || (!!emailKey && leaderEmails.has(emailKey));
           };
+          // Member Management ("Quản lý thành viên" Accounts tab) status is
+          // the authoritative ON/OFF source: only status=ON members are
+          // eligible for the Leader dropdown. Recomputed per load, so an
+          // ON→OFF flip removes the member after the next data refresh.
+          const isStatusOn = (m: any): boolean =>
+            String(m.employment_status || 'ON').trim().toUpperCase() === 'ON';
           const team = list
-            .filter((m: any) => m.id !== mid && isManaged(m))
+            .filter((m: any) => m.id !== mid && isManaged(m) && isStatusOn(m))
             .map((m: any) => ({ id: m.id, name: m.full_name || m.display_name || `Member ${m.id}` }))
             .sort((a, b) => a.name.localeCompare(b.name, 'vi'));
           setMyTeam(team);
