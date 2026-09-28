@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical, getMe } from '@/lib/api';
 import { isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -119,6 +119,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const canManage = isAdmin();
   const canManageCritical = isSuperAdmin();
   const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
+  // Own member_id — used below to keep a project I'm assigned to (any role:
+  // PM/Leader/Sales/plain Member) visible regardless of the Workspace tab,
+  // mirroring the backend's own membership-overrides-Workspace rule
+  // (project_members override in _apply_workspace_scope()/get_sidebar_tree()).
+  // Matched by member_id, not email — Member.email is optional and often
+  // blank on real member records, which would silently break this exact
+  // escape hatch for anyone without one on file.
+  const { data: me } = useQuery({ queryKey: ['me-project-list'], queryFn: getMe, staleTime: 5 * 60_000 });
+  const myMemberId = me?.member_id ?? null;
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState(ctxWorkspaceCode || 'All');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -370,7 +379,13 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
       const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
+      const isAssignedToMe = myMemberId != null && [
+        ...(Array.isArray(p.member_ids) ? p.member_ids : []),
+        ...(Array.isArray(p.pm_ids) ? p.pm_ids : []),
+        ...(Array.isArray(p.sales_ids) ? p.sales_ids : []),
+        ...(Array.isArray(p.technical_leader_ids) ? p.technical_leader_ids : []),
+      ].some((id: any) => Number(id) === Number(myMemberId));
+      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -394,7 +409,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchCritical = !criticalOnly || p.is_critical === true;
       return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly, wsNameByCode]);
+  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly, wsNameByCode, myMemberId]);
 
   // Sort memoized — pinned projects always float to the top; the chosen
   // sortBy comparator only breaks ties within each (pinned / unpinned) group.
