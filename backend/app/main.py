@@ -1014,6 +1014,46 @@ def apply_schema_updates():
             "ALTER TABLE members ADD COLUMN IF NOT EXISTS off_effective_at TIMESTAMP NULL"
         ))
 
+        # ── Project Skill: borrowing period dates + decided_by tracking ──
+        conn.execute(text(
+            "ALTER TABLE member_loan_requests ADD COLUMN IF NOT EXISTS start_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE member_loan_requests ADD COLUMN IF NOT EXISTS end_date DATE"
+        ))
+        conn.execute(text(
+            "ALTER TABLE member_loan_requests ADD COLUMN IF NOT EXISTS decided_by_user_id INTEGER"
+        ))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1
+                    FROM pg_constraint
+                    WHERE conname = 'member_loan_requests_decided_by_user_id_fkey'
+                      AND conrelid = 'member_loan_requests'::regclass
+                ) THEN
+                    ALTER TABLE member_loan_requests
+                    ADD CONSTRAINT member_loan_requests_decided_by_user_id_fkey
+                    FOREIGN KEY (decided_by_user_id) REFERENCES users(id)
+                    ON DELETE SET NULL;
+                END IF;
+            END $$
+        """))
+
+        # ── Project Skill: per-user consideration list ──
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS member_considerations (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                CONSTRAINT uq_user_member_consideration UNIQUE (user_id, member_id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_considerations_user_id ON member_considerations (user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_considerations_member_id ON member_considerations (member_id)"))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User
