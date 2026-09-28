@@ -1042,12 +1042,21 @@ export default function OverviewTab() {
 
     const memberCardSource = (() => {
       if (!showsMemberCards || !leaderDisplayName) return [];
+      // Member Management ("Quản lý thành viên") status is the authoritative
+      // source: an OFF member is never eligible for the Leader member-card
+      // bar, regardless of period. The pre-existing period-aware
+      // isMemberActiveInPeriod filter (historical-KPI protection for legacy
+      // OFF rows) is kept as-is on top of this — this only ADDS the
+      // status=ON condition, it changes no relationship/KPI logic.
+      const isStatusOn = (m: any): boolean =>
+        String(m.employment_status || 'ON').trim().toUpperCase() === 'ON';
       const selTrim = leaderDisplayName.trim().toLowerCase();
       const selLeader = visibleLeaders.find((ld: any) => String(ld.name).trim().toLowerCase() === selTrim);
       const selMid = selLeader?.member_id != null ? String(selLeader.member_id) : null;
       if (selMid) {
         return rawMembers.filter((m: any) => {
           if (String(m.id) === selMid) return false; // the Leader themself is never their own "member" card
+          if (!isStatusOn(m)) return false;
           // Period-aware OFF filter (see isMemberActiveInPeriod above).
           if (!isMemberActiveInPeriod(m, periodEndForActiveFilter)) return false;
           const lmId = m.leader_member_id != null ? String(m.leader_member_id) : null;
@@ -1060,7 +1069,8 @@ export default function OverviewTab() {
           return false;
         });
       }
-      return rawMembers.filter((m: any) => String(m.leader_name || '').trim().toLowerCase() === selTrim
+      return rawMembers.filter((m: any) => isStatusOn(m)
+        && String(m.leader_name || '').trim().toLowerCase() === selTrim
         && isMemberActiveInPeriod(m, periodEndForActiveFilter));
     })();
     const memberCardsList = memberCardSource.map(m => {
