@@ -3,7 +3,7 @@ import { useEffect, useState, useMemo, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
-import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical, getMe } from '@/lib/api';
+import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical } from '@/lib/api';
 import { isAdmin, isSuperAdmin } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -119,15 +119,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const canManage = isAdmin();
   const canManageCritical = isSuperAdmin();
   const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
-  // Own member_id — used below to keep a project I'm assigned to (any role:
-  // PM/Leader/Sales/plain Member) visible regardless of the Workspace tab,
-  // mirroring the backend's own membership-overrides-Workspace rule
-  // (project_members override in _apply_workspace_scope()/get_sidebar_tree()).
-  // Matched by member_id, not email — Member.email is optional and often
-  // blank on real member records, which would silently break this exact
-  // escape hatch for anyone without one on file.
-  const { data: me } = useQuery({ queryKey: ['me-project-list'], queryFn: getMe, staleTime: 5 * 60_000 });
-  const myMemberId = me?.member_id ?? null;
   const [search, setSearch] = useState('');
   const [businessFilter, setBusinessFilter] = useState(ctxWorkspaceCode || 'All');
   const [phaseFilter, setPhaseFilter] = useState('All');
@@ -366,26 +357,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     if (yearFilter !== 'All' && !uniqueYears.map(String).includes(yearFilter)) setYearFilter('All');
   }, [customerFilter, pmFilter, salesFilter, memberFilter, yearFilter, uniqueCustomers, uniquePms, uniqueSales, uniqueMembers, uniqueYears]);
 
-  // Workspace code → display name map from the Workspace Master
-  const wsNameByCode = useMemo(() => {
-    const m = new Map<string, string>();
-    (workspaces || []).forEach(w => m.set(w.code, w.name));
-    return m;
-  }, [workspaces]);
-
-  // Filter memoized
+  // Filter memoized. No Workspace check here — the API call above is already
+  // scoped to selectedWorkspace by the backend (_apply_workspace_scope), which
+  // owns the Workspace-tab rule incl. the assigned-project override. A second
+  // client-side Workspace filter only drifts from it and hides projects the
+  // backend correctly returned (e.g. a Leader's team-assigned project).
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
-      const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      const isAssignedToMe = myMemberId != null && [
-        ...(Array.isArray(p.member_ids) ? p.member_ids : []),
-        ...(Array.isArray(p.pm_ids) ? p.pm_ids : []),
-        ...(Array.isArray(p.sales_ids) ? p.sales_ids : []),
-        ...(Array.isArray(p.technical_leader_ids) ? p.technical_leader_ids : []),
-      ].some((id: any) => Number(id) === Number(myMemberId));
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase() || (p.business && p.business.toLowerCase() === 'all') || isAssignedToMe;
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -407,9 +387,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       const matchOverdue = !overdueOnly || (p.warning_task_count || 0) > 0;
       const matchCritical = !criticalOnly || p.is_critical === true;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
+      return matchSearch && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly, wsNameByCode, myMemberId]);
+  }, [projects, search, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly]);
 
   // Sort memoized — pinned projects always float to the top; the chosen
   // sortBy comparator only breaks ties within each (pinned / unpinned) group.
@@ -756,6 +736,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                     </div>
                     <div className="flex items-center gap-1.5 mb-0.5">
                       {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
+                      {p.is_external && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200" title="Dự án thuộc Workspace khác — hiện ở đây vì bạn hoặc team được gán vào">Tham gia ngoài</span>}
                       <h3 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                       {p.business && (
                         <span className="shrink-0 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200" title={`Dự án thuộc Workspace ${p.business}`}>
@@ -859,6 +840,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                           <div className="flex items-center gap-1.5">
                             <span className="text-[13px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors truncate" title={p.name}>{p.name}</span>
                             {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
+                            {p.is_external && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200" title="Dự án thuộc Workspace khác — hiện ở đây vì bạn hoặc team được gán vào">Tham gia ngoài</span>}
                             {p.business && (
                               <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200">{p.business}</span>
                             )}
