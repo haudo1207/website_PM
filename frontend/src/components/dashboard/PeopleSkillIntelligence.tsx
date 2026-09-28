@@ -255,7 +255,7 @@ export default function PeopleSkillIntelligence() {
       getMembers({ light: true }).catch(() => []),
       getTeamComparisonTasks().catch(() => []),
       getProjects().catch(() => []),
-      getEligibleLoanMembers(true).catch(() => []),
+      getEligibleLoanMembers().catch(() => []),
       getDepartments().catch(() => []),
     ]).then(([mem, tasks, projects, eligible, departments]) => {
       setLoanProjects(Array.isArray(projects) ? projects : []);
@@ -1324,14 +1324,14 @@ export default function PeopleSkillIntelligence() {
           projects={allProjects}
           onClose={() => setSelectedMemberModal(null)}
           onNavigate={(projectId) => { setSelectedMemberModal(null); window.location.href = `/project/detail/overview?id=${projectId}`; }}
-          selectedYear="all"
-          selectedMonth="all"
-          selectedWeek="all"
-          activeQuickFilter={null}
-          onApplyQuickFilter={() => {}}
-          onYearChange={() => {}}
-          onMonthChange={() => {}}
-          onWeekChange={() => {}}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          selectedWeek={selectedWeek}
+          activeQuickFilter={activeQuickFilter}
+          onApplyQuickFilter={applyQuickFilter}
+          onYearChange={(v) => { setSelectedYear(v); setActiveQuickFilter(null); }}
+          onMonthChange={(v) => { setSelectedMonth(v); setActiveQuickFilter(null); }}
+          onWeekChange={(v) => { setSelectedWeek(v); setActiveQuickFilter(null); }}
         />
       )}
     </div>
