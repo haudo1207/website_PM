@@ -501,39 +501,38 @@ export default function CalendarPage() {
                 </select>
               </div>
             )}
-            {/* Leader horizontal member filter — ALL | <members> | CỦA TÔI.
-                Sits in the same scope-row slot as (never replacing) the Super
-                Admin Team select below CalendarToolbar. */}
+            {/* Leader member filter — presentation-only pass (2026-09): the
+                ALL + per-member button chips collapse into ONE dropdown
+                (styled like the Super Admin Team select above); CỦA TÔI
+                stays as its own control outside the dropdown. Selection
+                semantics are unchanged: the select still drives the same
+                leaderScope state ('ALL' | member id) and scopeParams /
+                backend authorization are untouched. The hidden "MINE"
+                option exists only so the select has a display value while
+                CỦA TÔI is active (re-picking ALL then still fires
+                onChange); it is never selectable and onChange never
+                produces 'MINE'.
+                Sits in the same scope-row slot as (never replacing) the
+                Super Admin Team select below CalendarToolbar. */}
             {currentUserRole === 'leader' && myMemberId != null && (
-              <div className="flex items-center gap-1.5 px-4 py-2 border-b border-slate-100 bg-slate-50/50 overflow-x-auto shrink-0">
+              <div className="flex items-center gap-2 px-4 py-2 border-b border-slate-100 bg-slate-50/50 shrink-0">
                 <span className="text-[11px] font-semibold text-slate-500 shrink-0">Thành viên</span>
                 {myTeam.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => setLeaderScope('ALL')}
-                    className={`h-8 shrink-0 text-[12px] font-semibold px-3 rounded-lg border transition-colors ${
-                      leaderScope === 'ALL'
-                        ? 'bg-[#0058be] text-white border-[#0058be]'
-                        : 'bg-white text-[#0b1c30] border-slate-200 hover:bg-slate-50'
-                    }`}
+                  <select
+                    value={leaderScope === 'MINE' ? 'MINE' : String(leaderScope)}
+                    onChange={e => {
+                      const val = e.target.value;
+                      setLeaderScope(val === 'ALL' ? 'ALL' : Number(val));
+                    }}
+                    className="h-8 max-w-[220px] text-[12px] font-semibold text-[#0b1c30] border border-slate-200 bg-white px-2 rounded-lg outline-none focus:border-[#0058be]"
                   >
-                    ALL
-                  </button>
+                    <option value="MINE" hidden>CỦA TÔI</option>
+                    <option value="ALL">ALL</option>
+                    {myTeam.map(m => (
+                      <option key={m.id} value={m.id}>{m.name}</option>
+                    ))}
+                  </select>
                 )}
-                {myTeam.map(m => (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => setLeaderScope(m.id)}
-                    className={`h-8 shrink-0 text-[12px] font-semibold px-3 rounded-lg border transition-colors ${
-                      leaderScope === m.id
-                        ? 'bg-[#0058be] text-white border-[#0058be]'
-                        : 'bg-white text-[#0b1c30] border-slate-200 hover:bg-slate-50'
-                    }`}
-                  >
-                    {m.name}
-                  </button>
-                ))}
                 <button
                   type="button"
                   onClick={() => setLeaderScope('MINE')}
