@@ -30,7 +30,10 @@ from ..utils.access import (
     get_workspaces,
     is_valid_scope,
     preload_workspace_maps,
+    primary_workspace_code_for_user,
+    project_belongs_to_workspace,
     resolve_workspace,
+    user_allowed_scopes,
     valid_data_scopes,
     ROLE_SUPER_ADMIN,
     ROLE_LEADER,
@@ -183,7 +186,7 @@ def serialize_project(p, db):
     }
 
 
-def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None, progress_map=None):
+def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_members, by_code=None, by_name=None, progress_map=None, is_external=False):
     """Serialize a project using list-level data loaded in a few batch queries.
 
     progress_map (Issue 3) — optional pre-loaded name→Project Progress map
@@ -227,6 +230,9 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
         "business": business_label_for_project(db, p, by_code, by_name),
         "business_unit": business_unit_for_project(db, p, by_code, by_name),
         "year": p.year,
+        # Assigned project from a Workspace the caller doesn't hold — see
+        # _external_assigned_project_ids(). FE shows a "Tham gia ngoài" badge.
+        "is_external": is_external,
         "is_critical": bool(p.is_critical),
         "critical_updated_at": str(p.critical_updated_at) if p.critical_updated_at else None,
         "critical_updated_by": p.critical_updated_by,
@@ -271,44 +277,94 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
     }
 
 
+def _assigned_project_ids_for_override(db: Session, current_user):
+    """Project IDs the caller is explicitly assigned to via project_members —
+    for a Leader this also covers their WHOLE TEAM's assignments, not just
+    their own member_id, mirroring project_query_for_user()'s own Leader
+    branch (a project stays visible there if ANY direct report is in
+    project_members for it, not only the Leader themself).
+
+    Feeds _external_assigned_project_ids(), the membership override that
+    keeps an assigned project from a Workspace the caller doesn't hold from
+    disappearing — mirrors the membership-overrides-Workspace rule in
+    access.py's can_access_project. (This override was once accidentally
+    dropped by 9f044ab, and get_sidebar_tree() never had it; both now go
+    through _apply_workspace_scope() so they can't drift apart again.)"""
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return None
+    role = getattr(current_user, "role", ROLE_MEMBER)
+    member_ids = [member_id]
+    if role == ROLE_LEADER:
+        member_ids.extend(
+            mid for (mid,) in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
+        )
+    return db.query(project_members.c.project_id).filter(project_members.c.member_id.in_(member_ids))
+
+
+def _workspace_match_filters(db: Session, scopes):
+    """OR-conditions for "this project belongs to one of *scopes*" (lowercase
+    Workspace codes). Reuses the shared project_belongs_to_workspace() matcher
+    instead of a second, hand-rolled filter list — the two had drifted apart
+    (a project whose `business` holds a raw scope code, e.g. "infra", fell
+    through every branch of the old list and silently disappeared) — plus the
+    legacy Customer.business_unit fallback for projects with no `business`."""
+    filters = list(project_belongs_to_workspace(db, scopes))
+    filters.append(and_(Project.business.is_(None), Project.customer.has(Customer.business_unit.in_(scopes))))
+    return filters
+
+
+def _external_assigned_project_ids(db: Session, current_user):
+    """Subquery of projects the caller (or their whole team, if Leader) is
+    assigned to that belong to NONE of the Workspaces the caller holds — the
+    only projects that need the membership override, since the caller has no
+    Workspace tab of their own to find them under. None when not applicable
+    (no linked member, or the caller already sees every Workspace).
+
+    Assigned projects inside a Workspace the caller does hold are NOT
+    included: they show under that Workspace's own tab only, so a Phụ
+    Workspace tab lists just that Workspace's projects instead of every
+    assigned project across all Workspaces."""
+    assigned = _assigned_project_ids_for_override(db, current_user)
+    if assigned is None:
+        return None
+    scopes = user_allowed_scopes(db, current_user)
+    if scopes == ALL_SCOPE:
+        return None
+    # coalesce: a NULL data_scope/business makes the OR NULL, and NOT NULL
+    # would silently drop the project from both its tab and this override.
+    in_own_ws = sql_func.coalesce(or_(*_workspace_match_filters(db, scopes)), False)
+    return db.query(Project.id).filter(Project.id.in_(assigned), ~in_own_ws)
+
+
 def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional[str]):
     """Narrow an already project_query_for_user()-filtered Project query to
     one specific Workspace — factored out of list_projects() (chốt
     2026-09-22, feature 010's "no project selected -> scope to current
     Workspace" fallback also needs this exact rule; keeping it in one place
     stops the two from drifting apart). Falsy/"all" business_unit means no
-    narrowing — every accessible project across every Workspace."""
+    narrowing — every accessible project across every Workspace.
+
+    Each project shows under exactly one tab: its own Workspace's. The one
+    exception is an assigned project from a Workspace the caller doesn't
+    hold (_external_assigned_project_ids) — it shows under the caller's
+    Chính Workspace tab, flagged is_external by list_projects()."""
     target_b = (business_unit or "").strip().lower()
     if not target_b or target_b == "all":
         return q
-    # A project the caller is explicitly assigned to (project_members) always
-    # stays visible under the current Workspace tab, even when its own
-    # business/data_scope belongs to a different Workspace — mirrors the
-    # membership-overrides-Workspace rule in access.py's can_access_project.
-    # (Regression fix: this override was accidentally dropped by 9f044ab
-    # "feat(projects): add scoped metrics and manday progress" while that
-    # commit was refactoring this function for unrelated manday/KPI metrics —
-    # restored verbatim.)
-    member_id = getattr(current_user, "member_id", None)
-    assigned_project_ids = (
-        db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
-        if member_id else None
-    )
     ws = resolve_workspace(db, target_b)
-    if ws:
-        b_val = ws.name
-        filters = [
-            Project.business == b_val,
-            Project.business == "All",
-            and_(Project.business.is_(None), Project.data_scope == target_b),
-            and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
-        ]
-        if assigned_project_ids is not None:
-            filters.append(Project.id.in_(assigned_project_ids))
-        return q.filter(or_(*filters))
-    if assigned_project_ids is not None:
-        return q.filter(Project.id.in_(assigned_project_ids))
-    return q.filter(Project.id == -1)
+    if not ws:
+        external_ids = _external_assigned_project_ids(db, current_user)
+        if external_ids is not None:
+            return q.filter(Project.id.in_(external_ids))
+        return q.filter(Project.id == -1)
+    ws_code = (ws.code or "").strip().lower()
+    filters = _workspace_match_filters(db, {ws_code})
+    if ws_code == primary_workspace_code_for_user(db, current_user):
+        external_ids = _external_assigned_project_ids(db, current_user)
+        if external_ids is not None:
+            filters.append(Project.id.in_(external_ids))
+    return q.filter(or_(*filters))
 
 
 @router.get("/projects")
@@ -491,6 +547,8 @@ def list_projects(
     # project in the result in one query.
     from ..utils.project_progress import get_progress_pct_map
     progress_map = get_progress_pct_map(db)
+    external_q = _external_assigned_project_ids(db, current_user)
+    external_ids = {pid for (pid,) in external_q.all()} if external_q is not None else set()
 
     return [
         serialize_project_summary(
@@ -503,6 +561,7 @@ def list_projects(
             by_code,
             by_name,
             progress_map=progress_map,
+            is_external=p.id in external_ids,
         )
         for p in projects
     ]
@@ -745,11 +804,19 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
     by_code, by_name = preload_workspace_maps(db)
     b_input = (business or business_unit or "").strip().lower()
     ws = resolve_workspace(db, b_input, by_code, by_name) if b_input else None
-    target_biz = ws.name if ws else None
+    # Same Workspace-tab rule as the project list — reuse
+    # _apply_workspace_scope() itself rather than a second Python-side label
+    # comparison, so the sidebar tree and list_projects() always agree on
+    # which projects belong under the selected tab.
+    tab_ids = None
+    if ws:
+        tab_ids = {
+            pid for (pid,) in _apply_workspace_scope(db, current_user, project_query_for_user(db, current_user), ws.code)
+            .with_entities(Project.id).all()
+        }
 
     for p in projects:
-        p_biz = business_label_for_project(db, p, by_code, by_name)
-        if target_biz and p_biz != target_biz and p_biz != "All":
+        if tab_ids is not None and p.id not in tab_ids:
             continue
 
         yr = p.year or 2026

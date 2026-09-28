@@ -357,20 +357,15 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     if (yearFilter !== 'All' && !uniqueYears.map(String).includes(yearFilter)) setYearFilter('All');
   }, [customerFilter, pmFilter, salesFilter, memberFilter, yearFilter, uniqueCustomers, uniquePms, uniqueSales, uniqueMembers, uniqueYears]);
 
-  // Workspace code → display name map from the Workspace Master
-  const wsNameByCode = useMemo(() => {
-    const m = new Map<string, string>();
-    (workspaces || []).forEach(w => m.set(w.code, w.name));
-    return m;
-  }, [workspaces]);
-
-  // Filter memoized
+  // Filter memoized. No Workspace check here — the API call above is already
+  // scoped to selectedWorkspace by the backend (_apply_workspace_scope), which
+  // owns the Workspace-tab rule incl. the assigned-project override. A second
+  // client-side Workspace filter only drifts from it and hides projects the
+  // backend correctly returned (e.g. a Leader's team-assigned project).
   const filtered = useMemo(() => {
     const q = search.toLowerCase();
     return projects.filter(p => {
       const matchSearch = [p.name, p.code, p.customer_name, p.pm_name].some(v => (v || '').toLowerCase().includes(q));
-      const pBiz = (p.business || wsNameByCode.get(p.business_unit) || '').toLowerCase();
-      const matchBusiness = businessFilter === 'All' || pBiz === businessFilter.toLowerCase();
       const matchPhase = phaseFilter === 'All' || p.current_phase === phaseFilter;
       const matchCustomer = customerFilter === 'All' ||
         (p.customer_name && p.customer_name.toLowerCase() === customerFilter.toLowerCase()) ||
@@ -392,9 +387,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       const matchYear = yearFilter === 'All' || String(p.year) === yearFilter;
       const matchOverdue = !overdueOnly || (p.warning_task_count || 0) > 0;
       const matchCritical = !criticalOnly || p.is_critical === true;
-      return matchSearch && matchBusiness && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
+      return matchSearch && matchPhase && matchCustomer && matchPm && matchSales && matchMember && matchYear && matchOverdue && matchCritical;
     });
-  }, [projects, search, businessFilter, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly, wsNameByCode]);
+  }, [projects, search, phaseFilter, customerFilter, paramCustId, pmFilter, salesFilter, memberFilter, yearFilter, overdueOnly, criticalOnly]);
 
   // Sort memoized — pinned projects always float to the top; the chosen
   // sortBy comparator only breaks ties within each (pinned / unpinned) group.
@@ -741,6 +736,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                     </div>
                     <div className="flex items-center gap-1.5 mb-0.5">
                       {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
+                      {p.is_external && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200" title="Dự án thuộc Workspace khác — hiện ở đây vì bạn hoặc team được gán vào">Tham gia ngoài</span>}
                       <h3 className="text-base font-bold text-slate-800 group-hover:text-indigo-600 transition-colors line-clamp-1">{p.name}</h3>
                       {p.business && (
                         <span className="shrink-0 px-1.5 py-0.5 rounded text-[9.5px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200" title={`Dự án thuộc Workspace ${p.business}`}>
@@ -844,6 +840,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                           <div className="flex items-center gap-1.5">
                             <span className="text-[13px] font-bold text-slate-800 group-hover:text-indigo-600 transition-colors truncate" title={p.name}>{p.name}</span>
                             {p.is_critical && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-red-50 text-red-600 border border-red-200">🚩 Critical</span>}
+                            {p.is_external && <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-50 text-amber-700 border border-amber-200" title="Dự án thuộc Workspace khác — hiện ở đây vì bạn hoặc team được gán vào">Tham gia ngoài</span>}
                             {p.business && (
                               <span className="shrink-0 px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-indigo-50 text-indigo-600 border border-indigo-200">{p.business}</span>
                             )}
