@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, useMemo, ReactNode } from 'react';
+import { useEffect, useRef, useState, useMemo, ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
@@ -254,8 +254,23 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   // Workspace is selected app-wide (Navbar switcher) — keeps this list
   // consistent with Dashboard/KPI. The dropdown below still lets the user
   // override it locally without touching the shared selection.
+  //
+  // manualWorkspacePickRef guards against this effect re-firing and
+  // silently reverting a manual pick (incl. "Tất cả Workspace" -> 'all')
+  // back to the Navbar's Workspace — it used to fire on every reference
+  // change of `workspaces` (e.g. any background refetch of that query),
+  // which for a Leader/Member with a fixed Workspace snapped the list back
+  // to their Chính Workspace only, hiding the Phụ Workspace's projects
+  // again even though "Tất cả Workspace" was still selected on screen.
+  // A real change of ctxWorkspaceCode (Navbar switcher used elsewhere)
+  // still re-syncs, since that's a deliberate cross-page action.
+  const manualWorkspacePickRef = useRef(false);
+  const lastCtxWorkspaceCodeRef = useRef(ctxWorkspaceCode);
   useEffect(() => {
     if (lockedWorkspace || !ctxWorkspaceCode) return;
+    if (manualWorkspacePickRef.current && ctxWorkspaceCode === lastCtxWorkspaceCodeRef.current) return;
+    lastCtxWorkspaceCodeRef.current = ctxWorkspaceCode;
+    manualWorkspacePickRef.current = false;
     const ws = workspaces.find(w => w.code === ctxWorkspaceCode);
     setBusinessFilter(ws?.name || ctxWorkspaceCode);
   }, [lockedWorkspace, ctxWorkspaceCode, workspaces]);
@@ -488,7 +503,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                 icon="🗂️"
                 options={workspaces.map(ws => ({ id: ws.name, name: ws.name }))}
                 value={businessFilter}
-                onChange={val => { setBusinessFilter(String(val)); setPage(1); }}
+                onChange={val => { manualWorkspacePickRef.current = true; setBusinessFilter(String(val)); setPage(1); }}
                 placeholder="Tìm Workspace..."
               />
             )}
