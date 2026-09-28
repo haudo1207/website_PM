@@ -427,71 +427,81 @@ export default function PeopleSkillIntelligence() {
     }).catch(() => setCategories([])).finally(() => setCategoriesLoading(false));
   }, [peopleView, admin, categories.length]);
 
-  // ── Skill Directory — aggregation từ Hồ sơ nhân sự (members state, đã
-  // lọc employment_status=ON) + allTasks + classifyPct + giaoMap đã có.
-  // KHÔNG gọi API mới; KHÔNG tạo công thức capacity/KPI/evidence mới.
-  // Map<skillId, Member[]> — ON members thực sự có skill này (đếm distinct).
-  const membersBySkillId = useMemo(() => {
-    const m = new Map<number, any[]>();
-    for (const mem of members) {
-      const seen = new Set<number>();
-      for (const s of mem.skills || []) {
-        const sid = s?.id;
-        if (sid == null || seen.has(sid)) continue;
-        seen.add(sid);
-        if (!m.has(sid)) m.set(sid, []);
-        m.get(sid)!.push(mem);
-      }
-    }
-    return m;
-  }, [members]);
+  // ── Skill Directory — aggregation dựa trên task evidence (DONE + ASSIGNED
+  // + exact skill_id match). KHÔNG dùng member.skills; KHÔNG dùng support tasks;
+  // KHÔNG áp dụng time filter (dùng allTasks - toàn bộ lịch sử).
+  // Member eligibility: chỉ ON members (đã lọc ở line 212).
 
-  // Evidence: Map<`${memberId}|${skillId}`, count> — đếm task của member
-  // (assigned + support) mà khớp skill. Ưu tiên match theo skill_vendor_id
-  // (mapping DB), fallback theo skill_vendor_name nếu ID không có.
+  // Evidence: Map<`${memberId}|${skillId}`, { count, projects: Set<projectId> }>
+  // Chỉ đếm task DONE + ASSIGNED (không phải support) + exact skill_vendor_id match.
   const taskEvidenceByMemberSkill = useMemo(() => {
-    const m = new Map<string, number>();
-    const memberById = new Map<number, any>();
-    for (const mem of members) memberById.set(mem.id, mem);
+    const m = new Map<string, { count: number; projects: Set<number> }>();
+    const memberIds = new Set(members.map(mem => mem.id));
     for (const t of allTasks) {
-      const vid = t.skill_vendor_id != null ? Number(t.skill_vendor_id) : null;
-      const vname = t.skill_vendor_name;
-      for (const midRaw of [t.assigned_id, t.support_id]) {
-        if (midRaw == null) continue;
-        const mid = Number(midRaw);
-        let resolvedSid: number | null = null;
-        if (vid != null) {
-          resolvedSid = vid;
-        } else if (vname) {
-          const mem = memberById.get(mid);
-          const ms = mem ? (mem.skills || []).find((ss: any) => ss.name === vname) : null;
-          if (ms) resolvedSid = ms.id;
-        }
-        if (resolvedSid == null) continue;
-        const key = `${mid}|${resolvedSid}`;
-        m.set(key, (m.get(key) || 0) + 1);
+      // Only DONE status counts
+      const status = (t.status || '').toLowerCase();
+      if (status !== 'done') continue;
+      // Only ASSIGNED tasks count (not support)
+      const assignedId = t.assigned_id != null ? Number(t.assigned_id) : null;
+      if (assignedId == null) continue;
+      // Member must be ON (already filtered in members state, but double-check)
+      if (!memberIds.has(assignedId)) continue;
+      // Exact skill_id match (skill_vendor_id is the FK to skills.id)
+      const skillId = t.skill_vendor_id != null ? Number(t.skill_vendor_id) : null;
+      if (skillId == null) continue;
+      const key = `${assignedId}|${skillId}`;
+      const entry = m.get(key) || { count: 0, projects: new Set() };
+      entry.count += 1;
+      // Track unique projects for "Dự án đã tham gia"
+      if (t.project_id != null) {
+        entry.projects.add(Number(t.project_id));
       }
+      m.set(key, entry);
     }
     return m;
   }, [allTasks, members]);
 
+  // Map<skillId, Member[]> — ON members có ≥1 qualifying evidence task cho skill này.
+  // Build từ task evidence, KHÔNG từ member.skills.
+  const membersBySkillId = useMemo(() => {
+    const m = new Map<number, any[]>();
+    const memberById = new Map(members.map(mem => [mem.id, mem]));
+    const seen = new Map<string, boolean>(); // `${memberId}|${skillId}` → already added
+    taskEvidenceByMemberSkill.forEach((entry, key) => {
+      const [midStr, sidStr] = key.split('|');
+      const mid = Number(midStr);
+      const sid = Number(sidStr);
+      const dedupeKey = `${mid}|${sid}`;
+      if (seen.has(dedupeKey)) return;
+      seen.set(dedupeKey, true);
+      const mem = memberById.get(mid);
+      if (!mem) return;
+      if (!m.has(sid)) m.set(sid, []);
+      m.get(sid)!.push(mem);
+    });
+    return m;
+  }, [taskEvidenceByMemberSkill, members]);
+
   const totalEvidenceBySkillId = useMemo(() => {
     const agg = new Map<number, number>();
-    taskEvidenceByMemberSkill.forEach((count, key) => {
+    taskEvidenceByMemberSkill.forEach((entry, key) => {
       const sidStr = key.split('|')[1];
       const sid = Number(sidStr);
-      agg.set(sid, (agg.get(sid) || 0) + count);
+      agg.set(sid, (agg.get(sid) || 0) + entry.count);
     });
     return agg;
   }, [taskEvidenceByMemberSkill]);
 
-  // Skill Area → Skill hierarchy, chỉ giữ những nhánh thực sự có ON member.
-  // Skill Area member count = distinct members sở hữu ≥1 skill trong area.
+  // Skill Area → Skill hierarchy, chỉ giữ những nhánh ACTIVE và có ON member evidence.
+  // Active-only rule: Category.is_active, Skill.is_active phải true.
+  // Skill Area member count = distinct members có ≥1 qualifying evidence task trong area.
   const skillDirectory = useMemo(() => {
     return categories
+      .filter((c) => c.is_active !== false) // Active-only: hide inactive categories
       .map((c) => {
         const skillEntries = c.groups
           .flatMap((g) => g.skills)
+          .filter((s) => s.is_active !== false) // Active-only: hide inactive skills
           .map((s) => {
             const list = membersBySkillId.get(s.id) || [];
             return {
@@ -512,8 +522,8 @@ export default function PeopleSkillIntelligence() {
     if (!selectedSkill) return [] as any[];
     const list = membersBySkillId.get(selectedSkill.id) || [];
     return [...list].sort((a, b) => {
-      const ea = taskEvidenceByMemberSkill.get(`${a.id}|${selectedSkill.id}`) || 0;
-      const eb = taskEvidenceByMemberSkill.get(`${b.id}|${selectedSkill.id}`) || 0;
+      const ea = taskEvidenceByMemberSkill.get(`${a.id}|${selectedSkill.id}`)?.count || 0;
+      const eb = taskEvidenceByMemberSkill.get(`${b.id}|${selectedSkill.id}`)?.count || 0;
       if (ea !== eb) return eb - ea;
       return (a.display_name || '').localeCompare(b.display_name || '');
     });
@@ -958,49 +968,55 @@ export default function PeopleSkillIntelligence() {
                     <div className="flex items-center justify-between mb-3">
                       <div>
                         <h3 className="font-extrabold text-slate-800">{selectedSkill.name}</h3>
-                        <p className="text-[11.5px] text-slate-400">{skillMembers.length} người có skill này · Capacity lấy từ Team Load (Giao% cùng kỳ lọc)</p>
+                        <p className="text-[11.5px] text-slate-400">{skillMembers.length} người có skill này · Evidence = DONE + ASSIGNED tasks (toàn bộ lịch sử)</p>
                       </div>
                     </div>
                     {skillMembers.length === 0 ? (
-                      <div className="text-center py-10 text-slate-400 text-[12.5px]">Chưa có ai được gắn skill này.</div>
+                      <div className="text-center py-10 text-slate-400 text-[12.5px]">Chưa có ai có task evidence cho skill này.</div>
                     ) : (
                       <div className="space-y-2">
                         {skillMembers.map((m) => {
-                          const giao = giaoMap.get(m.id) ?? 0;
-                          const cap = classifyPct(giao, workloadSettings);
-                          const evidence = taskEvidenceByMemberSkill.get(`${m.id}|${selectedSkill.id}`) || 0;
+                          const evidenceEntry = taskEvidenceByMemberSkill.get(`${m.id}|${selectedSkill.id}`);
+                          const evidence = evidenceEntry?.count || 0;
+                          const projectIds = Array.from(evidenceEntry?.projects || []);
+                          const projects = projectIds.map(pid => allProjects.find(p => String(p.id) === String(pid))?.name || `Project #${pid}`);
                           const roleParts = [m.position, m.department].filter(Boolean);
                           return (
-                            <div key={m.id} onClick={() => openMemberProfile(m)} className="flex items-center justify-between gap-3 border border-slate-200 rounded-lg px-3 py-2.5 hover:border-[#0058be] cursor-pointer transition-colors">
-                              <div className="flex items-center gap-2.5 min-w-0">
-                                <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center justify-center shrink-0">{initials(m.display_name)}</div>
-                                <div className="min-w-0">
-                                  <div className="font-bold text-slate-800 text-[12.5px] truncate">{m.display_name}</div>
-                                  <div className="text-[11px] text-slate-400 truncate">
-                                    {roleParts.length > 0 ? roleParts.join(' · ') : [m.team, m.department].filter(Boolean).join(' · ') || '—'}
+                            <div key={m.id} onClick={() => openMemberProfile(m)} className="border border-slate-200 rounded-lg px-3 py-2.5 hover:border-[#0058be] cursor-pointer transition-colors">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                                  <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-[11px] flex items-center justify-center shrink-0">{initials(m.display_name)}</div>
+                                  <div className="min-w-0">
+                                    <div className="font-bold text-slate-800 text-[12.5px] truncate">{m.display_name}</div>
+                                    <div className="text-[11px] text-slate-400 truncate">
+                                      {roleParts.length > 0 ? roleParts.join(' · ') : [m.team, m.department].filter(Boolean).join(' · ') || '—'}
+                                    </div>
                                   </div>
                                 </div>
-                              </div>
-                              <div className="text-right shrink-0">
-                                <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Task Evidence</div>
-                                <div className="text-[12.5px] font-extrabold text-[#0058be] tabular-nums">{evidence}</div>
-                              </div>
-                              <div className="text-right shrink-0 w-[112px]">
-                                <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Capacity</div>
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <span className={`text-[12.5px] font-extrabold tabular-nums ${giao > 120 ? 'text-rose-600' : giao >= 90 ? 'text-emerald-600' : giao >= 50 ? 'text-[#0058be]' : 'text-slate-500'}`}>{giao.toFixed(0)}%</span>
-                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${cap.tone}`}>{cap.label}</span>
+                                <div className="text-right shrink-0">
+                                  <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Task Evidence</div>
+                                  <div className="text-[12.5px] font-extrabold text-[#0058be] tabular-nums">{evidence}</div>
                                 </div>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleChosenForSkillDirectory(m.id); }}
+                                  className={`shrink-0 text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
+                                    isChosenForSkillDirectory(m.id) ? 'bg-[#0058be] text-white border-[#0058be]' : 'border-slate-300 text-slate-500 hover:border-[#0058be] hover:text-[#0058be]'
+                                  }`}
+                                  title="Chỉ là lựa chọn tạm trong Skill Directory; không thay đổi dữ liệu nhân sự."
+                                >
+                                  {isChosenForSkillDirectory(m.id) ? '✓ Đã chọn' : '+ Chọn'}
+                                </button>
                               </div>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); toggleChosenForSkillDirectory(m.id); }}
-                                className={`shrink-0 text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
-                                  isChosenForSkillDirectory(m.id) ? 'bg-[#0058be] text-white border-[#0058be]' : 'border-slate-300 text-slate-500 hover:border-[#0058be] hover:text-[#0058be]'
-                                }`}
-                                title="Chỉ là lựa chọn tạm trong Skill Directory; không thay đổi dữ liệu nhân sự."
-                              >
-                                {isChosenForSkillDirectory(m.id) ? '✓ Đã chọn' : '+ Chọn'}
-                              </button>
+                              {projects.length > 0 && (
+                                <div className="mt-2 pt-2 border-t border-slate-100">
+                                  <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider mb-1">Dự án đã tham gia</div>
+                                  <div className="flex flex-wrap gap-1">
+                                    {projects.map((pname, idx) => (
+                                      <span key={idx} className="text-[11px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{pname}</span>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
