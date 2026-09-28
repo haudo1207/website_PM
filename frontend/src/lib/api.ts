@@ -1183,17 +1183,51 @@ export interface MemberLoanRequest {
   status: 'pending' | 'accepted' | 'rejected';
   message: string | null;
   reason: string | null;
-  created_at: string;
+  start_date: string | null;
+  end_date: string | null;
+  decided_by_user_id: number | null;
+  created_at: string | null;
   decided_at: string | null;
 }
-export const getEligibleLoanMembers = (excludeOwnTeam = true) =>
-  api.get('/project-skill/eligible-members', { params: { exclude_own_team: excludeOwnTeam } }).then(r => r.data);
-export const createMemberLoanRequest = (projectId: number, memberId: number, message?: string) =>
-  api.post<MemberLoanRequest>('/project-skill/requests', { project_id: projectId, member_id: memberId, message }).then(r => r.data);
+export interface ConsiderationItem {
+  id: number;
+  member_id: number;
+  member_name: string | null;
+  member_team: string | null;
+  member_department: string | null;
+  created_at: string | null;
+  busy_info: { start_date: string; end_date: string; project_name: string | null }[];
+}
+export interface BusyInfo {
+  member_id: number;
+  busy_periods: { start_date: string; end_date: string; project_name: string | null }[];
+  currently_busy: boolean;
+  current_busy_info: { start_date: string; end_date: string; project_name: string | null } | null;
+}
+export const getEligibleLoanMembers = () =>
+  api.get<any[]>('/project-skill/eligible-members').then(r => r.data);
+export const createMemberLoanRequest = (projectId: number, memberId: number, startDate: string, endDate: string, message?: string) =>
+  api.post<MemberLoanRequest>('/project-skill/requests', { project_id: projectId, member_id: memberId, start_date: startDate, end_date: endDate, message }).then(r => r.data);
 export const getMemberLoanRequests = (scope: 'incoming' | 'outgoing') =>
   api.get<MemberLoanRequest[]>('/project-skill/requests', { params: { scope } }).then(r => r.data);
 export const respondMemberLoanRequest = (loanId: number, decision: 'accepted' | 'rejected', reason?: string) =>
   api.post<MemberLoanRequest>(`/project-skill/requests/${loanId}/respond`, { decision, reason }).then(r => r.data);
+export const cancelMemberLoanRequest = (loanId: number) =>
+  api.delete<{ message: string }>(`/project-skill/requests/${loanId}`).then(r => r.data);
+export const getConsiderations = () =>
+  api.get<ConsiderationItem[]>('/project-skill/considerations').then(r => r.data);
+export const addConsideration = (memberId: number) =>
+  api.post<ConsiderationItem>('/project-skill/considerations', { member_id: memberId }).then(r => r.data);
+export const removeConsideration = (memberId: number) =>
+  api.delete<{ message: string }>(`/project-skill/considerations/${memberId}`).then(r => r.data);
+export const checkConsideration = (memberId: number) =>
+  api.get<{ in_consideration: boolean }>(`/project-skill/considerations/check/${memberId}`).then(r => r.data);
+export const getMemberBusy = (memberId: number) =>
+  api.get<BusyInfo>(`/project-skill/busy/${memberId}`).then(r => r.data);
+export const checkDateOverlap = (memberId: number, startDate: string, endDate: string) =>
+  api.get<{ has_overlap: boolean; overlap_info: { start_date: string; end_date: string; project_name: string | null } | null }>(
+    '/project-skill/check-overlap', { params: { member_id: memberId, start_date: startDate, end_date: endDate } }
+  ).then(r => r.data);
 
 // ── Workload Settings (Super Admin only) ─────────────────────
 export const getWorkloadSettings = () =>
