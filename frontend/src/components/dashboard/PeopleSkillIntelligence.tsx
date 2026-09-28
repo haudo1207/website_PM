@@ -191,19 +191,25 @@ export default function PeopleSkillIntelligence() {
   useEffect(() => {
     if (!admin) return;
     setMembersLoading(true);
+    // Note: Team-comparison data is fetched SEPARATELY below by the period
+    // effect (with the active start_date/end_date), NOT here as an
+    // unfiltered parallel. Calling getTeamComparison({}) in this initial
+    // batch caused a race: a slow unfiltered response could resolve AFTER
+    // the user changed the time filter and overwrite the filtered state
+    // with stale, period-agnostic values — making Skill nổi bật / KPI kỳ /
+    // Capacity appear not to update. The period effect below is now the
+    // single source of truth for team-comparison data.
     Promise.all([
       getMembers({ light: true }).catch(() => []),
-      getTeamComparison({}).catch(() => null),
       getTeamComparisonTasks().catch(() => []),
       getProjects().catch(() => []),
       getEligibleLoanMembers(true).catch(() => []),
       getDepartments().catch(() => []),
-    ]).then(([mem, cmp, tasks, projects, eligible, departments]) => {
+    ]).then(([mem, tasks, projects, eligible, departments]) => {
       setLoanProjects(Array.isArray(projects) ? projects : []);
       setEligibleMembers(Array.isArray(eligible) ? eligible : []);
       setDeptMaster(Array.isArray(departments) ? departments : []);
       setMembers(Array.isArray(mem) ? mem.filter((m: any) => (m.employment_status || 'ON') === 'ON') : []);
-      applyTeamComparison(cmp);
       const taskList = Array.isArray(tasks) ? tasks : [];
       setAllTasks(taskList);
       const projMap = new Map<string, { id: any; name: string }>();
@@ -217,30 +223,41 @@ export default function PeopleSkillIntelligence() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admin]);
 
-  function applyTeamComparison(cmp: any) {
-    const map = new Map<number, number>();
-    const kmap = new Map<number, number>();
-    if (cmp?.teams) {
-      for (const t of cmp.teams) {
-        for (const m of t.members || []) {
-          map.set(m.member_id, m.giao_pct ?? 0);
-          kmap.set(m.member_id, m.kpi ?? 0);
-        }
-      }
-    }
-    setGiaoMap(map);
-    setKpiMap(kmap);
-    setWorkloadSettings(cmp?.workload_settings || []);
-  }
-
   // KPI Kỳ + Capacity theo kỳ đã chọn — gọi lại ĐÚNG API của Team Load
   // Section 4 (/system-audit/team-comparison) với cùng start_date/end_date,
   // không tự tính KPI/capacity ở UI.
+  //
+  // The `cancelled` flag below is the period-sync guarantee: when the user
+  // changes the time filter, this effect re-runs, the cleanup flips
+  // `cancelled=true` on the previous closure, and any in-flight response
+  // for the OLD period is silently dropped instead of clobbering the
+  // freshly-loaded state for the NEW period. Without it, an old response
+  // that resolves after a newer one (slow network / larger dataset) would
+  // flash the previous period's KPI/Capacity on screen.
   useEffect(() => {
     if (!admin) return;
+    let cancelled = false;
     getTeamComparison({ start_date: timeWindow.start_date, end_date: timeWindow.end_date })
-      .then((cmp) => applyTeamComparison(cmp))
+      .then((cmp) => {
+        if (cancelled) return;
+        const map = new Map<number, number>();
+        const kmap = new Map<number, number>();
+        if (cmp?.teams) {
+          for (const t of cmp.teams) {
+            for (const m of t.members || []) {
+              map.set(m.member_id, m.giao_pct ?? 0);
+              kmap.set(m.member_id, m.kpi ?? 0);
+            }
+          }
+        }
+        setGiaoMap(map);
+        setKpiMap(kmap);
+        setWorkloadSettings(cmp?.workload_settings || []);
+      })
       .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [admin, timeWindow.start_date, timeWindow.end_date]);
 
