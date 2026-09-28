@@ -30,6 +30,7 @@ from ..utils.access import (
     get_workspaces,
     is_valid_scope,
     preload_workspace_maps,
+    project_belongs_to_workspace,
     resolve_workspace,
     valid_data_scopes,
     ROLE_SUPER_ADMIN,
@@ -289,20 +290,46 @@ def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional
     # "feat(projects): add scoped metrics and manday progress" while that
     # commit was refactoring this function for unrelated manday/KPI metrics —
     # restored verbatim.)
+    #
+    # For a Leader this must cover their WHOLE TEAM's assignments, not just
+    # their own member_id — project_query_for_user()'s own Leader branch
+    # already grants this (a project stays visible if ANY direct report is
+    # in project_members for it, not only the Leader themself), so the two
+    # would silently disagree otherwise: a project visible in the "all
+    # Workspaces" view (no business_unit filter) could vanish the moment the
+    # caller narrows to their own Workspace tab, purely because the actual
+    # project_members row belongs to a report rather than the Leader in
+    # person. Verified live: 4 Leaders missing project 717 on production
+    # until this team-wide check was added.
     member_id = getattr(current_user, "member_id", None)
+    role = getattr(current_user, "role", ROLE_MEMBER)
+    member_ids_for_override = []
+    if member_id:
+        member_ids_for_override.append(member_id)
+        if role == ROLE_LEADER:
+            member_ids_for_override.extend(
+                mid for (mid,) in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
+            )
     assigned_project_ids = (
-        db.query(project_members.c.project_id).filter(project_members.c.member_id == member_id)
-        if member_id else None
+        db.query(project_members.c.project_id).filter(project_members.c.member_id.in_(member_ids_for_override))
+        if member_ids_for_override else None
     )
     ws = resolve_workspace(db, target_b)
     if ws:
-        b_val = ws.name
-        filters = [
-            Project.business == b_val,
-            Project.business == "All",
-            and_(Project.business.is_(None), Project.data_scope == target_b),
-            and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)),
-        ]
+        # Reuse the shared project_belongs_to_workspace() matcher instead of
+        # a second, hand-rolled filter list — the two had drifted apart:
+        # this function only matched Project.data_scope when Project.business
+        # was NULL, while project_belongs_to_workspace() (used by Leader/
+        # Member/Viewer scoping elsewhere) always matches on data_scope,
+        # business-name, OR the global "All" marker. A project whose
+        # `business` column holds a raw scope code instead of the Workspace's
+        # display name (confirmed on demo/seed data, e.g. business="infra")
+        # fell through every branch here and silently disappeared from a
+        # Leader's own Chính-Workspace project list — even though the exact
+        # same Leader/Member scoping helper (project_query_for_user) already
+        # counts it as accessible.
+        filters = list(project_belongs_to_workspace(db, {target_b}))
+        filters.append(and_(Project.business.is_(None), Project.customer.has(Customer.business_unit == target_b)))
         if assigned_project_ids is not None:
             filters.append(Project.id.in_(assigned_project_ids))
         return q.filter(or_(*filters))
