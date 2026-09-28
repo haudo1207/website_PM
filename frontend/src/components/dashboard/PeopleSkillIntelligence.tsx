@@ -32,7 +32,9 @@ import {
   getMembers, getTeamComparison, getTeamComparisonTasks, getCategories, getProjects,
   getDepartments,
   getEligibleLoanMembers, createMemberLoanRequest, getMemberLoanRequests, respondMemberLoanRequest,
-  TeamComparisonMember, WorkloadSetting, MemberLoanRequest,
+  cancelMemberLoanRequest, getConsiderations, addConsideration, removeConsideration,
+  checkConsideration, getMemberBusy, checkDateOverlap,
+  TeamComparisonMember, WorkloadSetting, MemberLoanRequest, ConsiderationItem, BusyInfo,
 } from '@/lib/api';
 import {
   CYCLE_TEMPLATE, getMondayToSundayRange, getPrevWeekRange, getNextWeekRange,
@@ -88,6 +90,11 @@ function toneFor(key: string, label: string) {
 
 const OPEN_STATUSES_EXCLUDE = new Set(['done', 'cancel']);
 const LOAN_STATUS_LABEL: Record<string, { label: string; tone: string }> = {
+  pending: { label: 'Đang xử lý', tone: 'bg-amber-50 text-amber-700 border-amber-200' },
+  accepted: { label: 'Thành công', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  rejected: { label: 'Bị từ chối', tone: 'bg-rose-50 text-rose-700 border-rose-200' },
+};
+const LOAN_STATUS_LABEL_RECIPIENT: Record<string, { label: string; tone: string }> = {
   pending: { label: 'Đang chờ', tone: 'bg-amber-50 text-amber-700 border-amber-200' },
   accepted: { label: 'Đã đồng ý', tone: 'bg-emerald-50 text-emerald-700 border-emerald-200' },
   rejected: { label: 'Đã từ chối', tone: 'bg-rose-50 text-rose-700 border-rose-200' },
@@ -179,14 +186,59 @@ export default function PeopleSkillIntelligence() {
     return {} as { start_date?: string; end_date?: string };
   }, [selectedYear, selectedMonth, activeQuickFilter]);
 
-  const [shortlist, setShortlist] = useState<{ id: number; name: string; team?: string | null }[]>([]);
-  const isShortlisted = (id: number) => shortlist.some((s) => s.id === id);
-  function toggleShortlist(entry: { id: number; name: string; team?: string | null }) {
-    setShortlist((prev) => (prev.some((s) => s.id === entry.id) ? prev.filter((s) => s.id !== entry.id) : [...prev, entry]));
-  }
-  const [shortlistProjectId, setShortlistProjectId] = useState<number | ''>('');
-  const [sendingShortlist, setSendingShortlist] = useState(false);
-  const [shortlistError, setShortlistError] = useState<string | null>(null);
+  // ── Consideration list (per-user, API-backed) ──
+  const [considerations, setConsiderations] = useState<ConsiderationItem[]>([]);
+  const [considerationsLoading, setConsiderationsLoading] = useState(false);
+  const [busyCache, setBusyCache] = useState<Map<number, BusyInfo>>(new Map());
+
+  const loadConsiderations = () => {
+    setConsiderationsLoading(true);
+    getConsiderations()
+      .then(setConsiderations)
+      .catch(() => setConsiderations([]))
+      .finally(() => setConsiderationsLoading(false));
+  };
+
+  const isInConsideration = (memberId: number) => considerations.some(c => c.member_id === memberId);
+
+  const toggleConsideration = async (memberId: number, memberName: string, team?: string | null) => {
+    if (isInConsideration(memberId)) {
+      await removeConsideration(memberId);
+      setConsiderations(prev => prev.filter(c => c.member_id !== memberId));
+    } else {
+      const item = await addConsideration(memberId);
+      setConsiderations(prev => [item, ...prev]);
+    }
+  };
+
+  const getMemberBusyInfo = async (memberId: number): Promise<BusyInfo | null> => {
+    if (busyCache.has(memberId)) return busyCache.get(memberId)!;
+    try {
+      const info = await getMemberBusy(memberId);
+      setBusyCache(prev => new Map(prev).set(memberId, info));
+      return info;
+    } catch {
+      return null;
+    }
+  };
+
+  const isMemberCurrentlyBusy = (memberId: number): boolean => {
+    const info = busyCache.get(memberId);
+    return info?.currently_busy || false;
+  };
+
+  const getMemberBusyPeriod = (memberId: number): { start_date: string; end_date: string } | null => {
+    const info = busyCache.get(memberId);
+    if (info?.current_busy_info) {
+      return { start_date: info.current_busy_info.start_date, end_date: info.current_busy_info.end_date };
+    }
+    return null;
+  };
+
+  useEffect(() => {
+    if (!admin) return;
+    loadConsiderations();
+  }, [admin]);
 
   useEffect(() => {
     if (!admin) return;
@@ -203,7 +255,7 @@ export default function PeopleSkillIntelligence() {
       getMembers({ light: true }).catch(() => []),
       getTeamComparisonTasks().catch(() => []),
       getProjects().catch(() => []),
-      getEligibleLoanMembers(true).catch(() => []),
+      getEligibleLoanMembers().catch(() => []),
       getDepartments().catch(() => []),
     ]).then(([mem, tasks, projects, eligible, departments]) => {
       setLoanProjects(Array.isArray(projects) ? projects : []);
@@ -404,17 +456,6 @@ export default function PeopleSkillIntelligence() {
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [expandedCategoryId, setExpandedCategoryId] = useState<number | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillNode | null>(null);
-  // Lựa chọn phía Skill Directory — chỉ là UI state cục bộ, không ghi DB hay
-  // động vào member/task/skill/KPI/capacity. Phạm vi: bản đồ danh mục skill.
-  const [chosenForSkillDirectory, setChosenForSkillDirectory] = useState<Set<number>>(new Set());
-  const isChosenForSkillDirectory = (id: number) => chosenForSkillDirectory.has(id);
-  function toggleChosenForSkillDirectory(id: number) {
-    setChosenForSkillDirectory((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  }
 
   useEffect(() => {
     if (peopleView !== 'skills' || !admin) return;
@@ -534,6 +575,8 @@ export default function PeopleSkillIntelligence() {
   const [eligibleMembers, setEligibleMembers] = useState<any[]>([]);
   const [loanProjectId, setLoanProjectId] = useState<number | ''>('');
   const [loanMemberId, setLoanMemberId] = useState<number | ''>('');
+  const [loanStartDate, setLoanStartDate] = useState<string>('');
+  const [loanEndDate, setLoanEndDate] = useState<string>('');
   const [loanMessage, setLoanMessage] = useState('');
   const [sendingLoan, setSendingLoan] = useState(false);
   const [loanError, setLoanError] = useState<string | null>(null);
@@ -542,6 +585,8 @@ export default function PeopleSkillIntelligence() {
   const [loansLoading, setLoansLoading] = useState(false);
   const [respondingId, setRespondingId] = useState<number | null>(null);
   const [reasonDraft, setReasonDraft] = useState<Record<number, string>>({});
+  const [projectSearch, setProjectSearch] = useState('');
+  const [showRejectInput, setShowRejectInput] = useState<Record<number, boolean>>({});
 
   function loadLoans() {
     setLoansLoading(true);
@@ -557,38 +602,35 @@ export default function PeopleSkillIntelligence() {
   useEffect(() => {
     if (mainTab !== 'project-skill') return;
     loadLoans();
+    loadConsiderations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mainTab]);
 
-  async function handleSendShortlist() {
-    if (!shortlistProjectId || shortlist.length === 0) return;
-    setSendingShortlist(true);
-    setShortlistError(null);
-    const failures: string[] = [];
-    for (const m of shortlist) {
-      try {
-        // eslint-disable-next-line no-await-in-loop
-        await createMemberLoanRequest(Number(shortlistProjectId), m.id);
-      } catch (e: any) {
-        failures.push(`${m.name}: ${e?.response?.data?.detail || 'lỗi'}`);
-      }
-    }
-    setShortlist([]);
-    setShortlistProjectId('');
-    loadLoans();
-    setShortlistError(failures.length ? failures.join('; ') : null);
-    setSendingShortlist(false);
-  }
+  const filteredLoanProjects = loanProjects.filter((p: any) =>
+    p.name.toLowerCase().includes(projectSearch.toLowerCase())
+  );
 
   async function handleSendLoan() {
-    if (!loanProjectId || !loanMemberId) return;
+    if (!loanProjectId || !loanMemberId || !loanStartDate || !loanEndDate) {
+      setLoanError('Vui lòng chọn đầy đủ dự án, người, ngày bắt đầu và ngày kết thúc');
+      return;
+    }
     setSendingLoan(true);
     setLoanError(null);
     try {
-      await createMemberLoanRequest(Number(loanProjectId), Number(loanMemberId), loanMessage.trim() || undefined);
+      const overlap = await checkDateOverlap(Number(loanMemberId), loanStartDate, loanEndDate);
+      if (overlap.has_overlap) {
+        setLoanError(`Member đang bận từ ${overlap.overlap_info?.start_date} đến ${overlap.overlap_info?.end_date} (dự án: ${overlap.overlap_info?.project_name || 'N/A'})`);
+        setSendingLoan(false);
+        return;
+      }
+      await createMemberLoanRequest(Number(loanProjectId), Number(loanMemberId), loanStartDate, loanEndDate, loanMessage.trim() || undefined);
       setLoanMessage('');
       setLoanMemberId('');
+      setLoanStartDate('');
+      setLoanEndDate('');
       loadLoans();
+      loadConsiderations();
     } catch (e: any) {
       setLoanError(e?.response?.data?.detail || 'Gửi yêu cầu thất bại');
     } finally {
@@ -601,9 +643,29 @@ export default function PeopleSkillIntelligence() {
     try {
       await respondMemberLoanRequest(loanId, decision, reasonDraft[loanId]?.trim() || undefined);
       loadLoans();
+      setShowRejectInput(prev => ({ ...prev, [loanId]: false }));
+      setReasonDraft(prev => ({ ...prev, [loanId]: '' }));
+    } catch (e: any) {
+      setLoanError(e?.response?.data?.detail || 'Không thể xử lý yêu cầu');
     } finally {
       setRespondingId(null);
     }
+  }
+
+  async function handleCancel(loanId: number) {
+    if (!confirm('Bạn có chắc muốn hủy yêu cầu này?')) return;
+    try {
+      await cancelMemberLoanRequest(loanId);
+      loadLoans();
+    } catch (e: any) {
+      setLoanError(e?.response?.data?.detail || 'Không thể hủy yêu cầu');
+    }
+  }
+
+  function formatDate(dateStr: string | null): string {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
   }
 
   return (
@@ -641,44 +703,6 @@ export default function PeopleSkillIntelligence() {
               Skill Directory
             </button>
           </div>
-
-          {shortlist.length > 0 && (
-            <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3.5 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <h4 className="text-[12.5px] font-extrabold text-indigo-700">🌟 Shortlist ({shortlist.length})</h4>
-                <button onClick={() => setShortlist([])} className="text-[11px] text-slate-400 hover:text-slate-600">Xóa hết</button>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {shortlist.map((s) => (
-                  <span key={s.id} className="flex items-center gap-1 text-[11px] font-bold bg-white border border-indigo-200 text-indigo-700 px-2 py-1 rounded-full">
-                    {s.name}
-                    <button onClick={() => toggleShortlist(s)} className="text-indigo-400 hover:text-indigo-700">
-                      <X className="w-3 h-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={shortlistProjectId}
-                  onChange={(e) => setShortlistProjectId(e.target.value ? Number(e.target.value) : '')}
-                  className="text-[12px] bg-white border border-indigo-200 rounded-lg px-2.5 py-1.5 outline-none"
-                >
-                  <option value="">-- Chọn dự án để mượn --</option>
-                  {loanProjects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <button
-                  onClick={handleSendShortlist}
-                  disabled={!shortlistProjectId || sendingShortlist}
-                  className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 px-3 py-1.5 rounded-lg transition-colors"
-                >
-                  {sendingShortlist ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
-                  Gửi yêu cầu mượn cho {shortlist.length} người
-                </button>
-              </div>
-              {shortlistError && <p className="text-[11px] text-red-600">{shortlistError}</p>}
-            </div>
-          )}
 
           {peopleView === 'people' && (
             <>
@@ -901,14 +925,25 @@ export default function PeopleSkillIntelligence() {
                               )}
                             </td>
                             <td className="px-4 py-2.5 text-right">
-                              <button
-                                onClick={(e) => { e.stopPropagation(); toggleShortlist({ id: m.id, name: m.display_name, team: m.team }); }}
-                                className={`text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
-                                  isShortlisted(m.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
-                                }`}
-                              >
-                                {isShortlisted(m.id) ? '✓ Đã thêm' : '+ Shortlist'}
-                              </button>
+                              {isMemberCurrentlyBusy(m.id) ? (
+                                <div className="text-[10px]">
+                                  <span className="font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">Đang bận</span>
+                                  {getMemberBusyPeriod(m.id) && (
+                                    <div className="text-[9px] text-rose-500 mt-0.5">
+                                      {formatDate(getMemberBusyPeriod(m.id)!.start_date)} → {formatDate(getMemberBusyPeriod(m.id)!.end_date)}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={async (e) => { e.stopPropagation(); await toggleConsideration(m.id, m.display_name, m.team); }}
+                                  className={`text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
+                                    isInConsideration(m.id) ? 'bg-indigo-600 text-white border-indigo-600' : 'border-slate-300 text-slate-500 hover:border-indigo-300 hover:text-indigo-600'
+                                  }`}
+                                >
+                                  {isInConsideration(m.id) ? '✓ Đã chọn' : '+ Chọn'}
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
@@ -997,15 +1032,26 @@ export default function PeopleSkillIntelligence() {
                                   <div className="text-[10.5px] font-bold text-slate-400 uppercase tracking-wider">Task Evidence</div>
                                   <div className="text-[12.5px] font-extrabold text-[#0058be] tabular-nums">{evidence}</div>
                                 </div>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); toggleChosenForSkillDirectory(m.id); }}
-                                  className={`shrink-0 text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
-                                    isChosenForSkillDirectory(m.id) ? 'bg-[#0058be] text-white border-[#0058be]' : 'border-slate-300 text-slate-500 hover:border-[#0058be] hover:text-[#0058be]'
-                                  }`}
-                                  title="Chỉ là lựa chọn tạm trong Skill Directory; không thay đổi dữ liệu nhân sự."
-                                >
-                                  {isChosenForSkillDirectory(m.id) ? '✓ Đã chọn' : '+ Chọn'}
-                                </button>
+                                {isMemberCurrentlyBusy(m.id) ? (
+                                  <div className="shrink-0 text-[10px]">
+                                    <span className="font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">Đang bận</span>
+                                    {getMemberBusyPeriod(m.id) && (
+                                      <div className="text-[9px] text-rose-500 mt-0.5">
+                                        {formatDate(getMemberBusyPeriod(m.id)!.start_date)} → {formatDate(getMemberBusyPeriod(m.id)!.end_date)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={async (e) => { e.stopPropagation(); await toggleConsideration(m.id, m.display_name); }}
+                                    className={`shrink-0 text-[10.5px] font-bold px-2 py-1 rounded-lg border whitespace-nowrap transition-colors ${
+                                      isInConsideration(m.id) ? 'bg-[#0058be] text-white border-[#0058be]' : 'border-slate-300 text-slate-500 hover:border-[#0058be] hover:text-[#0058be]'
+                                    }`}
+                                    title="Thêm vào danh sách xem xét"
+                                  >
+                                    {isInConsideration(m.id) ? '✓ Đã chọn' : '+ Chọn'}
+                                  </button>
+                                )}
                               </div>
                               {projects.length > 0 && (
                                 <div className="mt-2 pt-2 border-t border-slate-100">
@@ -1032,34 +1078,110 @@ export default function PeopleSkillIntelligence() {
 
       {mainTab === 'project-skill' && (
         <div className="space-y-4">
+          {/* Nhân sự đang được xem xét */}
+          {admin && (
+            <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
+              <h3 className="text-[13px] font-extrabold text-slate-800 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-[#0058be]" /> Nhân sự đang được xem xét ({considerations.length})
+              </h3>
+              {considerationsLoading ? (
+                <div className="flex items-center justify-center py-4 text-slate-400 gap-2 text-[12px]"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
+              ) : considerations.length === 0 ? (
+                <p className="text-[12px] text-slate-400 py-2 text-center">Chưa chọn ai. Hãy chọn từ Hồ sơ nhân sự hoặc Skill Directory.</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {considerations.map((c) => {
+                    const busyInfo = c.busy_info?.length > 0 ? c.busy_info[0] : null;
+                    return (
+                      <div key={c.id} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <button
+                          onClick={() => removeConsideration(c.member_id).then(() => setConsiderations(prev => prev.filter(x => x.member_id !== c.member_id)))}
+                          className="text-slate-400 hover:text-rose-500 transition-colors"
+                          title="Xóa khỏi danh sách"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                        <span className="text-[12px] font-bold text-slate-700">{c.member_name}</span>
+                        {c.member_team && <span className="text-[10px] text-slate-400">({c.member_team})</span>}
+                        {busyInfo && (
+                          <span className="text-[10px] font-bold text-rose-600 bg-rose-50 px-1.5 py-0.5 rounded border border-rose-200">
+                            Đang bận {formatDate(busyInfo.start_date)} → {formatDate(busyInfo.end_date)}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Mượn người cho dự án */}
           {admin && (
             <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-3">
               <h3 className="text-[13px] font-extrabold text-slate-800 flex items-center gap-1.5">
                 <Briefcase className="w-4 h-4 text-[#0058be]" /> Mượn người cho dự án
               </h3>
-              <p className="text-[11.5px] text-slate-400">Chỉ chọn được người ở team khác — mượn người trong chính team mình thì giao việc trực tiếp, không cần qua đây.</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                <select value={loanProjectId} onChange={(e) => setLoanProjectId(e.target.value ? Number(e.target.value) : '')}
-                  className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
-                  <option value="">-- Chọn dự án --</option>
-                  {loanProjects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <select value={loanMemberId} onChange={(e) => setLoanMemberId(e.target.value ? Number(e.target.value) : '')}
-                  className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
-                  <option value="">-- Chọn người muốn mượn --</option>
-                  {eligibleMembers.map((m: any) => <option key={m.id} value={m.id}>{m.display_name}{m.team ? ` (${m.team})` : ''}</option>)}
-                </select>
-                <input
-                  value={loanMessage}
-                  onChange={(e) => setLoanMessage(e.target.value)}
-                  placeholder="Lý do / ghi chú (không bắt buộc)"
-                  className="text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
-                />
+              <p className="text-[11.5px] text-slate-400">Chỉ chọn được người trong danh sách xem xét và không đang bận.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                {/* Project dropdown with search */}
+                <div className="relative">
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">Dự án</label>
+                  <input
+                    value={projectSearch}
+                    onChange={(e) => setProjectSearch(e.target.value)}
+                    placeholder="Tìm dự án..."
+                    className="w-full text-[12px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be] mb-1"
+                  />
+                  <select value={loanProjectId} onChange={(e) => setLoanProjectId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
+                    <option value="">-- Chọn dự án --</option>
+                    {filteredLoanProjects.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </div>
+                {/* Member dropdown - only from consideration list */}
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">Người muốn mượn</label>
+                  <select value={loanMemberId} onChange={(e) => setLoanMemberId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]">
+                    <option value="">-- Chọn người --</option>
+                    {considerations.filter(c => !c.busy_info?.length).map((c) => (
+                      <option key={c.member_id} value={c.member_id}>{c.member_name}{c.member_team ? ` (${c.member_team})` : ''}</option>
+                    ))}
+                  </select>
+                </div>
               </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">Ngày bắt đầu</label>
+                  <input
+                    type="date"
+                    value={loanStartDate}
+                    onChange={(e) => setLoanStartDate(e.target.value)}
+                    className="w-full text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] font-bold text-slate-500 mb-1 block">Ngày kết thúc</label>
+                  <input
+                    type="date"
+                    value={loanEndDate}
+                    onChange={(e) => setLoanEndDate(e.target.value)}
+                    min={loanStartDate}
+                    className="w-full text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
+                  />
+                </div>
+              </div>
+              <input
+                value={loanMessage}
+                onChange={(e) => setLoanMessage(e.target.value)}
+                placeholder="Lý do / ghi chú (không bắt buộc)"
+                className="w-full text-[12.5px] bg-white text-slate-800 border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
+              />
               {loanError && <p className="text-[11.5px] text-red-600">{loanError}</p>}
               <button
                 onClick={handleSendLoan}
-                disabled={!loanProjectId || !loanMemberId || sendingLoan}
+                disabled={!loanProjectId || !loanMemberId || !loanStartDate || !loanEndDate || sendingLoan}
                 className="flex items-center gap-1.5 text-[12px] font-bold text-white bg-[#0058be] hover:bg-[#0047a0] disabled:opacity-50 px-4 py-2 rounded-lg transition-colors"
               >
                 {sendingLoan ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
@@ -1068,50 +1190,80 @@ export default function PeopleSkillIntelligence() {
             </div>
           )}
 
+          {/* Yêu cầu liên quan đến bạn */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5">
             <h3 className="text-[13px] font-extrabold text-slate-800">Yêu cầu liên quan đến bạn</h3>
             {loansLoading ? (
               <div className="flex items-center justify-center py-8 text-slate-400 gap-2 text-[12.5px]"><Loader2 className="w-4 h-4 animate-spin" /> Đang tải...</div>
             ) : incoming.length === 0 ? (
-              <p className="text-[12px] text-slate-400 py-4 text-center">Chưa có ai gửi yêu cầu mượn bạn.</p>
+              <p className="text-[12px] text-slate-400 py-4 text-center">Chưa có yêu cầu nào.</p>
             ) : (
               incoming.map((loan) => {
-                const st = LOAN_STATUS_LABEL[loan.status];
+                const st = LOAN_STATUS_LABEL_RECIPIENT[loan.status];
                 return (
                   <div key={loan.id} className="border border-slate-200 rounded-lg p-3 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <div>
-                        <div className="text-[12.5px] font-bold text-slate-800">{loan.requested_by_name || 'Một Leader'} muốn mượn bạn cho dự án <span className="text-[#0058be]">{loan.project_name}</span></div>
+                        <div className="text-[12.5px] font-bold text-slate-800">
+                          {loan.requested_by_name || 'Một Leader'} muốn mượn <span className="text-[#0058be]">{loan.member_name}</span> cho dự án <span className="text-[#0058be]">{loan.project_name}</span>
+                        </div>
+                        {loan.start_date && loan.end_date && (
+                          <div className="text-[11px] text-slate-500 mt-0.5">
+                            Giai đoạn: {formatDate(loan.start_date)} → {formatDate(loan.end_date)}
+                          </div>
+                        )}
                         {loan.message && <div className="text-[11px] text-slate-400 mt-0.5">"{loan.message}"</div>}
                       </div>
                       <span className={`shrink-0 text-[10.5px] font-bold px-2 py-0.5 rounded-full border ${st.tone}`}>{st.label}</span>
                     </div>
                     {loan.status === 'pending' && (
-                      <div className="flex items-center gap-2">
-                        <input
-                          value={reasonDraft[loan.id] || ''}
-                          onChange={(e) => setReasonDraft((prev) => ({ ...prev, [loan.id]: e.target.value }))}
-                          placeholder="Lý do (không bắt buộc)"
-                          className="flex-1 text-[11.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
-                        />
-                        <button
-                          onClick={() => handleRespond(loan.id, 'accepted')}
-                          disabled={respondingId === loan.id}
-                          className="flex items-center gap-1 text-[11.5px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-2.5 py-1.5 rounded-lg"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Đồng ý
-                        </button>
-                        <button
-                          onClick={() => handleRespond(loan.id, 'rejected')}
-                          disabled={respondingId === loan.id}
-                          className="flex items-center gap-1 text-[11.5px] font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 px-2.5 py-1.5 rounded-lg"
-                        >
-                          <X className="w-3.5 h-3.5" /> Từ chối
-                        </button>
+                      <div className="space-y-2">
+                        {!showRejectInput[loan.id] ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => handleRespond(loan.id, 'accepted')}
+                              disabled={respondingId === loan.id}
+                              className="flex items-center gap-1 text-[11.5px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-2.5 py-1.5 rounded-lg"
+                            >
+                              <Check className="w-3.5 h-3.5" /> Đồng ý
+                            </button>
+                            <button
+                              onClick={() => setShowRejectInput(prev => ({ ...prev, [loan.id]: true }))}
+                              disabled={respondingId === loan.id}
+                              className="flex items-center gap-1 text-[11.5px] font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 px-2.5 py-1.5 rounded-lg"
+                            >
+                              <X className="w-3.5 h-3.5" /> Từ chối
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <input
+                              value={reasonDraft[loan.id] || ''}
+                              onChange={(e) => setReasonDraft((prev) => ({ ...prev, [loan.id]: e.target.value }))}
+                              placeholder="Lý do từ chối (bắt buộc)"
+                              className="w-full text-[11.5px] border border-slate-300 rounded-lg px-2.5 py-1.5 outline-none focus:ring-1 focus:ring-[#0058be]"
+                            />
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => handleRespond(loan.id, 'rejected')}
+                                disabled={respondingId === loan.id || !reasonDraft[loan.id]?.trim()}
+                                className="text-[11px] font-bold text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 px-2.5 py-1 rounded-lg"
+                              >
+                                Xác nhận từ chối
+                              </button>
+                              <button
+                                onClick={() => { setShowRejectInput(prev => ({ ...prev, [loan.id]: false })); setReasonDraft(prev => ({ ...prev, [loan.id]: '' })); }}
+                                className="text-[11px] font-bold text-slate-500 hover:text-slate-700 px-2 py-1"
+                              >
+                                Hủy
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     {loan.reason && loan.status !== 'pending' && (
-                      <div className="text-[11px] text-slate-400">Lý do trả lời: {loan.reason}</div>
+                      <div className="text-[11px] text-slate-400">Lý do: {loan.reason}</div>
                     )}
                   </div>
                 );
@@ -1119,6 +1271,7 @@ export default function PeopleSkillIntelligence() {
             )}
           </div>
 
+          {/* Yêu cầu đã gửi */}
           {admin && (
             <div className="bg-white border border-slate-200 rounded-xl p-4 space-y-2.5">
               <h3 className="text-[13px] font-extrabold text-slate-800">Yêu cầu đã gửi</h3>
@@ -1128,11 +1281,33 @@ export default function PeopleSkillIntelligence() {
                 outgoing.map((loan) => {
                   const st = LOAN_STATUS_LABEL[loan.status];
                   return (
-                    <div key={loan.id} className="border border-slate-200 rounded-lg p-3 flex items-center justify-between gap-2">
-                      <div className="text-[12.5px] font-bold text-slate-800">
-                        Mượn <span className="text-[#0058be]">{loan.member_name}</span> cho dự án {loan.project_name}
+                    <div key={loan.id} className="border border-slate-200 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <div className="text-[12.5px] font-bold text-slate-800">
+                            Mượn <span className="text-[#0058be]">{loan.member_name}</span> cho dự án {loan.project_name}
+                          </div>
+                          {loan.start_date && loan.end_date && (
+                            <div className="text-[11px] text-slate-500 mt-0.5">
+                              Giai đoạn: {formatDate(loan.start_date)} → {formatDate(loan.end_date)}
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`shrink-0 text-[10.5px] font-bold px-2 py-0.5 rounded-full border ${st.tone}`}>{st.label}</span>
+                          {loan.status === 'pending' && (
+                            <button
+                              onClick={() => handleCancel(loan.id)}
+                              className="text-[10.5px] font-bold text-white bg-rose-500 hover:bg-rose-600 px-2 py-0.5 rounded"
+                            >
+                              Hủy request
+                            </button>
+                          )}
+                        </div>
                       </div>
-                      <span className={`shrink-0 text-[10.5px] font-bold px-2 py-0.5 rounded-full border ${st.tone}`}>{st.label}</span>
+                      {loan.reason && loan.status === 'rejected' && (
+                        <div className="text-[11px] text-rose-500 bg-rose-50 px-2 py-1 rounded">Lý do từ chối: {loan.reason}</div>
+                      )}
                     </div>
                   );
                 })
@@ -1149,14 +1324,14 @@ export default function PeopleSkillIntelligence() {
           projects={allProjects}
           onClose={() => setSelectedMemberModal(null)}
           onNavigate={(projectId) => { setSelectedMemberModal(null); window.location.href = `/project/detail/overview?id=${projectId}`; }}
-          selectedYear="all"
-          selectedMonth="all"
-          selectedWeek="all"
-          activeQuickFilter={null}
-          onApplyQuickFilter={() => {}}
-          onYearChange={() => {}}
-          onMonthChange={() => {}}
-          onWeekChange={() => {}}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          selectedWeek={selectedWeek}
+          activeQuickFilter={activeQuickFilter}
+          onApplyQuickFilter={applyQuickFilter}
+          onYearChange={(v) => { setSelectedYear(v); setActiveQuickFilter(null); }}
+          onMonthChange={(v) => { setSelectedMonth(v); setActiveQuickFilter(null); }}
+          onWeekChange={(v) => { setSelectedWeek(v); setActiveQuickFilter(null); }}
         />
       )}
     </div>
