@@ -272,6 +272,39 @@ def serialize_project_summary(p, db, phase_count, task_stats, role_members, all_
     }
 
 
+def _assigned_project_ids_for_override(db: Session, current_user):
+    """Project IDs the caller is explicitly assigned to via project_members —
+    for a Leader this also covers their WHOLE TEAM's assignments, not just
+    their own member_id, mirroring project_query_for_user()'s own Leader
+    branch (a project stays visible there if ANY direct report is in
+    project_members for it, not only the Leader themself).
+
+    Used to override Workspace narrowing so an assigned project never
+    disappears just because it belongs to a different Workspace — mirrors
+    the membership-overrides-Workspace rule in access.py's can_access_project.
+    Factored out as its own function so every place that narrows a project
+    list by Workspace (currently _apply_workspace_scope() for list_projects,
+    and get_sidebar_tree()) shares the exact same rule and can't drift apart
+    again the way _apply_workspace_scope() itself once did — its own copy of
+    this override was accidentally dropped by 9f044ab ("feat(projects): add
+    scoped metrics and manday progress") while that commit was refactoring
+    the function for unrelated manday/KPI metrics, and get_sidebar_tree()
+    never had it in the first place (confirmed live: a Leader with a project
+    in their own Member tab still didn't see it there, even after
+    _apply_workspace_scope() was fixed, because the sidebar tree is built by
+    a separate query with its own, override-less Workspace filter)."""
+    member_id = getattr(current_user, "member_id", None)
+    if not member_id:
+        return None
+    role = getattr(current_user, "role", ROLE_MEMBER)
+    member_ids = [member_id]
+    if role == ROLE_LEADER:
+        member_ids.extend(
+            mid for (mid,) in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
+        )
+    return db.query(project_members.c.project_id).filter(project_members.c.member_id.in_(member_ids))
+
+
 def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional[str]):
     """Narrow an already project_query_for_user()-filtered Project query to
     one specific Workspace — factored out of list_projects() (chốt
@@ -282,38 +315,7 @@ def _apply_workspace_scope(db: Session, current_user, q, business_unit: Optional
     target_b = (business_unit or "").strip().lower()
     if not target_b or target_b == "all":
         return q
-    # A project the caller is explicitly assigned to (project_members) always
-    # stays visible under the current Workspace tab, even when its own
-    # business/data_scope belongs to a different Workspace — mirrors the
-    # membership-overrides-Workspace rule in access.py's can_access_project.
-    # (Regression fix: this override was accidentally dropped by 9f044ab
-    # "feat(projects): add scoped metrics and manday progress" while that
-    # commit was refactoring this function for unrelated manday/KPI metrics —
-    # restored verbatim.)
-    #
-    # For a Leader this must cover their WHOLE TEAM's assignments, not just
-    # their own member_id — project_query_for_user()'s own Leader branch
-    # already grants this (a project stays visible if ANY direct report is
-    # in project_members for it, not only the Leader themself), so the two
-    # would silently disagree otherwise: a project visible in the "all
-    # Workspaces" view (no business_unit filter) could vanish the moment the
-    # caller narrows to their own Workspace tab, purely because the actual
-    # project_members row belongs to a report rather than the Leader in
-    # person. Verified live: 4 Leaders missing project 717 on production
-    # until this team-wide check was added.
-    member_id = getattr(current_user, "member_id", None)
-    role = getattr(current_user, "role", ROLE_MEMBER)
-    member_ids_for_override = []
-    if member_id:
-        member_ids_for_override.append(member_id)
-        if role == ROLE_LEADER:
-            member_ids_for_override.extend(
-                mid for (mid,) in db.query(Member.id).filter(Member.leader_member_id == member_id).all()
-            )
-    assigned_project_ids = (
-        db.query(project_members.c.project_id).filter(project_members.c.member_id.in_(member_ids_for_override))
-        if member_ids_for_override else None
-    )
+    assigned_project_ids = _assigned_project_ids_for_override(db, current_user)
     ws = resolve_workspace(db, target_b)
     if ws:
         # Reuse the shared project_belongs_to_workspace() matcher instead of
@@ -773,10 +775,22 @@ def get_sidebar_tree(business: Optional[str] = None, business_unit: Optional[str
     b_input = (business or business_unit or "").strip().lower()
     ws = resolve_workspace(db, b_input, by_code, by_name) if b_input else None
     target_biz = ws.name if ws else None
+    # Same assigned-project override as _apply_workspace_scope() — a project
+    # the caller (or their whole team, if Leader) has in project_members
+    # always shows in the sidebar tree too, even under a different Workspace
+    # tab. See _assigned_project_ids_for_override()'s own docstring for why
+    # this needs to be duplicated here rather than shared via one Project
+    # query: this endpoint builds its year/customer tree from Python-side
+    # objects, not a further-filtered query.
+    assigned_ids = set()
+    if target_biz:
+        override_q = _assigned_project_ids_for_override(db, current_user)
+        if override_q is not None:
+            assigned_ids = {pid for (pid,) in override_q.all()}
 
     for p in projects:
         p_biz = business_label_for_project(db, p, by_code, by_name)
-        if target_biz and p_biz != target_biz and p_biz != "All":
+        if target_biz and p_biz != target_biz and p_biz != "All" and p.id not in assigned_ids:
             continue
 
         yr = p.year or 2026
