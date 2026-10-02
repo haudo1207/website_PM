@@ -9,6 +9,42 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
+import { Copy, Check } from 'lucide-react';
+
+// ── Hover-to-copy control for KPI ranking cells (UI-only) ────────────
+// Copies the EXACT value currently displayed (no recalculation, no
+// reformatting). The number itself keeps its original markup/position;
+// the compact copy button is absolutely positioned in the cell's right
+// padding so the table layout never shifts. Appears on cell hover,
+// disappears on mouse leave (pure CSS group-hover), and shows a brief
+// check icon as feedback. Clipboard failures are handled gracefully.
+const KpiCopyValue = ({ value }: { value: number }) => {
+    const [copied, setCopied] = useState(false);
+    // Same string React renders for the number — exactly what the user sees.
+    const displayed = String(value);
+    const handleCopy = (e: React.MouseEvent) => {
+        e.stopPropagation(); // rows are clickable (open member detail)
+        e.preventDefault();
+        navigator.clipboard?.writeText(displayed).then(() => {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        }).catch(() => { /* graceful: no-op, table stays intact */ });
+    };
+    return (
+        <span className="relative inline-flex items-center justify-end">
+            {displayed}
+            <button
+                type="button"
+                onClick={handleCopy}
+                title={copied ? 'Đã sao chép' : 'Sao chép giá trị'}
+                className={`absolute left-full ml-1.5 top-1/2 -translate-y-1/2 flex items-center justify-center w-5 h-5 rounded-md border transition-opacity duration-150 cursor-pointer opacity-0 group-hover/copy:opacity-100 focus:opacity-100 ${copied ? 'border-emerald-200 bg-emerald-50 text-emerald-600' : 'border-slate-200 bg-white text-slate-400 hover:text-[#0058be] hover:border-blue-200'}`}
+            >
+                {copied ? <Check size={11} strokeWidth={2.5} /> : <Copy size={11} />}
+            </button>
+        </span>
+    );
+};
+
 
 // ── KPI Member Detail Modal (Year/Month only, one-way sync) ─────────
 // Canonical KPI helper: mirrors backend UNION behavior for dual-role tasks.
@@ -805,9 +841,9 @@ export default function KPIPage() {
                                                     <td className="px-4 py-3 text-slate-600 font-medium">{m.workspace || '-'}</td>
                                                     <td className="px-4 py-3 text-slate-600 font-medium">{m.department || '-'}</td>
                                                     <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.manday_total || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{(m.manday_total || 0).toFixed(1)}</td>
-                                                    <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_avg || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{m.kpi_avg || 0}</td>
+                                                    <td className={`group/copy px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_avg || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}><KpiCopyValue value={m.kpi_avg || 0} /></td>
                                                     <td className={`px-4 py-3 text-center font-semibold tabular-nums ${(m.kpi_bonus || 0) === 0 ? 'text-red-500' : 'text-slate-600'}`}>{m.kpi_bonus || 0}</td>
-                                                    <td className={`px-4 py-3 text-center font-extrabold tabular-nums ${(m.kpi_total || 0) === 0 ? 'text-red-500' : 'text-blue-600'}`}>{m.kpi_total || 0}</td>
+                                                    <td className={`group/copy px-4 py-3 text-center font-extrabold tabular-nums ${(m.kpi_total || 0) === 0 ? 'text-red-500' : 'text-blue-600'}`}><KpiCopyValue value={m.kpi_total || 0} /></td>
                                                 </tr>
                                             ))}
                                             {members.length === 0 && (
