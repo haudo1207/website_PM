@@ -979,22 +979,44 @@ def remove_candidate(
         member = db.query(Member).filter(Member.display_name.ilike(display_name)).first()
 
     if not member:
-        return {"status": "not_found", "message": "Không tìm thấy thành viên để xóa"}
+        return {"status": "not_found", "message": "Không tìm thấy thành viên để chuyển sang OFF"}
 
+    # Business rule: the recruitment mechanism must NEVER permanently delete a
+    # Member. "Remove candidate" now performs the same OFF transition the
+    # Resigned path in sync_from_recruitment does: keep the Member row and all
+    # task/KPI history, stamp off_effective_at on the first ON→OFF (and
+    # backfill it when missing), and lock the linked User account.
     try:
         m_id, m_name = member.id, member.display_name
-        db.delete(member)
+        old_status = member.employment_status
+        member.employment_status = "OFF"
+        if member.off_effective_at is None:
+            member.off_effective_at = datetime.datetime.utcnow()
+        account_locked = False
+        if member.user and member.user.is_active:
+            member.user.is_active = False
+            account_locked = True
         db.commit()
         AuditService.record(
             db=db, user_id=None, module="Member", entity_type="Member",
-            entity_id=m_id, action="DELETE", resource_name=m_name, source="API",
-            description=f"Gỡ bỏ thành viên '{m_name}' qua remove-candidate (recruitment token)"
+            entity_id=m_id, action="UPDATE", resource_name=m_name, source="API",
+            description=(
+                f"Chuyển thành viên '{m_name}' sang OFF qua remove-candidate (recruitment token)"
+                + (" — đã khóa tài khoản liên kết" if account_locked else "")
+            )
         )
         db.commit()
-        return {"status": "success", "message": f"Đã gỡ bỏ thành viên {m_name}"}
+        return {
+            "status": "success",
+            "member_id": m_id,
+            "employment_status": "OFF",
+            "status_changed": old_status != "OFF",
+            "account_locked": account_locked,
+            "message": f"Đã chuyển thành viên {m_name} sang OFF (thành viên và lịch sử KPI vẫn được giữ nguyên)",
+        }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Lỗi database khi gỡ bỏ: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Lỗi database khi cập nhật: {str(e)}")
 
 
 @router.post("/sync-from-recruitment")
@@ -1037,14 +1059,23 @@ def sync_from_recruitment(
     except Exception as err:
         raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng (accepted): {str(err)}")
     
+    # Business rule: a Resigned-fetch failure must ABORT the sync, exactly
+    # like the Accepted fetch above. Silently degrading to
+    # `resigned_candidates = []` conflated "no resigned candidates exist"
+    # with "resigned data could not be retrieved" — every recruitment-synced
+    # OFF Member then looked "missing" to the cleanup step and was
+    # permanently deleted on a transient CV API outage (historical KPI
+    # detached with them). An empty-but-successful `[]` response is still a
+    # legitimate "none exist"; only failures abort.
     try:
         resigned_response = requests.get(resigned_url, headers=headers, timeout=15)
         if resigned_response.status_code != 200:
-            resigned_candidates = []
-        else:
-            resigned_candidates = resigned_response.json()
-    except Exception:
-        resigned_candidates = []
+            raise HTTPException(status_code=502, detail=f"Lỗi kết nối API tuyển dụng (resigned): {resigned_response.text}")
+        resigned_candidates = resigned_response.json()
+    except HTTPException:
+        raise
+    except Exception as err:
+        raise HTTPException(status_code=502, detail=f"Không thể kết nối đến hệ thống tuyển dụng (resigned): {str(err)}")
 
     # Fetch recruitment leaders
     leaders_url = f"{SUPABASE_URL}/rest/v1/recruitment_leaders"
@@ -1057,7 +1088,6 @@ def sync_from_recruitment(
     leaders_map = {str(l.get("id")).strip().lower(): l for l in leaders_list if l.get("id")}
         
     success_count = 0
-    deleted_count = 0
     locked_count = 0
     unlocked_count = 0
     try:
@@ -1077,40 +1107,15 @@ def sync_from_recruitment(
             if email_val:
                 applications_by_email[email_val] = {"data": app_data, "status": "accepted"}
         
-        # Collect emails and display names for cleanup
-        active_emails = set()
-        active_display_names = set()
-        for email_val, app_info in applications_by_email.items():
-            active_emails.add(email_val)
-            app_data = app_info["data"]
-            full_name_val = str(app_data.get("full_name", "")).strip()
-            if full_name_val:
-                words = [w for w in full_name_val.split() if w]
-                if len(words) <= 2:
-                    d_name = " ".join(words)
-                else:
-                    abbr = ".".join([w[0].upper() for w in words[:-2]])
-                    last_two = " ".join(words[-2:])
-                    d_name = f"{abbr} {last_two}"
-                active_display_names.add(d_name.lower())
+        # 2. (Removed automatic permanent deletion.) This step used to delete
+        # every Member flagged `is_recruitment_synced` whose email AND display
+        # name were absent from the combined accepted+resigned results.
+        # Business rule: "missing from Accepted/Resigned" is NOT permission to
+        # permanently delete a Member — historical KPI must survive, and
+        # permanent deletion is an explicit Member Management operation only
+        # (`DELETE /api/members/{id}`). Members not present in either list are
+        # now left completely unchanged (no delete, no status change).
 
-        # 2. Xóa các ứng viên đã đồng bộ (được đánh dấu Recruitment) không còn trong hệ thống tuyển dụng
-        # Only delete if the member is not in ANY application list (neither accepted nor resigned)
-        synced_members = db.query(Member).filter(Member.is_recruitment_synced.is_(True)).all()
-        for m in synced_members:
-            m_email = str(m.email or "").strip().lower()
-            m_display = str(m.display_name or "").strip().lower()
-
-            is_still_in_system = False
-            if m_email and m_email in active_emails:
-                is_still_in_system = True
-            elif m_display and m_display in active_display_names:
-                is_still_in_system = True
-
-            if not is_still_in_system:
-                db.delete(m)
-                deleted_count += 1
-        
         # 3. Đồng bộ/Cập nhật các ứng viên từ tuyển dụng (cả accepted và resigned)
         used_display_names = set()
         for email_key, app_info in applications_by_email.items():
@@ -1275,8 +1280,6 @@ def sync_from_recruitment(
             
         db.commit()
         message = f"Đồng bộ thành công {success_count} ứng viên."
-        if deleted_count > 0:
-            message += f" Đã gỡ bỏ {deleted_count} ứng viên không còn trong hệ thống tuyển dụng."
         if locked_count > 0:
             message += f" Đã khóa {locked_count} tài khoản (nghỉ việc)."
         if unlocked_count > 0:
@@ -1284,7 +1287,7 @@ def sync_from_recruitment(
         AuditService.record(
             db=db, user_id=getattr(current_user, "id", None), module="Member", entity_type="Member",
             entity_id=None, action="UPDATE",
-            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {deleted_count} bị gỡ bỏ, {locked_count} tài khoản khóa, {unlocked_count} tài khoản mở khóa"
+            description=f"Đồng bộ hàng loạt từ hệ thống tuyển dụng: {success_count} ứng viên cập nhật/tạo mới, {locked_count} tài khoản khóa, {unlocked_count} tài khoản mở khóa"
         )
         db.commit()
         return {"status": "success", "count": success_count, "message": message}
