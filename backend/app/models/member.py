@@ -35,10 +35,12 @@ class Member(Base):
     experience_year = Column(Integer, default=0, nullable=True)
     cv_link         = Column(String(255), nullable=True)
     # Provenance flag — True ONLY when this Member was created by the
-    # Recruitment sync (`POST /members/sync-from-recruitment`). The flag
-    # distinguishes Recruitment-sourced rows from Admin-created rows so the
-    # sync's deletion step can remove only its own records when an accepted
-    # application lapses, without ever touching a manually-created Member.
+    # Recruitment sync (`POST /members/sync-from-recruitment`). It marks
+    # Recruitment-sourced rows for reporting/traceability. It previously also
+    # gated the sync's automatic deletion step; that step has been REMOVED —
+    # permanent Member deletion is now an explicit Member Management operation
+    # only (`DELETE /api/members/{id}`), never a Recruitment-sync side effect,
+    # so historical KPI of ON/OFF Members is always preserved.
     # Existing rows default to FALSE so the deployment never enters a state
     # where existing manual Members are misclassified.
     is_recruitment_synced = Column(Boolean, nullable=False, default=False, server_default="false")
