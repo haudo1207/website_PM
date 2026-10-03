@@ -770,9 +770,11 @@ def apply_schema_updates():
             "ON members (zalo_uid) WHERE zalo_uid IS NOT NULL"
         ))
 
-        # ── Recruitment sync provenance: distinguish Recruitment-sourced
-        # Members from Admin-created Members so the sync cleanup step never
-        # touches a manual row. Default FALSE keeps existing rows safe
+        # ── Recruitment sync provenance: mark Recruitment-sourced Members
+        # distinctly from Admin-created Members (reporting/traceability only —
+        # the sync's former automatic cleanup/deletion step has been removed;
+        # Recruitment sync never deletes Members, so ON/OFF Members keep their
+        # historical KPI). Default FALSE keeps existing rows safe
         # (migration is non-destructive — every pre-existing Member, whether
         # previously created by the old sync or by hand, starts as `manual`).
         # Newly-sourced Members are stamped TRUE by sync_from_recruitment().
