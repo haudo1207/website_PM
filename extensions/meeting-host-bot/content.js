@@ -244,19 +244,38 @@ const START_RECORDING_RE = /^start recording$/i;
 const STOP_RECORDING_RE = /^stop recording$/i;
 const RECORD_ITEM_PRESENT_RE = /capture the meeting/i;
 const NATIVE_RECORDING_PANEL_OPEN_ATTEMPTS_MAX = 15; // ~22s at the 1.5s tick rate
+// Safety net for step 2c below (confirmed needed live 2026-10-11: a dialog-
+// matching bug made this click retry 100+ times before the real fix). Bounds
+// how many times "Start recording" gets clicked without ever reaching a
+// confirmed dialog, so a FUTURE selector/timing mismatch fails loud after a
+// short window instead of spinning forever.
+const START_RECORDING_CLICK_ATTEMPTS_MAX = 10; // ~15s at the 1.5s tick rate
 
 let nativeRecordingStarted = false;
 let nativeRecordingUnavailableLogged = false;
 let nativeRecordingPanelOpenAttempts = 0;
+let nativeRecordingStartClickAttempts = 0;
 
 function tryStartNativeRecording() {
   if (!hostDetected || nativeRecordingStarted) return;
 
   // Step 3: the "Make sure everyone is ready" consent dialog is open —
-  // confirm it. Scoped to dialogs whose text mentions "ready" so this never
-  // matches an unrelated dialog's own generically-labeled "Start" button.
-  const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
-  if (dialog && /ready/i.test(dialog.innerText || "")) {
+  // confirm it. Confirmed live 2026-10-11: document.querySelector() only
+  // ever returns the FIRST [role="dialog"] in DOM order, and Meet can have
+  // SEVERAL dialogs open at the same time — e.g. the "Your meeting's ready"
+  // share-link dialog that appears right after creating an instant meeting
+  // ALSO contains the word "ready" in its own heading, and was the one
+  // document.querySelector() happened to return here. That dialog has no
+  // "Start" button at all, so startBtn was always undefined and this step
+  // silently did nothing every tick — tryStartNativeRecording() fell through
+  // to step 2c, re-clicked "Start recording" again, which opened yet another
+  // stacked consent dialog, forever (confirmed live: 100+ clicks, recording
+  // never actually started). Searching across ALL open dialogs for the one
+  // whose text actually matches the recording consent copy (not just the
+  // generic word "ready") is what actually finds the right one.
+  const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]'));
+  const dialog = dialogs.find((d) => /make sure everyone is ready/i.test(d.innerText || ""));
+  if (dialog) {
     const startBtn = Array.from(dialog.querySelectorAll("button")).find(
       (b) => (b.getAttribute("aria-label") || visibleText(b)).trim().toLowerCase() === "start"
     );
@@ -278,7 +297,15 @@ function tryStartNativeRecording() {
   // Step 2c: "Start recording" is already visible (drilled into the Record
   // sub-panel) — click it, which opens the dialog handled in step 3 above
   // on a later tick.
+  if (nativeRecordingStartClickAttempts >= START_RECORDING_CLICK_ATTEMPTS_MAX) {
+    if (!nativeRecordingUnavailableLogged) {
+      log("Native recording: clicked 'Start recording' repeatedly but the consent dialog never confirmed — giving up (selector may need adjusting; FFmpeg recording is unaffected if re-enabled).");
+      nativeRecordingUnavailableLogged = true;
+    }
+    return;
+  }
   if (clickIfFound(START_RECORDING_RE)) {
+    nativeRecordingStartClickAttempts += 1;
     log("Native recording: clicked Start recording");
     return;
   }
