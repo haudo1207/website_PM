@@ -44,7 +44,7 @@ interface MeetingFormData {
   notify_channels: string[];
 }
 
-const NOTIFY_CHANNEL_OPTIONS = ['App', 'Telegram', 'Zalo', 'Nhóm dự án'];
+const NOTIFY_CHANNEL_OPTIONS = ['App', 'Zalo', 'Nhóm dự án'];
 // Default duration for a freshly-opened create form (chốt 2026-09-22).
 const DEFAULT_DURATION_MINUTES = '30';
 

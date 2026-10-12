@@ -4,9 +4,6 @@ main.py (start_meeting_reminder_loop), same pattern as auto_sync_all_ended_meeti
 Delivery per channel:
 - App: insert a Notification row for each participant who has a linked User
   account. Cheap — the inbox read/poll pipeline already exists.
-- Telegram: broadcast to the configured group chat (TELEGRAM_GROUP_CHAT_ID).
-  There is no per-participant Telegram DM in this app (only super_admins may
-  link a personal chat_id), so this is a group announcement, not a 1:1 ping.
 - Zalo / "Nhóm dự án": post into the meeting's project's linked Zalo group
   conversation (if any), @mentioning participants who have a zalo_uid.
 """
@@ -22,7 +19,6 @@ from ..models.member import Member
 from ..models.user import User
 from ..models.notification import Notification
 from ..models.zalo import ZaloConversation
-from . import telegram as telegram_service
 from . import zalo as zalo_service
 
 logger = logging.getLogger(__name__)
@@ -67,8 +63,8 @@ def _build_body(meeting, start_dt, header: str, include_link: bool) -> str:
 def _build_text(meeting, start_dt, include_link: bool = True) -> str:
     # The join link no longer goes out immediately on meeting creation (see
     # routers/meetings.py) — this reminder, timed to reminder_minutes before
-    # start, carries the link itself (App/Telegram) so participants have it
-    # ahead of time. A second message with the same link fires again exactly
+    # start, carries the link itself (App) so participants have it ahead of
+    # time. A second message with the same link fires again exactly
     # at start_time (see _build_start_text / dispatch_start_link_notifications
     # below), for anyone who missed the earlier reminder.
     return _build_body(meeting, start_dt, "🔔 Nhắc lịch họp", include_link)
@@ -90,13 +86,6 @@ def _notify_app(db, meeting, member_ids, text) -> None:
             project_id=meeting.project_id,
         ))
     db.commit()
-
-
-def _notify_telegram(meeting, text) -> None:
-    try:
-        telegram_service.send_group_message(text)
-    except Exception:
-        logger.exception("Telegram reminder failed for meeting %s", meeting.id)
 
 
 def _notify_zalo(db, meeting, member_ids, text, meeting_url: str | None = None) -> None:
@@ -249,8 +238,6 @@ def dispatch_start_link_notifications(db) -> int:
 
             if "App" in channels:
                 _notify_app(db, meeting, member_ids, text)
-            if "Telegram" in channels:
-                _notify_telegram(meeting, text)
             if "Zalo" in channels or "Nhóm dự án" in channels:
                 zalo_text = _build_start_text(meeting, start_dt, include_link=False)
                 _notify_zalo(db, meeting, member_ids, zalo_text, meeting.meeting_url)
@@ -286,8 +273,6 @@ def dispatch_due_reminders(db) -> int:
 
             if "App" in channels:
                 _notify_app(db, meeting, member_ids, text)
-            if "Telegram" in channels:
-                _notify_telegram(meeting, text)
             if "Zalo" in channels or "Nhóm dự án" in channels:
                 zalo_text = _build_text(meeting, start_dt, include_link=False)
                 _notify_zalo(db, meeting, member_ids, zalo_text, meeting.meeting_url)
