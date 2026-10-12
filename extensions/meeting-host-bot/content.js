@@ -273,8 +273,17 @@ function tryStartNativeRecording() {
   // never actually started). Searching across ALL open dialogs for the one
   // whose text actually matches the recording consent copy (not just the
   // generic word "ready") is what actually finds the right one.
+  // Confirmed live 2026-10-12 on a real production meeting: Google uses at
+  // least two wordings for this exact dialog — "Make sure everyone is
+  // ready" (2026-10-11 test) vs "Make sure that everyone is ready" (real
+  // meeting) — the stricter phrase match above missed the "that" variant
+  // and got stuck re-clicking "Start recording" for the full 5+ minutes
+  // this meeting was live, never actually recording. Matching on "everyone
+  // is ready" alone is still specific enough to not re-collide with the
+  // unrelated "Your meeting's ready" share-link dialog (which never
+  // contains the word "everyone").
   const dialogs = Array.from(document.querySelectorAll('[role="dialog"], [role="alertdialog"]'));
-  const dialog = dialogs.find((d) => /make sure everyone is ready/i.test(d.innerText || ""));
+  const dialog = dialogs.find((d) => /everyone is ready/i.test(d.innerText || ""));
   if (dialog) {
     const startBtn = Array.from(dialog.querySelectorAll("button")).find(
       (b) => (b.getAttribute("aria-label") || visibleText(b)).trim().toLowerCase() === "start"
