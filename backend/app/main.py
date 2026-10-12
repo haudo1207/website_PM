@@ -2052,7 +2052,7 @@ async def start_meeting_reminder_loop():
             # interval so a repeat is diagnosable instead of guessed at.
             elapsed = time.monotonic() - cycle_started
             if elapsed > 20:
-                logger.warning("Meeting reminder cycle took %.1fs (longer than the 20s poll interval) — a Zalo/Telegram send is likely running slow.", elapsed)
+                logger.warning("Meeting reminder cycle took %.1fs (longer than the 20s poll interval) — a Zalo send is likely running slow.", elapsed)
             # Was briefly reverted to 60s over a suspicion this loop's DB use
             # competes with regular request handling for connections — ruled
             # out on inspection: this loop uses BackgroundSessionLocal, a

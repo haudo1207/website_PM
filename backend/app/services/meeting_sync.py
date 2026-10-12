@@ -800,17 +800,6 @@ def notify_n8n_meeting_created(db, m, workspace_id: int = None) -> None:
         m.n8n_notify_status = "FAILED" if m.n8n_notify_attempts >= N8N_NOTIFY_MAX_ATTEMPTS else "PENDING"
     if db is not None:
         db.commit()
-    if m.n8n_notify_status == "FAILED":
-        try:
-            from .telegram import send_group_message
-            send_group_message(
-                f"⚠️ <b>Meeting #{m.id}</b> \"{m.title}\" không thể gửi webhook cho n8n "
-                f"sau {m.n8n_notify_attempts} lần thử — bản ghi cuộc họp sẽ KHÔNG được "
-                f"n8n tự động xử lý (tóm tắt AI/ghi log). Kiểm tra n8n_webhook_url của "
-                f"workspace hoặc trạng thái n8n."
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send n8n-notify-failed Telegram alert for meeting {m.id}: {e}")
 
 
 def retry_pending_n8n_notifies(db) -> int:

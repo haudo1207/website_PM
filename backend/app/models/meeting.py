@@ -51,7 +51,7 @@ class Meeting(Base):
 
     # Reminder — minutes before start_time to notify participants, and which
     # channels to notify through. See services/meeting_reminders.py for the
-    # actual dispatch (App/Telegram/Zalo).
+    # actual dispatch (App/Zalo).
     reminder_minutes = Column(Integer, nullable=False, default=15, server_default="15")
     notify_channels  = Column(JSON, nullable=True)
     # Set once a reminder has been dispatched for this meeting — the claim
