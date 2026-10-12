@@ -1379,13 +1379,6 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         joinedload(Meeting.extra_projects).joinedload(MeetingProject.project)
     ).filter(Meeting.id == m.id).first()
 
-    # Trigger Telegram Notification
-    try:
-        from ..services.telegram import send_meeting_notification
-        send_meeting_notification(db, m)
-    except Exception as e:
-        logger.warning(f"Failed to send Telegram notification for meeting {m.id}: {e}")
-
     # The Zalo join-link message is sent by the reminder scheduler
     # (meeting_reminders.dispatch_due_reminders), timed to reminder_minutes
     # before the meeting actually starts — not here on creation. Blasting the
@@ -1583,17 +1576,9 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     )
     db.commit()
 
-    # Trigger Telegram Notification if summary updated
-    if body.get("ai_summary") or body.get("summary") or body.get("transcript"):
-        try:
-            from ..services.telegram import send_meeting_notification
-            send_meeting_notification(db, m)
-        except Exception as e:
-            logger.warning(f"Failed to send Telegram notification for meeting update {m.id}: {e}")
-
     # Reschedule the SAME Google Calendar event (events.patch) if the date/time
-    # actually changed — best-effort, mirrors the Telegram/Zalo notify pattern
-    # above so a Calendar hiccup never blocks saving the edit.
+    # actually changed — best-effort, so a Calendar hiccup never blocks saving
+    # the edit.
     time_changed = (m.meeting_date != old_meeting_date) or (m.start_time != old_start_time) or (m.end_time != old_end_time)
     if m.google_event_id and time_changed and m.start_time and m.end_time:
         try:
@@ -2022,13 +2007,6 @@ def sync_meeting(id: int, db: Session = Depends(get_db), current_user = Depends(
         m.status = "DONE"
 
     db.commit()
-
-    # Trigger Telegram Notification after sync
-    try:
-        from ..services.telegram import send_meeting_notification
-        send_meeting_notification(db, m)
-    except Exception as e:
-        logger.warning(f"Failed to send Telegram notification for synced meeting {m.id}: {e}")
 
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
