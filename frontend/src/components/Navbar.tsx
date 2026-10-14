@@ -447,6 +447,15 @@ function NavbarContent() {
     if (!fixedWsCode && urlWsCode && urlWsCode !== ctxWorkspaceCode) setWorkspaceCode(urlWsCode);
   }, [fixedWsCode, urlWsCode]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // A normal sidebar click into KPI is a fresh visit, not a "back from
+  // Project" — it must land on the default (current year) view, never
+  // silently reuse a leftover round-trip snapshot from kpi/page.tsx. Only
+  // the dedicated "Quay lại KPI" link on the Project page (which doesn't
+  // call this) is allowed to leave the snapshot in place for restoration.
+  const clearKpiNavSnapshot = () => {
+    try { sessionStorage.removeItem('kpiNavSnapshot'); } catch { /* unavailable — nothing to clear */ }
+  };
+
   const renderProjectsLink = (onNavigate?: () => void, compact = false) => (
     <Link href="/project-hub" onClick={onNavigate} title={compact ? 'Projects' : undefined}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${compact ? 'justify-center' : ''} ${
@@ -590,6 +599,7 @@ function NavbarContent() {
             const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
               <Link key={n.href} href={n.href} title={collapsed ? n.label : undefined}
+                onClick={n.href === '/kpi' ? clearKpiNavSnapshot : undefined}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${collapsed ? 'justify-center' : ''} ${
                   active
                     ? 'bg-white/10 text-white'
@@ -701,7 +711,7 @@ function NavbarContent() {
           {nav.map(n => {
             const active = path === n.href || (n.href === '/leave-request' && path.startsWith('/leave-request'));
             return (
-              <Link key={n.href} href={n.href} onClick={() => setMobileMenuOpen(false)}
+              <Link key={n.href} href={n.href} onClick={() => { if (n.href === '/kpi') clearKpiNavSnapshot(); setMobileMenuOpen(false); }}
                 className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-semibold transition-all ${
                   active
                     ? 'bg-white/10 text-white'

@@ -48,7 +48,7 @@ import {
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
   Ban, CheckCircle2,
 } from 'lucide-react';
-import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod } from '@/app/dashboard/constants';
+import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod, taskMatchesKpiMonthYear } from '@/app/dashboard/constants';
 
 // Format 1 real timestamp (Audit Log created_at) thành nhãn tương đối kiểu
 // "2 phút trước" - không phải data giả, chỉ format lại 1 giá trị thời gian thật.
@@ -318,6 +318,15 @@ function ProjectDetailContent() {
   // carries their display name for string-based table filtering.
   const memberIdParam = searchParams.get('member_id') || '';
   const highlightTaskParam = searchParams.get('highlightTask') || '';
+  // Set only by kpi/page.tsx's navigation (handleNavigateToProject) — marks
+  // this visit as a KPI drill-in, not a reason to display anything by
+  // itself. It gates two things: (1) seeding the Tasks tab's own period
+  // filter from `month`/`year` below instead of defaulting to "Tuần này",
+  // and (2) which date field/semantics that period filter then uses — see
+  // the `fromKpiParam` branch in filteredItems' matchPeriod.
+  const fromKpiParam = searchParams.get('from') === 'kpi';
+  const kpiMonthParam = searchParams.get('month') || '';
+  const kpiYearParam = searchParams.get('year') || '';
   // Deep-link straight to one Feature in the Prototype tab — set by the
   // extension's "Mở Link" after saving a WIP entry (background.js's
   // GET_PROJECT_SHARE_LINK handler), so the just-saved feature is what's
@@ -961,10 +970,25 @@ function ProjectDetailContent() {
   // (the working task list is meant to open already scoped to the current
   // week, same default Overview/Team Load use) and switching one must not
   // silently move the other.
-  const [taskPeriodYear, setTaskPeriodYear] = useState<number | 'all'>(() => new Date().getFullYear());
-  const [taskPeriodMonth, setTaskPeriodMonth] = useState<number | 'all'>(() => new Date().getMonth() + 1);
-  const [taskPeriodWeek, setTaskPeriodWeek] = useState<number | 'all'>(() => getWeekOfMonth(new Date()));
-  const [taskPeriodQuickFilter, setTaskPeriodQuickFilter] = useState<string | null>('Tuần này');
+  // Drill-in from /kpi: seed this tab's own period filter from the
+  // month/year the person had selected there (a read-only COPY — this
+  // never writes back to /kpi's own state) instead of the usual "Tuần này"
+  // default below. Week/quick-filter are cleared in that case because
+  // checkTaskInPeriod gives the week filter priority over month — leaving
+  // "Tuần này" active would silently shadow the month/year just passed in.
+  // Lazy initializers (not a useEffect) to match the same URL-seeding
+  // pattern already used for overviewYear/Month/Week/QuickFilter above,
+  // and to avoid a one-render flash of the wrong period before correcting.
+  const [taskPeriodYear, setTaskPeriodYear] = useState<number | 'all'>(() => {
+    if (fromKpiParam) return kpiYearParam ? parseInt(kpiYearParam, 10) : 'all';
+    return new Date().getFullYear();
+  });
+  const [taskPeriodMonth, setTaskPeriodMonth] = useState<number | 'all'>(() => {
+    if (fromKpiParam) return kpiMonthParam ? parseInt(kpiMonthParam, 10) : 'all';
+    return new Date().getMonth() + 1;
+  });
+  const [taskPeriodWeek, setTaskPeriodWeek] = useState<number | 'all'>(() => fromKpiParam ? 'all' : getWeekOfMonth(new Date()));
+  const [taskPeriodQuickFilter, setTaskPeriodQuickFilter] = useState<string | null>(() => fromKpiParam ? null : 'Tuần này');
   // Shared by filteredItems below AND getOrderedRows further down (which
   // needs to know whether to hide an empty-after-filtering group) — kept
   // as one plain expression, recomputed from state every render, rather
@@ -2612,8 +2636,15 @@ function ProjectDetailContent() {
       // Same period rule as Dashboard/Overview/Team Load (checkTaskInPeriod)
       // — a task belongs to "Tuần này" via its own start_date/created_at/
       // end_date_est, or is still-open and overdue relative to the period.
+      // Drill-in from /kpi is the one exception: it asks for a literal
+      // "tháng X của ngày hiển thị trên bảng" match (start_date, plain
+      // calendar month, every year when year='all') — see
+      // taskMatchesKpiMonthYear's own comment for why that's a separate
+      // function instead of reusing checkTaskInPeriod's fiscal-cycle rules.
       const matchPeriod = !periodFilterActive
-        || checkTaskInPeriod(item, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter);
+        || (fromKpiParam
+          ? taskMatchesKpiMonthYear(item, taskPeriodMonth, taskPeriodYear)
+          : checkTaskInPeriod(item, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter));
       return matchSearch && matchPriority && matchStatus && matchAssigned && matchSupport && matchSkillSolution && matchSkillVendor && matchMember && matchPeriod;
     });
 
@@ -2667,7 +2698,7 @@ function ProjectDetailContent() {
 
     // 4. Return in original order
     return baseItems.filter(item => allTasksToShow.has(item));
-  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter]);
+  }, [items, taskSearch, priorityFilter, statusFilter, assignedFilter, supportFilter, skillSolutionFilter, skillVendorFilter, taskFilterMode, myMemberId, taskPeriodYear, taskPeriodMonth, taskPeriodWeek, taskPeriodQuickFilter, fromKpiParam]);
 
   // Skill Area/Skill filter dropdown options - value is the real ID (never
   // the display name, which is NOT unique across Categories/Groups), label
@@ -7019,6 +7050,16 @@ function ProjectDetailContent() {
             </div>
             {taskSearch && (
               <button onClick={() => setTaskSearch('')} className="text-red-600 text-xs hover:underline mr-1">Xóa</button>
+            )}
+            {fromKpiParam && (
+              <button
+                onClick={() => router.push('/kpi')}
+                title="Quay lại KPI, giữ nguyên bộ lọc đang chọn"
+                className="flex items-center gap-1 px-2.5 py-1 bg-slate-50 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-600 hover:bg-slate-100 hover:text-[#0058be] shrink-0"
+              >
+                <span className="material-symbols-outlined text-[14px]">arrow_back</span>
+                Quay lại KPI
+              </button>
             )}
             {memberFilterParam && (
               <span className="flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-lg text-[11px] font-bold text-blue-700 shrink-0">

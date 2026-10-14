@@ -516,6 +516,53 @@ export default function KPIPage() {
         setWorkspaceCode(code);
     };
 
+    // Restore KPI state (filters + tab + the member drawer that was open)
+    // after a KPI → Project → "Quay lại KPI" round trip. Scoped to exactly
+    // that round trip, not a persistent/global memory: the snapshot is
+    // written only when navigating away to /project (see
+    // handleNavigateToProject below) and is consumed (read + deleted) here
+    // on mount, so a normal sidebar click into /kpi — which explicitly
+    // clears this key first, see Navbar.tsx — always lands on the default
+    // (current year) view instead of silently reusing a stale snapshot.
+    useEffect(() => {
+        try {
+            const raw = sessionStorage.getItem('kpiNavSnapshot');
+            if (!raw) return;
+            sessionStorage.removeItem('kpiNavSnapshot');
+            const snap = JSON.parse(raw);
+            if (snap.activeTab === 'KPItotal' || snap.activeTab === 'KPIweek') setActiveTab(snap.activeTab);
+            if (typeof snap.search === 'string') setSearch(snap.search);
+            if (typeof snap.month === 'string') setMonth(snap.month);
+            if (typeof snap.year === 'string') setYear(snap.year);
+            if (typeof snap.level === 'string') setLevel(snap.level);
+            if (typeof snap.team === 'string') setTeam(snap.team);
+            if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
+            if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
+            if (snap.selectedMember) setSelectedMemberModal(snap.selectedMember);
+        } catch { /* corrupt/old snapshot shape — ignore, fall back to defaults */ }
+        // Runs once on mount only — this is a one-time consume, not a
+        // continuous sync with sessionStorage.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    const handleNavigateToProject = (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => {
+        try {
+            sessionStorage.setItem('kpiNavSnapshot', JSON.stringify({
+                activeTab, search, month, year, level, team, startDate, endDate,
+                selectedMember: selectedMemberModal,
+            }));
+        } catch { /* sessionStorage unavailable (private mode, quota) — restoration just won't be offered */ }
+        const params = new URLSearchParams();
+        params.set('id', String(projectId));
+        if (memberName) params.set('member', memberName);
+        if (memberId != null) params.set('member_id', String(memberId));
+        if (taskId != null) params.set('highlightTask', String(taskId));
+        if (month) params.set('month', month);
+        if (year) params.set('year', year);
+        params.set('from', 'kpi');
+        router.push(`/project/detail/tasks?${params.toString()}`);
+    };
+
     // Effective workspace code for Member Detail scope alignment
     const effectiveWorkspaceCode = useMemo(() => {
         if (isScopedUser) {
@@ -933,7 +980,7 @@ export default function KPIPage() {
                     tasks={allTasks}
                     projects={allProjects}
                     onClose={() => setSelectedMemberModal(null)}
-                    onNavigate={(projectId, memberName, memberId, taskId) => router.push(`/project/detail/tasks?id=${projectId}${memberName ? `&member=${encodeURIComponent(memberName)}` : ''}${memberId != null ? `&member_id=${encodeURIComponent(String(memberId))}` : ''}${taskId != null ? `&highlightTask=${encodeURIComponent(String(taskId))}` : ''}`)}
+                    onNavigate={handleNavigateToProject}
                     initialYear={year ? parseInt(year) : new Date().getFullYear()}
                     initialMonth={month ? parseInt(month) : new Date().getMonth() + 1}
                     workspaceCode={effectiveWorkspaceCode}
