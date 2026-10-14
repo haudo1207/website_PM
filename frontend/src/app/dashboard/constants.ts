@@ -343,6 +343,28 @@ export function checkTaskInPeriod(
   return isTaskOverdueRelativeToPeriodEnd(task, periodEnd);
 }
 
+// Dedicated matcher for the KPI → Project "Tasks" drill-in (kpi/page.tsx
+// navigating to /project/detail/tasks with ?month=&year=). Deliberately NOT
+// `checkTaskInPeriod`: that one mirrors the backend's fiscal-cycle KPI math
+// (OR-ing start_date/created_at/end_date_est, collapsing "mọi năm" down to
+// the current real year) — a different feature with its own tuned
+// semantics that must not change. Here the ask is literal: match the
+// task's own `start_date` (the date already shown on the Project table)
+// against a plain calendar month, and — when year is 'all' — against that
+// month in EVERY year, not a single collapsed year.
+export function taskMatchesKpiMonthYear(
+  task: any,
+  month: number | 'all',
+  year: number | 'all'
+): boolean {
+  if (month === 'all' && year === 'all') return true;
+  const startDate = parseDateString(task?.start_date);
+  if (!startDate) return false;
+  if (month !== 'all' && typeof month === 'number' && (startDate.getMonth() + 1) !== month) return false;
+  if (year !== 'all' && typeof year === 'number' && startDate.getFullYear() !== year) return false;
+  return true;
+}
+
 // Strict HT-only companion to `checkTaskInPeriod`. Returns true only for a
 // DONE task whose end_date_actual falls EXACTLY inside the selected
 // period — used to gate the HT (completed KPI) sum specifically, so a
