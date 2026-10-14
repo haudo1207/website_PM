@@ -387,7 +387,11 @@ export default function KPIPage() {
         return () => clearTimeout(timer);
     }, [search]);
     const [month, setMonth] = useState("");
-    const [year, setYear] = useState("");
+    // Defaults to the current year (not "Tất cả các năm") — KPI and Project
+    // both default to the current year; "Tất cả" stays available as an
+    // explicit choice via the "" option, same as before.
+    const [year, setYear] = useState(() => String(new Date().getFullYear()));
+    const defaultYear = String(new Date().getFullYear());
     const [level, setLevel] = useState("");
     const [workspace, setWorkspace] = useState("");
     const [team, setTeam] = useState("");
@@ -794,9 +798,11 @@ export default function KPIPage() {
                                         ))}
                                     </select>
 
-                                    {/* Clear filter */}
-                                    {(month || year || search || level || team || (!isLockedSingle && workspace)) && (
-                                        <button onClick={() => { setMonth(''); setYear(''); setSearch(''); setLevel(''); setTeam(''); if (!isLockedSingle) setWorkspace(''); }}
+                                    {/* Clear filter — year's baseline is the current year (not ""),
+                                        so "active filter" and the reset target both compare/restore
+                                        against defaultYear instead of empty string. */}
+                                    {(month || year !== defaultYear || search || level || team || (!isLockedSingle && workspace)) && (
+                                        <button onClick={() => { setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam(''); if (!isLockedSingle) setWorkspace(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
