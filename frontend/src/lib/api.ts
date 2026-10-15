@@ -913,6 +913,48 @@ export const getAIReviewHistory = (entityType: string, entityId: number, project
 export const getAIReviewLog = (logId: number) =>
   api.get(`/ai-review/logs/${logId}`).then(r => r.data);
 
+// Task-by-task criteria checks shown under "Báo Cáo Hiện Tại": SKILL (is the
+// task filed under the right Skill Area + Skill — prompt editable here) and
+// MANDAY (is Manday EST reasonable — prompt is backend-owned, read-only).
+export type AICriterion = 'SKILL' | 'MANDAY';
+
+export interface AICriteriaScope {
+  entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER';
+  entityId: number;
+  projectId?: number;
+  month?: number;
+  year?: number;
+}
+
+export const getAICriteriaPrompts = (projectId: number) =>
+  api.get('/ai-review/criteria-prompts', { params: { project_id: projectId } }).then(r => r.data);
+
+export const saveAISkillCriteriaPrompt = (projectId: number, promptContent: string) =>
+  api.post('/ai-review/criteria-prompts', { project_id: projectId, criterion: 'SKILL', prompt_content: promptContent }).then(r => r.data);
+
+export const getAICriteriaLatest = (criterion: AICriterion, scope: AICriteriaScope) =>
+  api.get('/ai-review/criteria-latest', {
+    params: {
+      criterion,
+      entity_type: scope.entityType,
+      entity_id: scope.entityId,
+      project_id: scope.projectId,
+      month: scope.month,
+      year: scope.year,
+    },
+  }).then(r => r.data);
+
+export const runAICriteriaCheck = (criterion: AICriterion, scope: AICriteriaScope, promptContent?: string) =>
+  api.post('/ai-review/criteria-check', {
+    criterion,
+    entity_type: scope.entityType,
+    entity_id: scope.entityId,
+    project_id: scope.projectId,
+    month: scope.month,
+    year: scope.year,
+    prompt_content: promptContent,
+  }).then(r => r.data);
+
 export const syncAITasksFromChat = (projectId: number) =>
   api.post(`/projects/${projectId}/ai-task-inbox/sync`).then(r => r.data);
 

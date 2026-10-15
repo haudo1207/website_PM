@@ -9760,6 +9760,13 @@ function ProjectDetailContent() {
         entityName={aiDrawerEntityName}
         projectId={aiDrawerProjectId}
         memberTab={memberIdParam ? { memberId: Number(memberIdParam), memberName: memberFilterParam, projectId: Number(id) } : undefined}
+        contextProjectId={Number(id)}
+        // From /kpi the Skill/Manday tabs judge the same month the Tasks tab
+        // is filtered to; elsewhere they cover the whole entity.
+        period={fromKpiParam ? {
+          month: taskPeriodMonth === 'all' ? undefined : taskPeriodMonth,
+          year: taskPeriodYear === 'all' ? undefined : taskPeriodYear,
+        } : undefined}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
