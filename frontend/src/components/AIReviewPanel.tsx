@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { triggerAIReview, getAIReviewHistory, getAIReviewLog } from '@/lib/api';
+import { triggerAIReview, getAIReviewHistory, getAIReviewLog, AICriteriaScope } from '@/lib/api';
+import { CriteriaPromptConfig, CriteriaReport, scopeLabel, useCriteriaPrompts } from '@/components/AIReviewCriteria';
 
 interface AIReviewPanelProps {
   entityType: 'PROJECT' | 'PHASE' | 'TASK' | 'MEMBER';
@@ -14,6 +15,12 @@ interface AIReviewPanelProps {
   // extra tab beside "Báo Cáo Hiện Tại" that shows that one person's own
   // report — without leaving/replacing the current view.
   memberTab?: { memberId: number; memberName: string; projectId: number };
+  // Project the entity belongs to — needed for PHASE/TASK, where the entity
+  // id alone doesn't name the project whose Skill prompt to load.
+  contextProjectId?: number;
+  // Month/year the Skill/Manday criteria tabs scope their tasks to (the
+  // /kpi drill-in month). Omitted = all time.
+  period?: { month?: number; year?: number };
 }
 
 interface ReviewLog {
@@ -245,8 +252,23 @@ export default function AIReviewPanel({
   onSuccessCheck,
   projectId,
   memberTab,
+  contextProjectId,
+  period,
 }: AIReviewPanelProps) {
   const [innerTab, setInnerTab] = useState<'current' | 'history' | 'member'>('current');
+  const [reportTab, setReportTab] = useState<'overview' | 'manday' | 'skill'>('overview');
+
+  const promptProjectId = contextProjectId
+    ?? memberTab?.projectId
+    ?? projectId
+    ?? (entityType === 'PROJECT' ? entityId : undefined);
+  const criteriaPrompts = useCriteriaPrompts(promptProjectId);
+  // Drilled in from /kpi for one member → judge just that person's tasks in
+  // the chosen month, even while the panel's primary entity is the project.
+  const criteriaScope: AICriteriaScope = memberTab
+    ? { entityType: 'MEMBER', entityId: memberTab.memberId, projectId: memberTab.projectId, month: period?.month, year: period?.year }
+    : { entityType, entityId, projectId: entityType === 'MEMBER' ? projectId : undefined, month: period?.month, year: period?.year };
+  const criteriaScopeText = scopeLabel(criteriaScope, memberTab?.memberName ?? entityName);
 
   const primary = useEntityReview(entityType, entityId, projectId, onSuccessCheck);
   // Harmless no-op when memberTab isn't provided (entityId falls back to 0,
@@ -298,7 +320,39 @@ export default function AIReviewPanel({
         )}
 
         {innerTab === 'current' && (
-          <ReportBody log={primary.currentLog} loading={primary.loading} onRunCheck={primary.handleRunCheck} />
+          <>
+            <CriteriaPromptConfig {...criteriaPrompts} />
+
+            <div className="flex gap-2 flex-wrap">
+              {([
+                ['overview', '📋 Tổng quan'],
+                ['manday', '⏱ Theo Manday'],
+                ['skill', '🎯 Theo Skill'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setReportTab(key)}
+                  className={`px-3.5 py-1.5 rounded-full text-[11px] font-bold border transition-all ${
+                    reportTab === key
+                      ? 'bg-[#0058be] border-[#0058be] text-white shadow-sm'
+                      : 'bg-white border-slate-200 text-slate-600 hover:border-slate-300'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {reportTab === 'overview' && (
+              <ReportBody log={primary.currentLog} loading={primary.loading} onRunCheck={primary.handleRunCheck} />
+            )}
+            {reportTab === 'manday' && (
+              <CriteriaReport criterion="MANDAY" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} />
+            )}
+            {reportTab === 'skill' && (
+              <CriteriaReport criterion="SKILL" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} />
+            )}
+          </>
         )}
 
         {innerTab === 'member' && memberTab && (

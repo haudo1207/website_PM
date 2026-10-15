@@ -14,6 +14,9 @@ interface AIReviewDrawerProps {
   // When a member-scoping context is active (drilled in from /kpi), offer
   // an extra tab beside "Báo Cáo Hiện Tại" for that one person's own report.
   memberTab?: { memberId: number; memberName: string; projectId: number };
+  contextProjectId?: number;
+  // Month/year scope for the Skill/Manday criteria tabs (from /kpi).
+  period?: { month?: number; year?: number };
 }
 
 export default function AIReviewDrawer({
@@ -25,6 +28,8 @@ export default function AIReviewDrawer({
   onSuccessCheck,
   projectId,
   memberTab,
+  contextProjectId,
+  period,
 }: AIReviewDrawerProps) {
   if (!isOpen) return null;
 
@@ -68,6 +73,8 @@ export default function AIReviewDrawer({
             entityName={entityName}
             projectId={projectId}
             memberTab={memberTab}
+            contextProjectId={contextProjectId}
+            period={period}
             onSuccessCheck={onSuccessCheck}
           />
         </div>
