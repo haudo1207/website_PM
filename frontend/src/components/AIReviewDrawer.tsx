@@ -17,6 +17,7 @@ interface AIReviewDrawerProps {
   contextProjectId?: number;
   // Month/year scope for the Skill/Manday criteria tabs (from /kpi).
   period?: { month?: number; year?: number };
+  onOpenTask?: (taskId: number) => void;
 }
 
 export default function AIReviewDrawer({
@@ -30,6 +31,7 @@ export default function AIReviewDrawer({
   memberTab,
   contextProjectId,
   period,
+  onOpenTask,
 }: AIReviewDrawerProps) {
   if (!isOpen) return null;
 
@@ -75,6 +77,7 @@ export default function AIReviewDrawer({
             memberTab={memberTab}
             contextProjectId={contextProjectId}
             period={period}
+            onOpenTask={onOpenTask}
             onSuccessCheck={onSuccessCheck}
           />
         </div>

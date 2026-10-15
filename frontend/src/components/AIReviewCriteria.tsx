@@ -23,12 +23,20 @@ interface CriteriaItem {
   suggested_skill_area?: string | null;
   suggested_skill?: string | null;
   suggested_manday?: number | null;
+  // Set by the backend on load: the task's criterion fields were edited (or
+  // the task deleted) after this scan, so the verdict may be stale.
+  changed?: boolean;
+  deleted?: boolean;
+  current_skill_area?: string | null;
+  current_skill?: string | null;
+  current_manday_est?: number | null;
 }
 
 interface CriteriaLog {
   id: number;
   status: string;
   score: number;
+  changed_count?: number;
   items: CriteriaItem[];
   suggestions: string[];
   result_markdown: string;
@@ -164,11 +172,14 @@ export function CriteriaReport({
   scope,
   scopeText,
   skillPrompt,
+  onOpenTask,
 }: {
   criterion: AICriterion;
   scope: AICriteriaScope;
   scopeText: string;
   skillPrompt: string;
+  // Jump to the task in the table so it can be fixed right away.
+  onOpenTask?: (taskId: number) => void;
 }) {
   const [loading, setLoading] = useState(false);
   const [log, setLog] = useState<CriteriaLog | null>(null);
@@ -249,6 +260,21 @@ export function CriteriaReport({
 
       {log ? (
         <>
+          {(log.changed_count ?? 0) > 0 && (
+            <div className="bg-sky-50 border border-sky-200 rounded-xl px-4 py-3 flex items-center justify-between gap-3">
+              <p className="text-xs text-sky-900 leading-relaxed">
+                <b>{log.changed_count} task</b> đã được chỉnh sửa sau lần quét này — kết quả bên dưới có thể đã cũ.
+              </p>
+              <button
+                onClick={handleRun}
+                disabled={loading}
+                className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-700 text-white shrink-0 disabled:opacity-60"
+              >
+                Quét lại
+              </button>
+            </div>
+          )}
+
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Điểm</span>
@@ -285,16 +311,31 @@ export function CriteriaReport({
             <div className="divide-y divide-slate-100">
               {shown.length === 0 ? (
                 <p className="text-xs text-slate-400 italic text-center py-8">Không có task nào.</p>
-              ) : shown.map(item => (
-                <div key={item.task_id} className="p-4 space-y-1.5">
+              ) : shown.map(item => {
+                const clickable = !!onOpenTask && !item.deleted;
+                return (
+                <div
+                  key={item.task_id}
+                  onClick={clickable ? () => onOpenTask!(item.task_id) : undefined}
+                  title={clickable ? 'Mở task này để chỉnh sửa' : undefined}
+                  className={`p-4 space-y-1.5 ${clickable ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <p className="text-xs font-semibold text-slate-800 leading-relaxed min-w-0">
                       {item.task_code && <span className="text-slate-400 font-mono mr-1.5">#{item.task_code}</span>}
                       {item.detail}
+                      {clickable && <span className="material-symbols-outlined text-[13px] text-slate-400 align-middle ml-1">open_in_new</span>}
                     </p>
-                    <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase shrink-0 ${VERDICT_STYLE[item.verdict]?.cls || ''}`}>
-                      {VERDICT_STYLE[item.verdict]?.label || item.verdict}
-                    </span>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {item.changed && (
+                        <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-sky-100 text-sky-800">
+                          {item.deleted ? 'Đã xoá' : 'Đã sửa – cần quét lại'}
+                        </span>
+                      )}
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase ${VERDICT_STYLE[item.verdict]?.cls || ''} ${item.changed ? 'opacity-50' : ''}`}>
+                        {VERDICT_STYLE[item.verdict]?.label || item.verdict}
+                      </span>
+                    </div>
                   </div>
                   <div className="text-[11px] text-slate-500 flex flex-wrap gap-x-4 gap-y-0.5">
                     {criterion === 'SKILL' ? (
@@ -320,8 +361,16 @@ export function CriteriaReport({
                   {item.verdict !== 'OK' && criterion === 'MANDAY' && item.suggested_manday != null && (
                     <p className="text-[11px] text-indigo-700 font-semibold">→ Manday đề xuất: {item.suggested_manday}</p>
                   )}
+                  {item.changed && !item.deleted && (
+                    <p className="text-[11px] text-sky-700 font-semibold">
+                      ✎ Hiện tại: {criterion === 'SKILL'
+                        ? `${item.current_skill_area || '—'} / ${item.current_skill || '—'}`
+                        : `Manday EST ${item.current_manday_est ?? '—'}`}
+                    </p>
+                  )}
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

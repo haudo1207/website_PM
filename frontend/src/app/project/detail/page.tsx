@@ -4357,54 +4357,73 @@ function ProjectDetailContent() {
 
   useEffect(() => {
     if (highlightTaskParam && items.length > 0) {
-      const taskId = parseInt(highlightTaskParam);
-      if (!taskId) return;
-      const task = items.find((t: any) => t.id === taskId);
-      if (task) {
-        // Same as handleOpenAttentionTask: switch to the task's own Phase and
-        // un-collapse its Task Group first, otherwise the row simply isn't in
-        // the DOM yet (e.g. a previously-collapsed group) and the scroll below
-        // silently finds nothing to scroll to.
-        if (task.phase_name && task.phase_name !== activePhase) setActivePhase(task.phase_name);
-        if (task.task_group_id) {
-          setCollapsedGroups(prev => {
-            if (!prev.has(task.task_group_id)) return prev;
-            const next = new Set(prev);
-            next.delete(task.task_group_id);
-            return next;
-          });
-        }
-        setHighlightTaskId(taskId);
-        // taskTableCardRef's scroll container only becomes truly scrollable
-        // once its own useLayoutEffect/ResizeObserver has stamped an explicit
-        // pixel height on it (see that effect's comments) - a single fixed
-        // 300ms scrollIntoView could fire before that has happened (slower
-        // project/task loads, phase switch above re-triggering layout) and
-        // land on nothing to scroll, with no retry. Poll instead so it keeps
-        // trying until the row actually exists and settles.
-        // Scrolls exactly ONCE, the first time the row actually exists in the
-        // DOM — this used to keep re-calling scrollIntoView up to 3 times
-        // (every 400ms) even after the row was already found and already
-        // centered, which fought any scroll the person made by hand right
-        // after landing (their own scroll kept getting snapped back to
-        // center by the next scheduled call). The retry loop below still
-        // polls until the row exists (a freshly un-collapsed Group's row
-        // isn't in the DOM immediately), it just stops dead once it does.
-        let attempts = 0;
-        const tryScroll = () => {
-          attempts += 1;
-          const el = document.getElementById(`task-row-${taskId}`);
-          if (el) {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-          } else if (attempts < 10) {
-            setTimeout(tryScroll, 300);
-          }
-        };
-        setTimeout(tryScroll, 300);
-        setTimeout(() => setHighlightTaskId(prev => prev === taskId ? null : prev), 4000);
-      }
+      focusTask(parseInt(highlightTaskParam));
     }
   }, [highlightTaskParam, items]);
+
+  // Switch to the task's phase, un-collapse its group, scroll to + flash its
+  // row. Shared by the ?highlightTask= deep link above and the AI Review
+  // Skill/Manday tabs (clicking a "chưa chuẩn" verdict).
+  function focusTask(taskId: number) {
+    if (!taskId) return null;
+    const task = items.find((t: any) => t.id === taskId);
+    if (task) {
+      // Same as handleOpenAttentionTask: switch to the task's own Phase and
+      // un-collapse its Task Group first, otherwise the row simply isn't in
+      // the DOM yet (e.g. a previously-collapsed group) and the scroll below
+      // silently finds nothing to scroll to.
+      if (task.phase_name && task.phase_name !== activePhase) setActivePhase(task.phase_name);
+      if (task.task_group_id) {
+        setCollapsedGroups(prev => {
+          if (!prev.has(task.task_group_id)) return prev;
+          const next = new Set(prev);
+          next.delete(task.task_group_id);
+          return next;
+        });
+      }
+      setHighlightTaskId(taskId);
+      // taskTableCardRef's scroll container only becomes truly scrollable
+      // once its own useLayoutEffect/ResizeObserver has stamped an explicit
+      // pixel height on it (see that effect's comments) - a single fixed
+      // 300ms scrollIntoView could fire before that has happened (slower
+      // project/task loads, phase switch above re-triggering layout) and
+      // land on nothing to scroll, with no retry. Poll instead so it keeps
+      // trying until the row actually exists and settles.
+      // Scrolls exactly ONCE, the first time the row actually exists in the
+      // DOM — this used to keep re-calling scrollIntoView up to 3 times
+      // (every 400ms) even after the row was already found and already
+      // centered, which fought any scroll the person made by hand right
+      // after landing (their own scroll kept getting snapped back to
+      // center by the next scheduled call). The retry loop below still
+      // polls until the row exists (a freshly un-collapsed Group's row
+      // isn't in the DOM immediately), it just stops dead once it does.
+      let attempts = 0;
+      const tryScroll = () => {
+        attempts += 1;
+        const el = document.getElementById(`task-row-${taskId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } else if (attempts < 10) {
+          setTimeout(tryScroll, 300);
+        }
+      };
+      setTimeout(tryScroll, 300);
+      setTimeout(() => setHighlightTaskId(prev => prev === taskId ? null : prev), 4000);
+    }
+    return task || null;
+  }
+
+  // AI Review → Skill/Manday tab → click a verdict: close the review drawer,
+  // bring the row into view, and open the task's detail drawer to fix it.
+  const handleOpenTaskFromAIReview = (taskId: number) => {
+    const task = focusTask(taskId);
+    if (!task) {
+      flash('Không tìm thấy task này trong dự án (có thể đã bị xoá).', true);
+      return;
+    }
+    setIsAIDrawerOpen(false);
+    setSelectedTask(task);
+  };
 
   // Keep selectedTask in sync with items after reload
   useEffect(() => {
@@ -9767,6 +9786,7 @@ function ProjectDetailContent() {
           month: taskPeriodMonth === 'all' ? undefined : taskPeriodMonth,
           year: taskPeriodYear === 'all' ? undefined : taskPeriodYear,
         } : undefined}
+        onOpenTask={handleOpenTaskFromAIReview}
         onSuccessCheck={() => {
           reloadAll();
           loadProject();
