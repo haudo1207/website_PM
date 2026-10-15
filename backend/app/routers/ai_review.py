@@ -828,6 +828,8 @@ def _serialize_task_for_criteria(t: Task) -> dict:
         "skill_area": area.name if area else None,
         "skill_area_category": area.category.name if area and area.category else None,
         "skill": skill.name if skill else None,
+        "skill_solution_id": t.skill_solution_id,
+        "skill_vendor_id": t.skill_vendor_id,
         "skill_belongs_to_area": bool(skill and area and skill.group_id == area.id),
         "manday_est": float(t.manday_est) if t.manday_est is not None else None,
         "manday_actual": float(t.manday_actual) if t.manday_actual is not None else None,
@@ -858,19 +860,58 @@ def _skill_catalog_text(db: Session) -> str:
     return text
 
 
-def _criteria_log_to_dict(log: AIReviewLog) -> dict:
+def _attach_current_state(db: Session, criterion: Optional[str], items: list) -> list:
+    """Flag each verdict whose task was edited (on the criterion's own
+    fields) or deleted since the scan — a log is a snapshot, so after the
+    member fixes a task the FE should say "đã sửa, cần quét lại" instead of
+    still showing the stale verdict as if nothing changed."""
+    ids = [i.get("task_id") for i in items if i.get("task_id")]
+    current = {t.id: t for t in db.query(Task).filter(Task.id.in_(ids)).all()} if ids else {}
+    out = []
+    for item in items:
+        item = dict(item)
+        t = current.get(item.get("task_id"))
+        if t is None:
+            item["changed"] = True
+            item["deleted"] = True
+            out.append(item)
+            continue
+        cur_area = t.skill_solution_rel.name if t.skill_solution_rel else None
+        cur_skill = t.skill_vendor_rel.name if t.skill_vendor_rel else None
+        cur_md = float(t.manday_est) if t.manday_est is not None else None
+        item["current_skill_area"] = cur_area
+        item["current_skill"] = cur_skill
+        item["current_manday_est"] = cur_md
+        if criterion == "SKILL":
+            # Older logs predate the stored ids — fall back to names.
+            if "skill_solution_id" in item:
+                item["changed"] = (item["skill_solution_id"], item["skill_vendor_id"]) != (t.skill_solution_id, t.skill_vendor_id)
+            else:
+                item["changed"] = (item.get("skill_area"), item.get("skill")) != (cur_area, cur_skill)
+        else:
+            item["changed"] = item.get("manday_est") != cur_md
+        out.append(item)
+    return out
+
+
+def _criteria_log_to_dict(log: AIReviewLog, db: Optional[Session] = None) -> dict:
     parts = (log.entity_type or "").split(":")
+    criterion = parts[1] if len(parts) > 1 else None
+    items = log.issues_json or []
+    if db is not None:
+        items = _attach_current_state(db, criterion, items)
     return {
         "id": log.id,
         "project_id": log.project_id,
         "entity_type": parts[0],
-        "criterion": parts[1] if len(parts) > 1 else None,
+        "criterion": criterion,
         "period": parts[2] if len(parts) > 2 else None,
         "entity_id": log.entity_id,
         "prompt_snapshot": log.prompt_snapshot,
         "status": log.status,
         "score": log.score,
-        "items": log.issues_json or [],
+        "items": items,
+        "changed_count": sum(1 for i in items if i.get("changed")),
         "suggestions": log.suggestions_json or [],
         "result_markdown": log.result_markdown,
         "checked_at": log.checked_at.isoformat() if log.checked_at else None,
@@ -947,7 +988,7 @@ def get_criteria_latest(
     if entity_type == "MEMBER" and project_id:
         q = q.filter(AIReviewLog.project_id == project_id)
     log = q.order_by(AIReviewLog.checked_at.desc()).first()
-    return {"success": True, "data": _criteria_log_to_dict(log) if log else None}
+    return {"success": True, "data": _criteria_log_to_dict(log, db) if log else None}
 
 
 @router.post("/ai-review/criteria-check")
@@ -1016,17 +1057,34 @@ def run_criteria_check(body: dict, db: Session = Depends(get_db), current_user=D
         "Mỗi task trong dữ liệu phải có đúng một phần tử trong items."
     )
 
+    # Only the fields each criterion actually needs, compact JSON — the Skill
+    # request also carries the whole skill catalog, and an oversized prompt
+    # is what the shared AI gateway most often rejects as "overloaded".
+    if criterion == "SKILL":
+        ai_fields = ("task_id", "detail", "phase", "task_group", "skill_area_category", "skill_area", "skill", "skill_belongs_to_area")
+    else:
+        ai_fields = ("task_id", "detail", "phase", "task_group", "priority", "status", "skill_area", "skill",
+                     "manday_est", "manday_actual", "start_date", "end_date_est", "end_date_actual", "days_late")
+    ai_rows = [{k: r[k] for k in ai_fields} for r in task_rows]
+
     truncated_note = f" — chỉ gửi {MAX_CRITERIA_TASKS} task đầu tiên" if truncated else ""
     user_content = (
         f"Tiêu chí đánh giá (prompt của Leader):\n{prompt_text}\n\n"
         f"Phạm vi: {_period_label(month, year)}{truncated_note}\n\n"
-        f"Danh sách task:\n{json.dumps(task_rows, ensure_ascii=False, indent=2)}"
+        f"Danh sách task:\n{json.dumps(ai_rows, ensure_ascii=False, separators=(',', ':'))}"
         f"{extra_context}"
     )
 
     try:
-        result = chat_completion_json(system_prompt, user_content, max_tokens=8000, temperature=0.2, timeout=180)
+        result = chat_completion_json(
+            system_prompt, user_content,
+            max_tokens=min(8000, 800 + 150 * len(ai_rows)),
+            temperature=0.2, timeout=120, retries=5,
+        )
     except AiClientError as e:
+        msg = str(e).lower()
+        if "overloaded" in msg or "quá tải" in msg or "no available channel" in msg or "service_unavailable" in msg:
+            raise HTTPException(503, "Dịch vụ AI đang quá tải (đã tự thử lại nhiều lần). Vui lòng bấm quét lại sau ít phút.")
         raise HTTPException(500, f"Error calling AI review: {e}")
 
     # Re-attach the real task fields from the DB — never trust the model to
@@ -1052,6 +1110,8 @@ def run_criteria_check(body: dict, db: Session = Depends(get_db), current_user=D
             "assigned": row["assigned"],
             "skill_area": row["skill_area"],
             "skill": row["skill"],
+            "skill_solution_id": row["skill_solution_id"],
+            "skill_vendor_id": row["skill_vendor_id"],
             "manday_est": row["manday_est"],
             "manday_actual": row["manday_actual"],
             "status": row["status"],
@@ -1108,4 +1168,4 @@ def run_criteria_check(body: dict, db: Session = Depends(get_db), current_user=D
     )
     db.commit()
 
-    return {"success": True, "data": _criteria_log_to_dict(log)}
+    return {"success": True, "data": _criteria_log_to_dict(log, db)}

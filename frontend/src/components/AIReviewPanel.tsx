@@ -21,6 +21,8 @@ interface AIReviewPanelProps {
   // Month/year the Skill/Manday criteria tabs scope their tasks to (the
   // /kpi drill-in month). Omitted = all time.
   period?: { month?: number; year?: number };
+  // Clicking a verdict row in the Skill/Manday tabs jumps to that task.
+  onOpenTask?: (taskId: number) => void;
 }
 
 interface ReviewLog {
@@ -254,6 +256,7 @@ export default function AIReviewPanel({
   memberTab,
   contextProjectId,
   period,
+  onOpenTask,
 }: AIReviewPanelProps) {
   const [innerTab, setInnerTab] = useState<'current' | 'history' | 'member'>('current');
   const [reportTab, setReportTab] = useState<'overview' | 'manday' | 'skill'>('overview');
@@ -347,10 +350,10 @@ export default function AIReviewPanel({
               <ReportBody log={primary.currentLog} loading={primary.loading} onRunCheck={primary.handleRunCheck} />
             )}
             {reportTab === 'manday' && (
-              <CriteriaReport criterion="MANDAY" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} />
+              <CriteriaReport criterion="MANDAY" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} />
             )}
             {reportTab === 'skill' && (
-              <CriteriaReport criterion="SKILL" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} />
+              <CriteriaReport criterion="SKILL" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} />
             )}
           </>
         )}
