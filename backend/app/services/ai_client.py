@@ -15,7 +15,7 @@ class AiClientError(RuntimeError):
     pass
 
 
-def chat_completion_json(system_prompt: str, user_content: str, *, max_tokens: int = 2000, temperature: float = 0.4) -> dict:
+def chat_completion_json(system_prompt: str, user_content: str, *, max_tokens: int = 2000, temperature: float = 0.4, timeout: int | None = None) -> dict:
     """Call the configured OpenAI-compatible endpoint and parse a strict-JSON reply.
 
     Raises AiClientError on transport failure, non-200 response, empty output,
@@ -40,7 +40,7 @@ def chat_completion_json(system_prompt: str, user_content: str, *, max_tokens: i
                 ],
                 "temperature": temperature,
             },
-            timeout=settings.AI_TIMEOUT_SECONDS,
+            timeout=timeout or settings.AI_TIMEOUT_SECONDS,
         )
     except requests.exceptions.RequestException as e:
         # Network-level failure (connection reset, timeout, DNS, ...) — the
