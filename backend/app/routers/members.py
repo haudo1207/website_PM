@@ -236,12 +236,15 @@ def list_members(
         q = db.query(Member, User.id.label("user_id")).outerjoin(User, User.member_id == Member.id).options(joinedload(Member.skills))
     else:
         # Subquery to calculate KPI from Tasks for each member
-        # Using UNION ALL to combine assigned and support portions of the task
+        # Using UNION ALL to combine assigned and support portions of the task.
+        # Manday is split by the same KPI Ratio as KPI itself (3 manday at
+        # 50/50 → 1.5 each) — it used to give BOTH people the full manday,
+        # double-counting every task (same split /kpi-summary already uses).
         q_assigned = db.query(
             Task.assigned_id.label('member_id'),
             Task.kpi_assigned.label('kpi_final'),
-            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (func.coalesce(Task.manday_actual, Task.manday_est, 0.0) * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
+            (func.coalesce(Task.manday_est, 0.0) * Task.kpi_ratio_assign / 100.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
             Task.id.label('task_id')
         ).filter(
@@ -253,8 +256,8 @@ def list_members(
         q_support = db.query(
             Task.support_id.label('member_id'),
             Task.kpi_support.label('kpi_final'),
-            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (func.coalesce(Task.manday_actual, Task.manday_est, 0.0) * Task.kpi_ratio_support / 100.0).label('manday_actual'),
+            (func.coalesce(Task.manday_est, 0.0) * Task.kpi_ratio_support / 100.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
             Task.id.label('task_id')
         ).filter(

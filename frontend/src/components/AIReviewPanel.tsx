@@ -350,10 +350,10 @@ export default function AIReviewPanel({
               <ReportBody log={primary.currentLog} loading={primary.loading} onRunCheck={primary.handleRunCheck} />
             )}
             {reportTab === 'manday' && (
-              <CriteriaReport criterion="MANDAY" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} />
+              <CriteriaReport criterion="MANDAY" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} onTasksChanged={onSuccessCheck} />
             )}
             {reportTab === 'skill' && (
-              <CriteriaReport criterion="SKILL" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} />
+              <CriteriaReport criterion="SKILL" scope={criteriaScope} scopeText={criteriaScopeText} skillPrompt={criteriaPrompts.prompts.skill} onOpenTask={onOpenTask} onTasksChanged={onSuccessCheck} />
             )}
           </>
         )}

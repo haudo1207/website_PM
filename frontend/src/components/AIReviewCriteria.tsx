@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import {
   AICriteriaScope,
   AICriterion,
+  applyAICriteriaSuggestions,
   getAICriteriaLatest,
   getAICriteriaPrompts,
   runAICriteriaCheck,
@@ -30,6 +31,10 @@ interface CriteriaItem {
   current_skill_area?: string | null;
   current_skill?: string | null;
   current_manday_est?: number | null;
+  // One-click fix: suggestion is catalog-valid and the task is untouched
+  // since the scan / the suggestion is already what the task holds.
+  applicable?: boolean;
+  applied?: boolean;
 }
 
 interface CriteriaLog {
@@ -37,6 +42,7 @@ interface CriteriaLog {
   status: string;
   score: number;
   changed_count?: number;
+  applicable_count?: number;
   items: CriteriaItem[];
   suggestions: string[];
   result_markdown: string;
@@ -173,6 +179,7 @@ export function CriteriaReport({
   scopeText,
   skillPrompt,
   onOpenTask,
+  onTasksChanged,
 }: {
   criterion: AICriterion;
   scope: AICriteriaScope;
@@ -180,8 +187,35 @@ export function CriteriaReport({
   skillPrompt: string;
   // Jump to the task in the table so it can be fixed right away.
   onOpenTask?: (taskId: number) => void;
+  // Suggestions were written onto tasks — let the page reload its table.
+  onTasksChanged?: () => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [applyingId, setApplyingId] = useState<number | 'all' | null>(null);
+
+  const handleApply = async (taskIds?: number[]) => {
+    if (!log) return;
+    if (!taskIds && !confirm(`Áp dụng đề xuất của AI cho ${log.applicable_count} task?`)) return;
+    setApplyingId(taskIds ? taskIds[0] : 'all');
+    try {
+      const res = await applyAICriteriaSuggestions(log.id, taskIds);
+      if (res.success && res.data) {
+        setLog(res.data.log);
+        const failed = (res.data.results || []).filter((r: any) => !r.ok);
+        if (failed.length) {
+          alert(`Không áp dụng được ${failed.length} task:\n` + failed.map((f: any) => {
+            const it = items.find(i => i.task_id === f.task_id);
+            return `• ${it?.task_code ? '#' + it.task_code + ' ' : ''}${it?.detail || f.task_id}: ${f.error}`;
+          }).join('\n'));
+        }
+        if (failed.length < (res.data.results || []).length) onTasksChanged?.();
+      }
+    } catch (err: any) {
+      alert(err.response?.data?.detail || 'Không thể áp dụng đề xuất.');
+    } finally {
+      setApplyingId(null);
+    }
+  };
   const [log, setLog] = useState<CriteriaLog | null>(null);
   const [verdictFilter, setVerdictFilter] = useState<'ALL' | 'ISSUE'>('ALL');
 
@@ -297,6 +331,17 @@ export function CriteriaReport({
           <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2">
               <h4 className="text-xs font-bold text-slate-600 uppercase tracking-wider">Đánh giá từng task ({items.length})</h4>
+              <div className="flex items-center gap-2">
+              {(log.applicable_count ?? 0) > 0 && (
+                <button
+                  onClick={() => handleApply()}
+                  disabled={applyingId !== null}
+                  className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-60 flex items-center gap-1"
+                >
+                  <span className="material-symbols-outlined text-[14px]">auto_fix_high</span>
+                  {applyingId === 'all' ? 'Đang áp dụng...' : `Áp dụng tất cả (${log.applicable_count})`}
+                </button>
+              )}
               <div className="flex rounded-lg border border-slate-200 overflow-hidden text-[11px] font-semibold">
                 <button
                   onClick={() => setVerdictFilter('ALL')}
@@ -306,6 +351,7 @@ export function CriteriaReport({
                   onClick={() => setVerdictFilter('ISSUE')}
                   className={`px-2.5 py-1 ${verdictFilter === 'ISSUE' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
                 >Chưa chuẩn ({counts.WARNING + counts.WRONG})</button>
+              </div>
               </div>
             </div>
             <div className="divide-y divide-slate-100">
@@ -327,7 +373,9 @@ export function CriteriaReport({
                       {clickable && <span className="material-symbols-outlined text-[13px] text-slate-400 align-middle ml-1">open_in_new</span>}
                     </p>
                     <div className="flex items-center gap-1.5 shrink-0">
-                      {item.changed && (
+                      {item.applied ? (
+                        <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-emerald-100 text-emerald-800">✓ Đã áp dụng đề xuất</span>
+                      ) : item.changed && (
                         <span className="px-2 py-0.5 rounded text-[9px] font-black uppercase bg-sky-100 text-sky-800">
                           {item.deleted ? 'Đã xoá' : 'Đã sửa – cần quét lại'}
                         </span>
@@ -361,7 +409,17 @@ export function CriteriaReport({
                   {item.verdict !== 'OK' && criterion === 'MANDAY' && item.suggested_manday != null && (
                     <p className="text-[11px] text-indigo-700 font-semibold">→ Manday đề xuất: {item.suggested_manday}</p>
                   )}
-                  {item.changed && !item.deleted && (
+                  {item.applicable && (
+                    <button
+                      onClick={e => { e.stopPropagation(); handleApply([item.task_id]); }}
+                      disabled={applyingId !== null}
+                      className="text-[11px] font-bold px-2.5 py-1 rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-60 flex items-center gap-1"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">auto_fix_high</span>
+                      {applyingId === item.task_id ? 'Đang áp dụng...' : 'Áp dụng đề xuất'}
+                    </button>
+                  )}
+                  {item.changed && !item.deleted && !item.applied && (
                     <p className="text-[11px] text-sky-700 font-semibold">
                       ✎ Hiện tại: {criterion === 'SKILL'
                         ? `${item.current_skill_area || '—'} / ${item.current_skill || '—'}`

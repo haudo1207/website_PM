@@ -944,6 +944,11 @@ export const getAICriteriaLatest = (criterion: AICriterion, scope: AICriteriaSco
     },
   }).then(r => r.data);
 
+// Writes the scan's suggested Skill/Manday onto the task(s); taskIds omitted
+// = every applicable verdict in that scan.
+export const applyAICriteriaSuggestions = (logId: number, taskIds?: number[]) =>
+  api.post('/ai-review/criteria-apply', { log_id: logId, task_ids: taskIds }).then(r => r.data);
+
 export const runAICriteriaCheck = (criterion: AICriterion, scope: AICriteriaScope, promptContent?: string) =>
   api.post('/ai-review/criteria-check', {
     criterion,
