@@ -860,6 +860,49 @@ def _skill_catalog_text(db: Session) -> str:
     return text
 
 
+def _norm_name(s: Optional[str]) -> str:
+    return " ".join((s or "").replace("&", " & ").split()).lower()
+
+
+def _resolve_skill_ids(db: Session, area_name: Optional[str], skill_name: Optional[str],
+                       fallback_area_id: Optional[int]) -> Optional[tuple]:
+    """Map the AI's suggested Skill Area/Skill *names* to a real
+    (group_id, skill_id) pair from the catalog, or None if no exact pair
+    exists. The skill must belong to the area (same rule the task form
+    enforces); when the AI only names a skill, the task's current area is
+    tried first, then any area that has a skill by that name."""
+    if not skill_name:
+        return None
+    want_skill = _norm_name(skill_name)
+    want_area = _norm_name(area_name)
+    rows = (
+        db.query(Group.id, Group.name, Skill.id, Skill.name)
+        .join(Skill, Skill.group_id == Group.id)
+        .filter(Skill.is_active == True)
+        .all()
+    )
+    matches = [(gid, sid, _norm_name(gname)) for gid, gname, sid, sname in rows if _norm_name(sname) == want_skill]
+    if want_area:
+        for gid, sid, gname in matches:
+            if gname == want_area:
+                return gid, sid
+        return None
+    for gid, sid, _ in matches:
+        if gid == fallback_area_id:
+            return gid, sid
+    return (matches[0][0], matches[0][1]) if len(matches) == 1 else None
+
+
+def _normalize_manday(value) -> Optional[float]:
+    """Round to the 0.25-day grid the task form uses, within its 0.25–365 range."""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    v = round(v * 4) / 4
+    return min(max(v, 0.25), 365.0)
+
+
 def _attach_current_state(db: Session, criterion: Optional[str], items: list) -> list:
     """Flag each verdict whose task was edited (on the criterion's own
     fields) or deleted since the scan — a log is a snapshot, so after the
@@ -888,8 +931,23 @@ def _attach_current_state(db: Session, criterion: Optional[str], items: list) ->
                 item["changed"] = (item["skill_solution_id"], item["skill_vendor_id"]) != (t.skill_solution_id, t.skill_vendor_id)
             else:
                 item["changed"] = (item.get("skill_area"), item.get("skill")) != (cur_area, cur_skill)
+            if "suggested_skill_vendor_id" not in item and item.get("verdict") != "OK" and item.get("suggested_skill"):
+                ids = _resolve_skill_ids(db, item.get("suggested_skill_area"), item.get("suggested_skill"),
+                                         item.get("skill_solution_id", t.skill_solution_id))
+                item["suggested_skill_solution_id"], item["suggested_skill_vendor_id"] = ids or (None, None)
+            target = (item.get("suggested_skill_solution_id"), item.get("suggested_skill_vendor_id"))
+            has_suggestion = target[1] is not None
+            item["applied"] = has_suggestion and target == (t.skill_solution_id, t.skill_vendor_id)
         else:
             item["changed"] = item.get("manday_est") != cur_md
+            if item.get("suggested_manday") is not None:
+                item["suggested_manday"] = _normalize_manday(item["suggested_manday"])
+            has_suggestion = item.get("suggested_manday") is not None
+            item["applied"] = has_suggestion and item.get("suggested_manday") == cur_md
+        item["task_group_id"] = t.task_group_id
+        # One-click fix is offered only for a still-untouched, non-OK verdict
+        # that carries a concrete, catalog-valid suggestion.
+        item["applicable"] = item.get("verdict") != "OK" and has_suggestion and not item["changed"]
         out.append(item)
     return out
 
@@ -911,7 +969,10 @@ def _criteria_log_to_dict(log: AIReviewLog, db: Optional[Session] = None) -> dic
         "status": log.status,
         "score": log.score,
         "items": items,
-        "changed_count": sum(1 for i in items if i.get("changed")),
+        # Applied suggestions are edits too, but already resolved — don't nag
+        # for a rescan because of them.
+        "changed_count": sum(1 for i in items if i.get("changed") and not i.get("applied")),
+        "applicable_count": sum(1 for i in items if i.get("applicable")),
         "suggestions": log.suggestions_json or [],
         "result_markdown": log.result_markdown,
         "checked_at": log.checked_at.isoformat() if log.checked_at else None,
@@ -1121,8 +1182,17 @@ def run_criteria_check(body: dict, db: Session = Depends(get_db), current_user=D
         if criterion == "SKILL":
             item["suggested_skill_area"] = raw.get("suggested_skill_area")
             item["suggested_skill"] = raw.get("suggested_skill")
+            resolved = None
+            if verdict != "OK" and item["suggested_skill"]:
+                resolved = _resolve_skill_ids(db, item["suggested_skill_area"], item["suggested_skill"], row["skill_solution_id"])
+            # Only a pair that really exists in the catalog can be applied.
+            item["suggested_skill_solution_id"], item["suggested_skill_vendor_id"] = resolved or (None, None)
+            if resolved:
+                grp = db.query(Group).filter(Group.id == resolved[0]).first()
+                sk = db.query(Skill).filter(Skill.id == resolved[1]).first()
+                item["suggested_skill_area"], item["suggested_skill"] = grp.name, sk.name
         else:
-            item["suggested_manday"] = raw.get("suggested_manday")
+            item["suggested_manday"] = _normalize_manday(raw.get("suggested_manday")) if verdict != "OK" else None
         items.append(item)
 
     try:
@@ -1169,3 +1239,54 @@ def run_criteria_check(body: dict, db: Session = Depends(get_db), current_user=D
     db.commit()
 
     return {"success": True, "data": _criteria_log_to_dict(log, db)}
+
+
+@router.post("/ai-review/criteria-apply")
+def apply_criteria_suggestions(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Write the AI's suggested Skill Area/Skill or Manday EST onto the task(s)
+    of one criteria scan. `task_ids` limits it to those tasks; omitted =
+    every applicable verdict ("Áp dụng tất cả").
+
+    Goes through the regular task PATCH handler (update_task) so the exact
+    same validation (skill-in-area, manday range, task-group manday/date
+    caps), KPI recalculation and audit logging apply as a manual edit."""
+    from .task_groups import update_task
+    from ..utils.access import require_project
+
+    log_id = body.get("log_id")
+    only_ids = {int(i) for i in (body.get("task_ids") or [])}
+    log = db.query(AIReviewLog).filter(AIReviewLog.id == log_id).first() if log_id else None
+    if not log or ":" not in (log.entity_type or ""):
+        raise HTTPException(404, "Không tìm thấy kết quả đánh giá.")
+    # Calling update_task directly skips task_groups' router-level
+    # project-access dependency — enforce the same scope check here.
+    require_project(db, current_user, log.project_id)
+
+    criterion = log.entity_type.split(":")[1]
+    items = _attach_current_state(db, criterion, log.issues_json or [])
+    targets = [i for i in items if i.get("applicable") and (not only_ids or i["task_id"] in only_ids)]
+    if not targets:
+        raise HTTPException(400, "Không có đề xuất nào có thể áp dụng (task có thể đã được sửa — hãy quét lại).")
+
+    results = []
+    for item in targets:
+        if criterion == "SKILL":
+            patch = {
+                "skill_solution_id": item["suggested_skill_solution_id"],
+                "skill_vendor_id": item["suggested_skill_vendor_id"],
+            }
+        else:
+            patch = {"manday_est": item["suggested_manday"]}
+        try:
+            update_task(item["task_group_id"], item["task_id"], patch, db, current_user)
+            results.append({"task_id": item["task_id"], "ok": True})
+        except HTTPException as e:
+            db.rollback()
+            results.append({"task_id": item["task_id"], "ok": False, "error": str(e.detail)})
+        except Exception as e:  # keep going for the remaining tasks
+            db.rollback()
+            results.append({"task_id": item["task_id"], "ok": False, "error": str(e)})
+
+    db.expire_all()
+    log = db.query(AIReviewLog).filter(AIReviewLog.id == log.id).first()
+    return {"success": True, "data": {"results": results, "log": _criteria_log_to_dict(log, db)}}
