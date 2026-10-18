@@ -63,6 +63,16 @@ const getCanonicalTaskKpi = (t: any, memberId: any): number => {
   return 0;
 };
 
+// Values match users.role on the member's linked account; "none" = members
+// with no login at all (backend /members `role` param).
+const ROLE_FILTER_OPTIONS = [
+  { value: 'super_admin', label: 'Super Admin' },
+  { value: 'leader', label: 'Leader' },
+  { value: 'member', label: 'Member' },
+  { value: 'viewer', label: 'Viewer' },
+  { value: 'none', label: 'Chưa có tài khoản' },
+];
+
 const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth, workspaceCode }: {
   member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => void,
   initialYear: number, initialMonth: number, workspaceCode?: string | null,
@@ -395,6 +405,8 @@ export default function KPIPage() {
     const [level, setLevel] = useState("");
     const [workspace, setWorkspace] = useState("");
     const [team, setTeam] = useState("");
+    // Account role of the member's login ("none" = no account) — see ROLE_FILTER_OPTIONS.
+    const [roleFilter, setRoleFilter] = useState("");
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
     const [levelOptions, setLevelOptions] = useState<any[]>([]);
@@ -540,6 +552,7 @@ export default function KPIPage() {
             if (typeof snap.year === 'string') setYear(snap.year);
             if (typeof snap.level === 'string') setLevel(snap.level);
             if (typeof snap.team === 'string') setTeam(snap.team);
+            if (typeof snap.roleFilter === 'string') setRoleFilter(snap.roleFilter);
             if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
             if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
             if (snap.selectedMember) setSelectedMemberModal(snap.selectedMember);
@@ -552,7 +565,7 @@ export default function KPIPage() {
     const handleNavigateToProject = (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => {
         try {
             sessionStorage.setItem('kpiNavSnapshot', JSON.stringify({
-                activeTab, search, month, year, level, team, startDate, endDate,
+                activeTab, search, month, year, level, team, roleFilter, startDate, endDate,
                 selectedMember: selectedMemberModal,
             }));
         } catch { /* sessionStorage unavailable (private mode, quota) — restoration just won't be offered */ }
@@ -597,6 +610,7 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
             if (team) params.department = team;
+            if (roleFilter) params.role = roleFilter;
             if (debouncedSearch) params.search = debouncedSearch;
         } else {
             // KPI Tuần: gửi date range thay vì tháng/năm
@@ -605,10 +619,11 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
             if (team) params.department = team;
+            if (roleFilter) params.role = roleFilter;
             if (debouncedSearch) params.search = debouncedSearch;
         }
         return params;
-    }, [activeTab, month, year, level, workspace, team, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
+    }, [activeTab, month, year, level, workspace, team, roleFilter, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
 
     const { data: members = [], isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
@@ -719,6 +734,16 @@ export default function KPIPage() {
                                         {levelOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                                     </select>
 
+                                    {/* Role (account role) */}
+                                    <select
+                                        value={roleFilter}
+                                        onChange={e => setRoleFilter(e.target.value)}
+                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
+                                    >
+                                        <option value="">Tất cả Role</option>
+                                        {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                    </select>
+
                                     {/* Workspace */}
                                     {(() => {
                                         // Three UI shapes depending on the user's
@@ -801,8 +826,8 @@ export default function KPIPage() {
                                     {/* Clear filter — year's baseline is the current year (not ""),
                                         so "active filter" and the reset target both compare/restore
                                         against defaultYear instead of empty string. */}
-                                    {(month || year !== defaultYear || search || level || team || (!isLockedSingle && workspace)) && (
-                                        <button onClick={() => { setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam(''); if (!isLockedSingle) setWorkspace(''); }}
+                                    {(month || year !== defaultYear || search || level || team || roleFilter || (!isLockedSingle && workspace)) && (
+                                        <button onClick={() => { setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam(''); setRoleFilter(''); if (!isLockedSingle) setWorkspace(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -832,8 +857,20 @@ export default function KPIPage() {
                                         />
                                     </div>
                                     
-                                    {(startDate || endDate) && (
-                                        <button onClick={() => { setStartDate(''); setEndDate(''); }}
+                                    <div className="flex flex-col">
+                                        <label className="text-xs font-bold text-slate-500 mb-1">Role</label>
+                                        <select
+                                            value={roleFilter}
+                                            onChange={e => setRoleFilter(e.target.value)}
+                                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
+                                        >
+                                            <option value="">Tất cả Role</option>
+                                            {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                        </select>
+                                    </div>
+
+                                    {(startDate || endDate || roleFilter) && (
+                                        <button onClick={() => { setStartDate(''); setEndDate(''); setRoleFilter(''); }}
                                             className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all mt-5 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
                                             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
