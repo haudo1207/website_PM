@@ -217,6 +217,9 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
+    # Account role of the member's linked login (super_admin / leader /
+    # member / viewer), or "none" = members with no account at all.
+    role: Optional[str] = None,
     scope: Optional[bool] = Query(
         False,
         description=(
@@ -353,6 +356,9 @@ def list_members(
         q = q.filter(Member.department == department)
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
+    if role:
+        # Both query shapes above already outer-join User on member_id.
+        q = q.filter(User.id.is_(None)) if role == "none" else q.filter(User.role == role)
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
