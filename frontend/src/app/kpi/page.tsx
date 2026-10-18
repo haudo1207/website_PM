@@ -73,6 +73,12 @@ const ROLE_FILTER_OPTIONS = [
   { value: 'none', label: 'Chưa có tài khoản' },
 ];
 
+// Shared look for every /kpi filter field: small label above a same-height
+// control, laid out on a grid so the bar stays tidy at any width.
+const FILTER_FIELD_CLS = "flex flex-col gap-1 min-w-0";
+const FILTER_LABEL_CLS = "text-[11px] font-bold text-blue-800/70 uppercase tracking-wider";
+const FILTER_INPUT_CLS = "w-full h-10 border-2 border-blue-200 rounded-lg px-3 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white shadow-sm transition-all cursor-pointer hover:border-blue-300";
+
 const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, initialYear, initialMonth, workspaceCode }: {
   member: any, tasks: any[], projects: any[], onClose: () => void, onNavigate: (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => void,
   initialYear: number, initialMonth: number, workspaceCode?: string | null,
@@ -704,63 +710,96 @@ export default function KPIPage() {
                     </div>
 
                     {/* Bộ lọc nổi bật */}
-                    <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-5 py-4 shadow-sm flex flex-col gap-4">
-                        <div className="flex items-center gap-2 border-b border-blue-100 pb-2">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
-                            </svg>
-                            <span className="text-sm font-bold text-blue-800 uppercase tracking-wider">Bộ lọc dữ liệu:</span>
-                        </div>
-                        
-                        <div className="flex flex-wrap items-center gap-3">
-                            {activeTab === 'KPItotal' ? (
-                                <>
-                                    {/* Search */}
-                                    <input 
-                                        type="text" 
-                                        placeholder="Tìm kiếm tên..." 
-                                        value={search}
-                                        onChange={e => setSearch(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[200px] shadow-sm transition-all hover:border-blue-300"
-                                    />
+                    {(() => {
+                        // Year's baseline is the current year (not ""), so
+                        // "active filter" and the reset target both compare/
+                        // restore against defaultYear instead of empty string.
+                        const hasActiveFilter = activeTab === 'KPItotal'
+                            ? !!(month || year !== defaultYear || search || level || team || roleFilter || (!isLockedSingle && workspace))
+                            : !!(startDate || endDate || roleFilter);
+                        const clearFilters = () => {
+                            if (activeTab === 'KPItotal') {
+                                setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam('');
+                                if (!isLockedSingle) setWorkspace('');
+                            } else {
+                                setStartDate(''); setEndDate('');
+                            }
+                            setRoleFilter('');
+                        };
+                        const roleField = (
+                            <label className={FILTER_FIELD_CLS}>
+                                <span className={FILTER_LABEL_CLS}>Role</span>
+                                <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className={FILTER_INPUT_CLS}>
+                                    <option value="">Tất cả</option>
+                                    {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                </select>
+                            </label>
+                        );
+                        return (
+                            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-5 py-4 shadow-sm flex flex-col gap-3">
+                                <div className="flex items-center justify-between gap-2 border-b border-blue-100 pb-2 min-h-[34px]">
+                                    <div className="flex items-center gap-2">
+                                        <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z" />
+                                        </svg>
+                                        <span className="text-sm font-bold text-blue-800 uppercase tracking-wider">Bộ lọc dữ liệu</span>
+                                    </div>
+                                    {hasActiveFilter && (
+                                        <button onClick={clearFilters}
+                                            className="flex items-center gap-1.5 text-xs text-red-600 hover:text-red-700 font-bold transition-all bg-red-50 hover:bg-red-100 px-3 py-1.5 rounded-lg border border-red-200">
+                                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                            </svg>
+                                            Xóa bộ lọc
+                                        </button>
+                                    )}
+                                </div>
 
-                                    {/* Level */}
-                                    <select 
-                                        value={level} 
-                                        onChange={e => setLevel(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả Level</option>
-                                        {levelOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                                    </select>
+                                {activeTab === 'KPItotal' ? (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                                        <label className={`${FILTER_FIELD_CLS} col-span-2`}>
+                                            <span className={FILTER_LABEL_CLS}>Tìm kiếm</span>
+                                            <input
+                                                type="text"
+                                                placeholder="Tên thành viên..."
+                                                value={search}
+                                                onChange={e => setSearch(e.target.value)}
+                                                className={FILTER_INPUT_CLS}
+                                            />
+                                        </label>
 
-                                    {/* Role (account role) */}
-                                    <select
-                                        value={roleFilter}
-                                        onChange={e => setRoleFilter(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả Role</option>
-                                        {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                    </select>
+                                        <label className={FILTER_FIELD_CLS}>
+                                            <span className={FILTER_LABEL_CLS}>Tháng</span>
+                                            <select value={month} onChange={e => setMonth(e.target.value)} className={FILTER_INPUT_CLS}>
+                                                <option value="">Tất cả</option>
+                                                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                                                    <option key={m} value={m}>Tháng {m}</option>
+                                                ))}
+                                            </select>
+                                        </label>
 
-                                    {/* Workspace */}
-                                    {(() => {
-                                        // Three UI shapes depending on the user's
-                                        // authorized scope:
-                                        //  - Super Admin   → full dropdown (existing)
-                                        //  - Single-Ws scoped user (Member/Viewer or
-                                        //    single-Workspace Leader) → locked dropdown
-                                        //    with the single assigned option (existing)
-                                        //  - Multi-Ws Leader → enabled dropdown with
-                                        //    "All authorized Workspaces" + one option per
-                                        //    granted Workspace (NEW)
-                                        const selectValue = isLockedSingle
-                                            ? lockedWorkspaceOptions[0].name
-                                            : workspace;
-                                        return (
+                                        <label className={FILTER_FIELD_CLS}>
+                                            <span className={FILTER_LABEL_CLS}>Năm</span>
+                                            <select value={year} onChange={e => setYear(e.target.value)} className={FILTER_INPUT_CLS}>
+                                                <option value="">Tất cả</option>
+                                                {[2023, 2024, 2025, 2026, 2027].map(y => (
+                                                    <option key={y} value={y}>Năm {y}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+
+                                        {/* Workspace — three UI shapes depending on the
+                                            user's authorized scope:
+                                             - Super Admin → full dropdown
+                                             - Single-Ws scoped user (Member/Viewer or
+                                               single-Workspace Leader) → locked dropdown
+                                               with the single assigned option
+                                             - Multi-Ws Leader → "All authorized
+                                               Workspaces" + one option per granted one */}
+                                        <label className={FILTER_FIELD_CLS}>
+                                            <span className={FILTER_LABEL_CLS}>Workspace</span>
                                             <select
-                                                value={selectValue}
+                                                value={isLockedSingle ? lockedWorkspaceOptions[0].name : workspace}
                                                 onChange={e => handleWorkspaceChange(e.target.value)}
                                                 disabled={isLockedSingle}
                                                 title={isLockedSingle
@@ -768,120 +807,60 @@ export default function KPIPage() {
                                                     : isMultiWs
                                                         ? 'Chọn một Workspace được gán hoặc kết hợp tất cả'
                                                         : undefined}
-                                                className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300 disabled:cursor-not-allowed disabled:opacity-70"
+                                                className={`${FILTER_INPUT_CLS} disabled:cursor-not-allowed disabled:opacity-70`}
                                             >
                                                 {isLockedSingle ? (
                                                     <option value={lockedWorkspaceOptions[0].name}>{lockedWorkspaceOptions[0].name}</option>
                                                 ) : isMultiWs ? (
                                                     <>
-                                                        <option value="">Tất cả Workspace được gán ({lockedWorkspaceOptions.length})</option>
+                                                        <option value="">Tất cả được gán ({lockedWorkspaceOptions.length})</option>
                                                         {lockedWorkspaceOptions.map(w => (
                                                             <option key={w.code} value={w.name}>{w.name}</option>
                                                         ))}
                                                     </>
                                                 ) : (
                                                     <>
-                                                        <option value="">Tất cả Workspace</option>
+                                                        <option value="">Tất cả</option>
                                                         {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
                                                     </>
                                                 )}
                                             </select>
-                                        );
-                                    })()}
+                                        </label>
 
-                                    {/* Team */}
-                                    <select 
-                                        value={team} 
-                                        onChange={e => setTeam(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[160px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả Team</option>
-                                        {teamOptions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                                    </select>
+                                        <label className={FILTER_FIELD_CLS}>
+                                            <span className={FILTER_LABEL_CLS}>Team</span>
+                                            <select value={team} onChange={e => setTeam(e.target.value)} className={FILTER_INPUT_CLS}>
+                                                <option value="">Tất cả</option>
+                                                {teamOptions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                                            </select>
+                                        </label>
 
-                                    {/* Month */}
-                                    <select 
-                                        value={month} 
-                                        onChange={e => setMonth(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả các tháng</option>
-                                        {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                                            <option key={m} value={m}>Tháng {m}</option>
-                                        ))}
-                                    </select>
+                                        <label className={FILTER_FIELD_CLS}>
+                                            <span className={FILTER_LABEL_CLS}>Level</span>
+                                            <select value={level} onChange={e => setLevel(e.target.value)} className={FILTER_INPUT_CLS}>
+                                                <option value="">Tất cả</option>
+                                                {levelOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                                            </select>
+                                        </label>
 
-                                    {/* Year */}
-                                    <select 
-                                        value={year} 
-                                        onChange={e => setYear(e.target.value)}
-                                        className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                    >
-                                        <option value="">Tất cả các năm</option>
-                                        {[2023, 2024, 2025, 2026, 2027].map(y => (
-                                            <option key={y} value={y}>Năm {y}</option>
-                                        ))}
-                                    </select>
-
-                                    {/* Clear filter — year's baseline is the current year (not ""),
-                                        so "active filter" and the reset target both compare/restore
-                                        against defaultYear instead of empty string. */}
-                                    {(month || year !== defaultYear || search || level || team || roleFilter || (!isLockedSingle && workspace)) && (
-                                        <button onClick={() => { setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam(''); setRoleFilter(''); if (!isLockedSingle) setWorkspace(''); }}
-                                            className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all ml-auto bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
-                                            Xóa bộ lọc
-                                        </button>
-                                    )}
-                                </>
-                            ) : (
-                                <>
-                                    <div className="flex flex-col">
-                                        <label className="text-xs font-bold text-slate-500 mb-1">Từ ngày</label>
-                                        <input 
-                                            type="date"
-                                            value={startDate}
-                                            onChange={e => setStartDate(e.target.value)}
-                                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white shadow-sm transition-all"
-                                        />
+                                        {roleField}
                                     </div>
-                                    <div className="flex flex-col">
-                                        <label className="text-xs font-bold text-slate-500 mb-1">Đến ngày</label>
-                                        <input 
-                                            type="date"
-                                            value={endDate}
-                                            onChange={e => setEndDate(e.target.value)}
-                                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white shadow-sm transition-all"
-                                        />
+                                ) : (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                            <span className={FILTER_LABEL_CLS}>Từ ngày</span>
+                                            <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={FILTER_INPUT_CLS} />
+                                        </label>
+                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                            <span className={FILTER_LABEL_CLS}>Đến ngày</span>
+                                            <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={FILTER_INPUT_CLS} />
+                                        </label>
+                                        {roleField}
                                     </div>
-                                    
-                                    <div className="flex flex-col">
-                                        <label className="text-xs font-bold text-slate-500 mb-1">Role</label>
-                                        <select
-                                            value={roleFilter}
-                                            onChange={e => setRoleFilter(e.target.value)}
-                                            className="border-2 border-blue-200 rounded-lg px-4 py-2 text-sm font-semibold text-blue-900 outline-none focus:border-blue-500 focus:ring-4 focus:ring-blue-500/10 bg-white min-w-[140px] shadow-sm transition-all cursor-pointer hover:border-blue-300"
-                                        >
-                                            <option value="">Tất cả Role</option>
-                                            {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                                        </select>
-                                    </div>
-
-                                    {(startDate || endDate || roleFilter) && (
-                                        <button onClick={() => { setStartDate(''); setEndDate(''); setRoleFilter(''); }}
-                                            className="flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-bold transition-all mt-5 bg-red-50 hover:bg-red-100 px-4 py-2 rounded-lg border border-red-200 shadow-sm">
-                                            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                                            </svg>
-                                            Xóa
-                                        </button>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
+                                )}
+                            </div>
+                        );
+                    })()}
 
                     {/* Table */}
                     <div className="bg-white border border-slate-200 rounded-xl shadow-sm relative">
