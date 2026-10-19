@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin, getToken } from '@/lib/auth';
-import { getMembers, getMemberLeaders, getTeams, getDepartments, getWorkspaces, getMe, getProjects } from '@/lib/api';
+import { getMembers, getMemberLeaders, getWorkspaces, getMe, getProjects } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
@@ -398,9 +398,7 @@ export default function KPIPage() {
     // explicit choice via the "" option, same as before.
     const [year, setYear] = useState(() => String(new Date().getFullYear()));
     const defaultYear = String(new Date().getFullYear());
-    const [level, setLevel] = useState("");
     const [workspace, setWorkspace] = useState("");
-    const [team, setTeam] = useState("");
     // Leader's member id (string, "" = all): show only members whose
     // members.leader_member_id is this Leader. Clicking a row still opens
     // the usual KPI detail drawer.
@@ -412,7 +410,6 @@ export default function KPIPage() {
     });
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
-    const [levelOptions, setLevelOptions] = useState<any[]>([]);
     // Shared ['workspaces'] react-query cache — same key/staleTime as Navbar/
     // Dashboard/ProjectListContent, so this doesn't fire a duplicate request.
     const { data: workspaceOptionsData } = useQuery({
@@ -421,7 +418,6 @@ export default function KPIPage() {
         staleTime: 5 * 60_000,
     });
     const workspaceOptions: any[] = workspaceOptionsData || [];
-    const [teamOptions, setTeamOptions] = useState<any[]>([]);
     // Workspace data scope: for Leader/Member/Viewer the assigned Workspace(s)
     // are the effective KPI data scope. The full list (multi-Workspace aware)
     // is sourced from `me.workspace_ids[]` + `me.workspaces[]` — never the
@@ -492,8 +488,6 @@ export default function KPIPage() {
 };
 
     useEffect(() => {
-        getTeams().then(setLevelOptions).catch(() => {});
-        getDepartments().then(setTeamOptions).catch(() => {});
         getMe().then(me => {
             setUserRole(me.role);
             // Prefer the new multi-Workspace grant list; fall back to the
@@ -553,8 +547,6 @@ export default function KPIPage() {
             if (typeof snap.search === 'string') setSearch(snap.search);
             if (typeof snap.month === 'string') setMonth(snap.month);
             if (typeof snap.year === 'string') setYear(snap.year);
-            if (typeof snap.level === 'string') setLevel(snap.level);
-            if (typeof snap.team === 'string') setTeam(snap.team);
             if (typeof snap.leaderFilter === 'string') setLeaderFilter(snap.leaderFilter);
             if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
             if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
@@ -568,7 +560,7 @@ export default function KPIPage() {
     const handleNavigateToProject = (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => {
         try {
             sessionStorage.setItem('kpiNavSnapshot', JSON.stringify({
-                activeTab, search, month, year, level, team, leaderFilter, startDate, endDate,
+                activeTab, search, month, year, leaderFilter, startDate, endDate,
                 selectedMember: selectedMemberModal,
             }));
         } catch { /* sessionStorage unavailable (private mode, quota) — restoration just won't be offered */ }
@@ -610,23 +602,19 @@ export default function KPIPage() {
         if (activeTab === 'KPItotal') {
             if (month) params.month = parseInt(month);
             if (year) params.year = parseInt(year);
-            if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
-            if (team) params.department = team;
             if (leaderFilter) params.leader_member_id = parseInt(leaderFilter);
             if (debouncedSearch) params.search = debouncedSearch;
         } else {
             // KPI Tuần: gửi date range thay vì tháng/năm
             if (startDate) params.start_date = startDate;
             if (endDate) params.end_date = endDate;
-            if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
-            if (team) params.department = team;
             if (leaderFilter) params.leader_member_id = parseInt(leaderFilter);
             if (debouncedSearch) params.search = debouncedSearch;
         }
         return params;
-    }, [activeTab, month, year, level, workspace, team, leaderFilter, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
+    }, [activeTab, month, year, workspace, leaderFilter, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
 
     const { data: members = [], isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
@@ -717,11 +705,11 @@ export default function KPIPage() {
                         // "active filter" and the reset target both compare/
                         // restore against defaultYear instead of empty string.
                         const hasActiveFilter = activeTab === 'KPItotal'
-                            ? !!(month || year !== defaultYear || search || level || team || leaderFilter || (!isLockedSingle && workspace))
+                            ? !!(month || year !== defaultYear || search || leaderFilter || (!isLockedSingle && workspace))
                             : !!(startDate || endDate || leaderFilter);
                         const clearFilters = () => {
                             if (activeTab === 'KPItotal') {
-                                setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam('');
+                                setMonth(''); setYear(defaultYear); setSearch('');
                                 if (!isLockedSingle) setWorkspace('');
                             } else {
                                 setStartDate(''); setEndDate('');
@@ -729,7 +717,7 @@ export default function KPIPage() {
                             setLeaderFilter('');
                         };
                         const leaderField = (
-                            <label className={`${FILTER_FIELD_CLS} col-span-2`}>
+                            <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
                                 <span className={FILTER_LABEL_CLS}>Leader</span>
                                 <select value={leaderFilter} onChange={e => setLeaderFilter(e.target.value)} className={FILTER_INPUT_CLS}>
                                     <option value="">Tất cả</option>
@@ -758,7 +746,7 @@ export default function KPIPage() {
                                 </div>
 
                                 {activeTab === 'KPItotal' ? (
-                                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                                         <label className={`${FILTER_FIELD_CLS} col-span-2 xl:col-span-1`}>
                                             <span className={FILTER_LABEL_CLS}>Tìm kiếm</span>
                                             <input
@@ -829,26 +817,10 @@ export default function KPIPage() {
                                             </select>
                                         </label>
 
-                                        <label className={FILTER_FIELD_CLS}>
-                                            <span className={FILTER_LABEL_CLS}>Team</span>
-                                            <select value={team} onChange={e => setTeam(e.target.value)} className={FILTER_INPUT_CLS}>
-                                                <option value="">Tất cả</option>
-                                                {teamOptions.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                                            </select>
-                                        </label>
-
-                                        <label className={FILTER_FIELD_CLS}>
-                                            <span className={FILTER_LABEL_CLS}>Level</span>
-                                            <select value={level} onChange={e => setLevel(e.target.value)} className={FILTER_INPUT_CLS}>
-                                                <option value="">Tất cả</option>
-                                                {levelOptions.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                                            </select>
-                                        </label>
-
                                         {leaderField}
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
+                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                                         <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
                                             <span className={FILTER_LABEL_CLS}>Từ ngày</span>
                                             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={FILTER_INPUT_CLS} />
