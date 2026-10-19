@@ -356,8 +356,12 @@ def list_members(
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
     if leader_member_id:
-        # The Leader's own row is included too (FE pins it first).
-        q = q.filter(or_(Member.leader_member_id == leader_member_id, Member.id == leader_member_id))
+        # Same Leader→members resolution as Calendar/Dashboard (FK + legacy
+        # leader_name/leader_email text). The Leader's own row is included
+        # too (FE pins it first).
+        from .calendar import _leader_managed_member_ids
+        team_ids = _leader_managed_member_ids(db, leader_member_id) + [leader_member_id]
+        q = q.filter(Member.id.in_(team_ids))
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
@@ -470,21 +474,45 @@ def list_workspace_leaders(db: Session = Depends(get_db), current_user=Depends(g
 # Declared before /{id} so the literal path is not captured by the int route.
 @router.get("/leaders")
 def list_leaders_with_members(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    """Every member that is some other member's Leader (members.leader_member_id),
-    with how many members report to them. Same visibility rule as the default
-    GET /members: Leaders see everyone, Member/Viewer are Workspace-scoped."""
-    sub = db.query(Member.leader_member_id.label("lid"), func.count(Member.id).label("n")) \
-        .filter(Member.leader_member_id.isnot(None))
+    """Every member that is some other member's Leader, with how many members
+    report to them. Same visibility rule as the default GET /members: Leaders
+    see everyone, Member/Viewer are Workspace-scoped.
+
+    A member's Leader is resolved exactly like calendar's
+    _leader_managed_member_ids (and the Dashboard Leader card): the
+    `leader_member_id` FK when set, otherwise the legacy `leader_name` /
+    `leader_email` text — which is all "Quản lý thành viên" ever saves —
+    matched case-insensitively against a member's display/full name or
+    member/account email."""
+    key = lambda s: str(s or "").strip().lower()
+    members = db.query(Member.id, Member.display_name, Member.full_name, Member.email,
+                       Member.leader_member_id, Member.leader_name, Member.leader_email).all()
+    account_email = {mid: key(email) for mid, email in db.query(User.member_id, User.email).filter(User.member_id.isnot(None))}
+
+    by_name, by_email = {}, {}
+    for mid, dn, fn, email, *_ in members:
+        for k in {key(dn), key(fn)} - {""}:
+            by_name.setdefault(k, set()).add(mid)
+        for k in {key(email), account_email.get(mid, "")} - {""}:
+            by_email.setdefault(k, set()).add(mid)
+
+    visible = None
     if current_user.role != ROLE_LEADER:
-        sub = sub.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
-    sub = sub.group_by(Member.leader_member_id).subquery()
-    rows = db.query(Member.id, Member.display_name, Member.full_name, sub.c.n) \
-        .join(sub, sub.c.lid == Member.id) \
-        .order_by(Member.display_name.asc()).all()
-    return [
-        {"id": mid, "display_name": dn or fn, "member_count": int(n)}
-        for mid, dn, fn, n in rows
-    ]
+        visible = {mid for (mid,) in member_query_for_user(db, current_user).with_entities(Member.id)}
+
+    counts = {}
+    for mid, _dn, _fn, _email, lid, lname, lemail in members:
+        if visible is not None and mid not in visible:
+            continue
+        leaders = {lid} if lid else (by_name.get(key(lname), set()) | by_email.get(key(lemail), set()))
+        for leader_id in leaders - {mid}:
+            counts[leader_id] = counts.get(leader_id, 0) + 1
+
+    names = {mid: (dn or fn) for mid, dn, fn, *_ in members}
+    return sorted(
+        ({"id": lid, "display_name": names.get(lid) or f"#{lid}", "member_count": n} for lid, n in counts.items()),
+        key=lambda r: key(r["display_name"]),
+    )
 
 
 # ─── KPI SUMMARY FOR RECRUITMENT ──────────────────────────────
