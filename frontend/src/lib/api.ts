@@ -641,6 +641,10 @@ export const deleteWorkspace = (id: number) =>
 export const getMembers = (params?: { search?: string; team?: string; position?: string; department?: string; workspace?: string; skill_id?: number; leader_name?: string; light?: boolean; scope?: boolean }) =>
   api.get('/members', { params }).then(r => r.data);
 export const getMember = (id: number) => api.get(`/members/${id}`).then(r => r.data);
+// Members that are someone's Leader (members.leader_member_id) + team size —
+// options for the /kpi "Leader" filter.
+export const getMemberLeaders = (): Promise<{ id: number; display_name: string; member_count: number }[]> =>
+  api.get('/members/leaders').then(r => r.data);
 export const createMember = (data: object) => api.post('/members', data).then(r => r.data);
 export const updateMember = (id: number, data: object) => api.put(`/members/${id}`, data).then(r => r.data);
 export const deleteMember = (id: number) => api.delete(`/members/${id}`).then(r => r.data);
