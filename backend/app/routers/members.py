@@ -217,7 +217,7 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
-    # Members whose Leader (members.leader_member_id) is this member.
+    # This Leader plus the members whose Leader (members.leader_member_id) is them.
     leader_member_id: Optional[int] = None,
     scope: Optional[bool] = Query(
         False,
@@ -356,7 +356,8 @@ def list_members(
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
     if leader_member_id:
-        q = q.filter(Member.leader_member_id == leader_member_id)
+        # The Leader's own row is included too (FE pins it first).
+        q = q.filter(or_(Member.leader_member_id == leader_member_id, Member.id == leader_member_id))
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:

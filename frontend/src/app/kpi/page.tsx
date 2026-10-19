@@ -661,8 +661,13 @@ export default function KPIPage() {
                 return 0;
             });
         }
+        // Leader filter: the Leader's own row is pinned first, above their members.
+        if (leaderFilter) {
+            const i = sortableItems.findIndex(m => String(m.id) === leaderFilter);
+            if (i > 0) sortableItems.unshift(sortableItems.splice(i, 1)[0]);
+        }
         return sortableItems;
-    }, [members, sortConfig]);
+    }, [members, sortConfig, leaderFilter]);
 
     if (!authorized) return null;
 
@@ -901,6 +906,9 @@ export default function KPIPage() {
                                                     <td className="px-4 py-3">
                                                         <div className="flex items-center gap-2.5">
                                                             <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-100 group-hover:bg-blue-100 transition-colors">{m.display_name}</span>
+                                                            {leaderFilter && String(m.id) === leaderFilter && (
+                                                                <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">Leader</span>
+                                                            )}
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-3 text-slate-600 font-medium">{m.team || '-'}</td>
@@ -960,6 +968,9 @@ export default function KPIPage() {
                                                         <td className="px-4 py-3">
                                                             <div className="flex items-center gap-2.5">
                                                                 <span className="font-bold text-blue-700 bg-blue-50 px-2 py-0.5 rounded text-[11px] border border-blue-100 group-hover:bg-blue-100 transition-colors">{m.display_name}</span>
+                                                                {leaderFilter && String(m.id) === leaderFilter && (
+                                                                    <span className="text-[10px] font-black uppercase tracking-wider text-amber-700 bg-amber-100 border border-amber-200 px-1.5 py-0.5 rounded">Leader</span>
+                                                                )}
                                                             </div>
                                                         </td>
                                                         
