@@ -217,9 +217,8 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
-    # Account role of the member's linked login (super_admin / leader /
-    # member / viewer), or "none" = members with no account at all.
-    role: Optional[str] = None,
+    # Members whose Leader (members.leader_member_id) is this member.
+    leader_member_id: Optional[int] = None,
     scope: Optional[bool] = Query(
         False,
         description=(
@@ -356,9 +355,8 @@ def list_members(
         q = q.filter(Member.department == department)
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
-    if role:
-        # Both query shapes above already outer-join User on member_id.
-        q = q.filter(User.id.is_(None)) if role == "none" else q.filter(User.role == role)
+    if leader_member_id:
+        q = q.filter(Member.leader_member_id == leader_member_id)
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
@@ -465,6 +463,27 @@ def list_workspace_leaders(db: Session = Depends(get_db), current_user=Depends(g
     the full unrestricted leader list.
     """
     return {"leaders": workspace_leader_names(db, current_user)}
+
+
+# ─── LEADERS WITH THEIR MEMBER COUNT (/kpi "Leader" filter options) ──
+# Declared before /{id} so the literal path is not captured by the int route.
+@router.get("/leaders")
+def list_leaders_with_members(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Every member that is some other member's Leader (members.leader_member_id),
+    with how many members report to them. Same visibility rule as the default
+    GET /members: Leaders see everyone, Member/Viewer are Workspace-scoped."""
+    sub = db.query(Member.leader_member_id.label("lid"), func.count(Member.id).label("n")) \
+        .filter(Member.leader_member_id.isnot(None))
+    if current_user.role != ROLE_LEADER:
+        sub = sub.filter(Member.id.in_(member_query_for_user(db, current_user).with_entities(Member.id)))
+    sub = sub.group_by(Member.leader_member_id).subquery()
+    rows = db.query(Member.id, Member.display_name, Member.full_name, sub.c.n) \
+        .join(sub, sub.c.lid == Member.id) \
+        .order_by(Member.display_name.asc()).all()
+    return [
+        {"id": mid, "display_name": dn or fn, "member_count": int(n)}
+        for mid, dn, fn, n in rows
+    ]
 
 
 # ─── KPI SUMMARY FOR RECRUITMENT ──────────────────────────────

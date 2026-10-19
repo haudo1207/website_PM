@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin, getToken } from '@/lib/auth';
-import { getMembers, getTeams, getDepartments, getWorkspaces, getMe, getProjects } from '@/lib/api';
+import { getMembers, getMemberLeaders, getTeams, getDepartments, getWorkspaces, getMe, getProjects } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
@@ -62,16 +62,6 @@ const getCanonicalTaskKpi = (t: any, memberId: any): number => {
   if (isSupport) return (t.kpi_support || 0);
   return 0;
 };
-
-// Values match users.role on the member's linked account; "none" = members
-// with no login at all (backend /members `role` param).
-const ROLE_FILTER_OPTIONS = [
-  { value: 'super_admin', label: 'Super Admin' },
-  { value: 'leader', label: 'Leader' },
-  { value: 'member', label: 'Member' },
-  { value: 'viewer', label: 'Viewer' },
-  { value: 'none', label: 'Chưa có tài khoản' },
-];
 
 // Shared look for every /kpi filter field: small label above a same-height
 // control, laid out on a grid so the bar stays tidy at any width.
@@ -411,8 +401,15 @@ export default function KPIPage() {
     const [level, setLevel] = useState("");
     const [workspace, setWorkspace] = useState("");
     const [team, setTeam] = useState("");
-    // Account role of the member's login ("none" = no account) — see ROLE_FILTER_OPTIONS.
-    const [roleFilter, setRoleFilter] = useState("");
+    // Leader's member id (string, "" = all): show only members whose
+    // members.leader_member_id is this Leader. Clicking a row still opens
+    // the usual KPI detail drawer.
+    const [leaderFilter, setLeaderFilter] = useState("");
+    const { data: leaderOptions = [] } = useQuery({
+        queryKey: ['kpi-leader-options'],
+        queryFn: getMemberLeaders,
+        staleTime: 5 * 60_000,
+    });
     const [startDate, setStartDate] = useState("");
     const [endDate, setEndDate] = useState("");
     const [levelOptions, setLevelOptions] = useState<any[]>([]);
@@ -558,7 +555,7 @@ export default function KPIPage() {
             if (typeof snap.year === 'string') setYear(snap.year);
             if (typeof snap.level === 'string') setLevel(snap.level);
             if (typeof snap.team === 'string') setTeam(snap.team);
-            if (typeof snap.roleFilter === 'string') setRoleFilter(snap.roleFilter);
+            if (typeof snap.leaderFilter === 'string') setLeaderFilter(snap.leaderFilter);
             if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
             if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
             if (snap.selectedMember) setSelectedMemberModal(snap.selectedMember);
@@ -571,7 +568,7 @@ export default function KPIPage() {
     const handleNavigateToProject = (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => {
         try {
             sessionStorage.setItem('kpiNavSnapshot', JSON.stringify({
-                activeTab, search, month, year, level, team, roleFilter, startDate, endDate,
+                activeTab, search, month, year, level, team, leaderFilter, startDate, endDate,
                 selectedMember: selectedMemberModal,
             }));
         } catch { /* sessionStorage unavailable (private mode, quota) — restoration just won't be offered */ }
@@ -616,7 +613,7 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
             if (team) params.department = team;
-            if (roleFilter) params.role = roleFilter;
+            if (leaderFilter) params.leader_member_id = parseInt(leaderFilter);
             if (debouncedSearch) params.search = debouncedSearch;
         } else {
             // KPI Tuần: gửi date range thay vì tháng/năm
@@ -625,11 +622,11 @@ export default function KPIPage() {
             if (level) params.team = level;
             if (effectiveWorkspace) params.workspace = effectiveWorkspace;
             if (team) params.department = team;
-            if (roleFilter) params.role = roleFilter;
+            if (leaderFilter) params.leader_member_id = parseInt(leaderFilter);
             if (debouncedSearch) params.search = debouncedSearch;
         }
         return params;
-    }, [activeTab, month, year, level, workspace, team, roleFilter, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
+    }, [activeTab, month, year, level, workspace, team, leaderFilter, debouncedSearch, startDate, endDate, isScopedUser, lockedWorkspaceName, lockedWorkspaceOptions]);
 
     const { data: members = [], isLoading } = useQuery({
         queryKey: ['kpi-members', memberParams],
@@ -715,8 +712,8 @@ export default function KPIPage() {
                         // "active filter" and the reset target both compare/
                         // restore against defaultYear instead of empty string.
                         const hasActiveFilter = activeTab === 'KPItotal'
-                            ? !!(month || year !== defaultYear || search || level || team || roleFilter || (!isLockedSingle && workspace))
-                            : !!(startDate || endDate || roleFilter);
+                            ? !!(month || year !== defaultYear || search || level || team || leaderFilter || (!isLockedSingle && workspace))
+                            : !!(startDate || endDate || leaderFilter);
                         const clearFilters = () => {
                             if (activeTab === 'KPItotal') {
                                 setMonth(''); setYear(defaultYear); setSearch(''); setLevel(''); setTeam('');
@@ -724,14 +721,14 @@ export default function KPIPage() {
                             } else {
                                 setStartDate(''); setEndDate('');
                             }
-                            setRoleFilter('');
+                            setLeaderFilter('');
                         };
-                        const roleField = (
-                            <label className={FILTER_FIELD_CLS}>
-                                <span className={FILTER_LABEL_CLS}>Role</span>
-                                <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)} className={FILTER_INPUT_CLS}>
+                        const leaderField = (
+                            <label className={`${FILTER_FIELD_CLS} col-span-2`}>
+                                <span className={FILTER_LABEL_CLS}>Leader</span>
+                                <select value={leaderFilter} onChange={e => setLeaderFilter(e.target.value)} className={FILTER_INPUT_CLS}>
                                     <option value="">Tất cả</option>
-                                    {ROLE_FILTER_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                                    {leaderOptions.map(l => <option key={l.id} value={l.id}>{l.display_name} ({l.member_count})</option>)}
                                 </select>
                             </label>
                         );
@@ -757,7 +754,7 @@ export default function KPIPage() {
 
                                 {activeTab === 'KPItotal' ? (
                                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
-                                        <label className={`${FILTER_FIELD_CLS} col-span-2`}>
+                                        <label className={`${FILTER_FIELD_CLS} col-span-2 xl:col-span-1`}>
                                             <span className={FILTER_LABEL_CLS}>Tìm kiếm</span>
                                             <input
                                                 type="text"
@@ -843,7 +840,7 @@ export default function KPIPage() {
                                             </select>
                                         </label>
 
-                                        {roleField}
+                                        {leaderField}
                                     </div>
                                 ) : (
                                     <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-3">
@@ -855,7 +852,7 @@ export default function KPIPage() {
                                             <span className={FILTER_LABEL_CLS}>Đến ngày</span>
                                             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={FILTER_INPUT_CLS} />
                                         </label>
-                                        {roleField}
+                                        {leaderField}
                                     </div>
                                 )}
                             </div>
