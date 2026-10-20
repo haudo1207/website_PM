@@ -718,7 +718,7 @@ export default function KPIPage() {
                             setLeaderFilter('');
                         };
                         const leaderField = (
-                            <div className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                            <div className={FILTER_FIELD_CLS}>
                                 <span className={FILTER_LABEL_CLS}>Leader</span>
                                 <FilterSelect
                                     value={leaderFilter}
@@ -752,8 +752,8 @@ export default function KPIPage() {
                                 </div>
 
                                 {activeTab === 'KPItotal' ? (
-                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                                        <label className={`${FILTER_FIELD_CLS} col-span-2 xl:col-span-1`}>
+                                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                        <label className={`${FILTER_FIELD_CLS} col-span-2 lg:col-span-1`}>
                                             <span className={FILTER_LABEL_CLS}>Tìm kiếm</span>
                                             <input
                                                 type="text"
@@ -825,12 +825,12 @@ export default function KPIPage() {
                                         {leaderField}
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                        <label className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Từ ngày</span>
                                             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={FILTER_INPUT_CLS} />
                                         </label>
-                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                        <label className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Đến ngày</span>
                                             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={FILTER_INPUT_CLS} />
                                         </label>
