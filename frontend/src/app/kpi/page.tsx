@@ -5,6 +5,7 @@ import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin, getToken } from '@/lib/auth';
 import { getMembers, getMemberLeaders, getWorkspaces, getMe, getProjects } from '@/lib/api';
+import FilterSelect from '@/components/common/FilterSelect';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
@@ -717,13 +718,18 @@ export default function KPIPage() {
                             setLeaderFilter('');
                         };
                         const leaderField = (
-                            <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                            <div className={FILTER_FIELD_CLS}>
                                 <span className={FILTER_LABEL_CLS}>Leader</span>
-                                <select value={leaderFilter} onChange={e => setLeaderFilter(e.target.value)} className={FILTER_INPUT_CLS}>
-                                    <option value="">Tất cả</option>
-                                    {leaderOptions.map(l => <option key={l.id} value={l.id}>{l.display_name} ({l.member_count})</option>)}
-                                </select>
-                            </label>
+                                <FilterSelect
+                                    value={leaderFilter}
+                                    onChange={setLeaderFilter}
+                                    searchPlaceholder="Tìm leader..."
+                                    options={[
+                                        { value: '', label: 'Tất cả' },
+                                        ...leaderOptions.map(l => ({ value: String(l.id), label: l.display_name, hint: `(${l.member_count})` })),
+                                    ]}
+                                />
+                            </div>
                         );
                         return (
                             <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl px-5 py-4 shadow-sm flex flex-col gap-3">
@@ -746,8 +752,8 @@ export default function KPIPage() {
                                 </div>
 
                                 {activeTab === 'KPItotal' ? (
-                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                                        <label className={`${FILTER_FIELD_CLS} col-span-2 xl:col-span-1`}>
+                                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                        <label className={`${FILTER_FIELD_CLS} col-span-2 lg:col-span-1`}>
                                             <span className={FILTER_LABEL_CLS}>Tìm kiếm</span>
                                             <input
                                                 type="text"
@@ -758,25 +764,30 @@ export default function KPIPage() {
                                             />
                                         </label>
 
-                                        <label className={FILTER_FIELD_CLS}>
+                                        <div className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Tháng</span>
-                                            <select value={month} onChange={e => setMonth(e.target.value)} className={FILTER_INPUT_CLS}>
-                                                <option value="">Tất cả</option>
-                                                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
-                                                    <option key={m} value={m}>Tháng {m}</option>
-                                                ))}
-                                            </select>
-                                        </label>
+                                            <FilterSelect
+                                                value={month}
+                                                onChange={setMonth}
+                                                searchThreshold={99}
+                                                options={[
+                                                    { value: '', label: 'Tất cả' },
+                                                    ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `Tháng ${i + 1}` })),
+                                                ]}
+                                            />
+                                        </div>
 
-                                        <label className={FILTER_FIELD_CLS}>
+                                        <div className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Năm</span>
-                                            <select value={year} onChange={e => setYear(e.target.value)} className={FILTER_INPUT_CLS}>
-                                                <option value="">Tất cả</option>
-                                                {[2023, 2024, 2025, 2026, 2027].map(y => (
-                                                    <option key={y} value={y}>Năm {y}</option>
-                                                ))}
-                                            </select>
-                                        </label>
+                                            <FilterSelect
+                                                value={year}
+                                                onChange={setYear}
+                                                options={[
+                                                    { value: '', label: 'Tất cả' },
+                                                    ...[2023, 2024, 2025, 2026, 2027].map(y => ({ value: String(y), label: `Năm ${y}` })),
+                                                ]}
+                                            />
+                                        </div>
 
                                         {/* Workspace — three UI shapes depending on the
                                             user's authorized scope:
@@ -786,46 +797,40 @@ export default function KPIPage() {
                                                with the single assigned option
                                              - Multi-Ws Leader → "All authorized
                                                Workspaces" + one option per granted one */}
-                                        <label className={FILTER_FIELD_CLS}>
+                                        <div className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Workspace</span>
-                                            <select
+                                            <FilterSelect
                                                 value={isLockedSingle ? lockedWorkspaceOptions[0].name : workspace}
-                                                onChange={e => handleWorkspaceChange(e.target.value)}
+                                                onChange={handleWorkspaceChange}
                                                 disabled={isLockedSingle}
                                                 title={isLockedSingle
                                                     ? `Workspace cố định theo tài khoản: ${lockedWorkspaceOptions[0].name}`
                                                     : isMultiWs
                                                         ? 'Chọn một Workspace được gán hoặc kết hợp tất cả'
                                                         : undefined}
-                                                className={`${FILTER_INPUT_CLS} disabled:cursor-not-allowed disabled:opacity-70`}
-                                            >
-                                                {isLockedSingle ? (
-                                                    <option value={lockedWorkspaceOptions[0].name}>{lockedWorkspaceOptions[0].name}</option>
-                                                ) : isMultiWs ? (
-                                                    <>
-                                                        <option value="">Tất cả được gán ({lockedWorkspaceOptions.length})</option>
-                                                        {lockedWorkspaceOptions.map(w => (
-                                                            <option key={w.code} value={w.name}>{w.name}</option>
-                                                        ))}
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <option value="">Tất cả</option>
-                                                        {workspaceOptions.map(w => <option key={w.id} value={w.name}>{w.name}</option>)}
-                                                    </>
-                                                )}
-                                            </select>
-                                        </label>
+                                                options={isLockedSingle
+                                                    ? [{ value: lockedWorkspaceOptions[0].name, label: lockedWorkspaceOptions[0].name }]
+                                                    : isMultiWs
+                                                        ? [
+                                                            { value: '', label: `Tất cả được gán (${lockedWorkspaceOptions.length})` },
+                                                            ...lockedWorkspaceOptions.map(w => ({ value: w.name, label: w.name })),
+                                                        ]
+                                                        : [
+                                                            { value: '', label: 'Tất cả' },
+                                                            ...workspaceOptions.map(w => ({ value: w.name, label: w.name })),
+                                                        ]}
+                                            />
+                                        </div>
 
                                         {leaderField}
                                     </div>
                                 ) : (
-                                    <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                    <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                                        <label className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Từ ngày</span>
                                             <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className={FILTER_INPUT_CLS} />
                                         </label>
-                                        <label className={`${FILTER_FIELD_CLS} col-span-1 xl:col-span-2`}>
+                                        <label className={FILTER_FIELD_CLS}>
                                             <span className={FILTER_LABEL_CLS}>Đến ngày</span>
                                             <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className={FILTER_INPUT_CLS} />
                                         </label>
