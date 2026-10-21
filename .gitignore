@@ -9,6 +9,7 @@ INFRA_ACCESS.local.md
 
 # Python
 __pycache__/
+.pytest_cache/
 *.pyc
 *.pyo
 *.egg-info/
