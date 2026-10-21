@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
 import { useQuery } from '@tanstack/react-query';
-import { getMondayToSundayRange, getWeekOfMonth, CYCLE_TEMPLATE, projectStatusBadge, projectBarColor } from '@/app/dashboard/constants';
+import { getMondayToSundayRange, getWeekOfMonth, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
 import { getTeamComparison, getTeamDetail, getWorkspaces, TeamComparisonProject, TeamComparisonTeam, TeamComparisonMember, TeamComparisonResponse, WorkloadSetting } from '@/lib/api';
 import { getToken } from '@/lib/auth';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
@@ -708,14 +708,11 @@ export default function MultiTeamProjectComparison() {
                             >
                               <div className="flex items-center justify-between mb-1.5 gap-2">
                                 <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
-                                <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
-                                  {p.status || '—'}
-                                </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mb-1.5 truncate">
                                 Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
                               </div>
-                              <ProgressBar value={p.progress_pct} color={projectBarColor[p.status || ''] || 'bg-blue-500'} height="h-1.5" />
+                              <ProgressBar value={p.progress_pct} color="bg-blue-500" height="h-1.5" />
                               {/* Compact single-row metric strip — preserves all
                                   six existing metrics (Progress / Timeline /
                                   Task / Trễ / MD / Health) with their existing
@@ -1186,9 +1183,6 @@ export default function MultiTeamProjectComparison() {
                           >
                             <div className="flex items-center justify-between gap-2">
                               <span className="font-bold text-[#0b1c30]">{p.name}</span>
-                              <span className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded-full ${projectStatusBadge[p.status || ''] || 'bg-slate-100 text-slate-500'}`}>
-                                {p.status || '—'}
-                              </span>
                             </div>
                             <div className="grid grid-cols-3 gap-2 mt-2 text-[10px]">
                               <SmallStat label="Progress" value={`${p.progress_pct.toFixed(0)}%`} color="text-[#0058be]" />

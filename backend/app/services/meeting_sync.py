@@ -67,9 +67,16 @@ def get_zoom_access_token() -> str:
 def create_zoom_meeting(topic: str, start_time: str, duration_minutes: int = 60) -> dict:
     """
     Create a scheduled Zoom meeting and return { join_url, id }.
-    start_time: ISO 8601 format, e.g. "2026-07-13T10:00:00Z"
+    start_time: Vietnam wall-clock time, e.g. "2026-07-13T10:00:00Z" — the
+    trailing "Z" is a formatting leftover, NOT a real UTC marker (same caveat
+    as create_google_meet_link below). Zoom's API takes start_time/timezone as
+    two separate fields: a dateTime with no UTC offset is interpreted in
+    whatever "timezone" says, so strip the misleading "Z" and pass
+    Asia/Ho_Chi_Minh explicitly — sending it as-is made Zoom read it as real
+    UTC and render the meeting 7 hours later than intended.
     """
     token = get_zoom_access_token()
+    naive_start_time = start_time[:-1] if start_time.endswith("Z") else start_time
 
     resp = requests.post(
         "https://api.zoom.us/v2/users/me/meetings",
@@ -80,7 +87,8 @@ def create_zoom_meeting(topic: str, start_time: str, duration_minutes: int = 60)
         json={
             "topic": topic or "New Meeting",
             "type": 2,  # Scheduled meeting
-            "start_time": start_time,
+            "start_time": naive_start_time,
+            "timezone": "Asia/Ho_Chi_Minh",
             "duration": duration_minutes,
             "settings": {
                 "host_video": True,
@@ -781,7 +789,7 @@ def notify_n8n_meeting_created(db, m, workspace_id: int = None) -> None:
 
     m.n8n_notify_attempts = (m.n8n_notify_attempts or 0) + 1
     try:
-        requests.post(
+        resp = requests.post(
             url,
             json={
                 "mk_tag": m.id,
@@ -792,6 +800,10 @@ def notify_n8n_meeting_created(db, m, workspace_id: int = None) -> None:
             },
             timeout=5,
         )
+        # A reachable n8n that rejects the payload (4xx/5xx) is not success —
+        # requests.post() does not raise on its own for a bad status code, so
+        # without this check every non-2xx response still got recorded SENT.
+        resp.raise_for_status()
         m.n8n_notify_status = "SENT"
         m.n8n_notify_last_error = None
     except Exception as e:
@@ -818,12 +830,22 @@ def retry_pending_n8n_notifies(db) -> int:
 
     pending = (
         db.query(Meeting)
-        .filter(Meeting.n8n_notify_status == "PENDING", Meeting.n8n_notify_attempts > 0)
+        .filter(
+            Meeting.n8n_notify_status == "PENDING",
+            Meeting.n8n_notify_attempts > 0,
+            Meeting.deleted_at.is_(None),
+        )
         .all()
     )
     for m in pending:
-        proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
-        workspace_id = workspace_id_for_project(db, proj)
+        # Resolve by the meeting's actual Host (organizer_google_email), not
+        # by project — a meeting's Host can be a different Workspace than its
+        # project's own (chốt 2026-09-14 'HOST *' field), so retrying through
+        # the project's Workspace could point at the wrong n8n_webhook_url.
+        workspace_id = resolve_workspace_id_by_google_email(db, m.organizer_google_email)
+        if workspace_id is None:
+            proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
+            workspace_id = workspace_id_for_project(db, proj)
         notify_n8n_meeting_created(db, m, workspace_id)
     return len(pending)
 

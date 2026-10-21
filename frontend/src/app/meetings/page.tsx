@@ -116,7 +116,11 @@ function MeetingsPageContent() {
   const [lastHandledId, setLastHandledId] = useState<string | null>(null);
   const [cameFromDetail, setCameFromDetail] = useState<any>(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  // In-flight guard for executeDelete — without it, a double-click on
+  // "Xác nhận xóa" fires two DELETE requests for the same meeting.
+  const [isDeleting, setIsDeleting] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [googleCallbackError, setGoogleCallbackError] = useState<string | null>(null);
   const [weekOffset, setWeekOffset] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
@@ -209,6 +213,14 @@ function MeetingsPageContent() {
   useEffect(() => {
     setCurrentPage(1);
   }, [meetingDateRange.from, meetingDateRange.to]);
+
+  // Same reset, for the local table filters (search/project/person/platform/
+  // quick-filter) — without it, changing a filter while on page 2+ could
+  // leave currentPage pointing past the end of the newly-filtered result set,
+  // or just silently showing a slice of the wrong page instead of page 1.
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, projectFilter, personFilter, platformFilter, quickFilter]);
 
   // Scroll-anchor refs for the secondary nav row (mirrors the prototype's
   // Tổng quan/Cuộc họp/Theo nhân sự/Theo dự án/Chất lượng họp tabs, which
@@ -417,6 +429,31 @@ function MeetingsPageContent() {
     setCurrentPage(1);
   }, [workspaceCode]);
 
+  // Google OAuth callback lands here with google_connected=true|false (+
+  // google_error=invalid_state when the one-time state was missing/expired/
+  // reused or the user isn't Super Admin). Show the outcome once, then strip
+  // those params so a reload doesn't re-trigger it.
+  useEffect(() => {
+    const connected = searchParams.get('google_connected');
+    if (connected === null) return;
+    const googleError = searchParams.get('google_error');
+    if (connected === 'true') {
+      setToastMessage('Đã kết nối tài khoản Google thành công.');
+      setTimeout(() => setToastMessage(null), 4000);
+    } else {
+      setGoogleCallbackError(
+        googleError === 'invalid_state'
+          ? 'Kết nối Google thất bại: phiên kết nối không hợp lệ hoặc đã hết hạn. Vui lòng thử lại từ Cấu hình AI & Google.'
+          : `Kết nối Google thất bại${googleError ? ` (${googleError})` : ''}. Vui lòng thử lại từ Cấu hình AI & Google.`
+      );
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('google_connected');
+    params.delete('google_error');
+    const qs = params.toString();
+    router.replace(`/meetings${qs ? `?${qs}` : ''}`, { scroll: false });
+  }, [searchParams, router]);
+
   // Parse URL search params for tab and meeting ID deep linking
   useEffect(() => {
     const tabParam = searchParams.get('tab');
@@ -524,6 +561,13 @@ function MeetingsPageContent() {
   }, [listMeetings, searchTerm, platformFilter, projectFilter, personFilter, quickFilter, overloadedNames]);
 
   const totalPages = Math.ceil(filteredMeetings.length / pageSize) || 1;
+  // Belt-and-suspenders beyond the filter-change reset above — covers any
+  // other way the result set can shrink out from under the current page
+  // (e.g. a meeting getting deleted/refetched away) without currentPage
+  // itself changing.
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
   const paginatedMeetings = useMemo(() => {
     const start = (currentPage - 1) * pageSize;
     return filteredMeetings.slice(start, start + pageSize);
@@ -595,26 +639,48 @@ function MeetingsPageContent() {
       let savedObj: any = null;
       if (meetingData.id) {
         const data = await updateMeeting(meetingData.id, meetingData);
-        if (data.success) {
-          savedObj = data.data;
+        // An explicit success: false must reach CreateMeetingModal's own
+        // catch (it shows the error and keeps the modal open) instead of
+        // falling through here as if the save had gone through.
+        if (!data.success) {
+          throw new Error(data?.message || data?.detail || 'Lỗi khi cập nhật cuộc họp');
         }
+        savedObj = data.data;
       } else {
         const data = await createMeeting(meetingData);
-        if (data.success) {
-          savedObj = data.data;
-          // Thành viên chọn lúc tạo được thêm bằng API riêng (endpoint tạo
-          // meeting không nhận members) — xong thì lấy lại bản mới nhất để
-          // có danh sách members thật thay vì chỉ có Host.
-          const memberIds: number[] = Array.isArray(meetingData.member_ids) ? meetingData.member_ids : [];
-          if (memberIds.length > 0) {
-            await Promise.all(memberIds.map(mid => addMeetingMember(savedObj.id, mid).catch(() => {})));
-            const refreshed = await getMeeting(savedObj.id).catch(() => null);
-            if (refreshed?.success) savedObj = refreshed.data;
-          }
-          // Meeting mới luôn được chèn lên đầu mảng — nếu đang xem trang khác
-          // trang 1 thì quay lại trang 1 để thấy ngay, tránh cảm giác "biến mất".
-          setCurrentPage(1);
+        if (!data.success) {
+          throw new Error(data?.message || data?.detail || 'Lỗi khi tạo cuộc họp');
         }
+        savedObj = data.data;
+        // Thành viên chọn lúc tạo được thêm bằng API riêng (endpoint tạo
+        // meeting không nhận members) — xong thì lấy lại bản mới nhất để
+        // có danh sách members thật thay vì chỉ có Host.
+        const memberIds: number[] = Array.isArray(meetingData.member_ids) ? meetingData.member_ids : [];
+        if (memberIds.length > 0) {
+          // Sequential, not Promise.all — these all hit the same meeting's
+          // Calendar-attendee sync server-side, and firing them in parallel
+          // lets that sync race on a partial member set. Failures are
+          // collected (by ID) and reported instead of being swallowed.
+          const failedIds: number[] = [];
+          for (const mid of memberIds) {
+            try {
+              await addMeetingMember(savedObj.id, mid);
+            } catch {
+              failedIds.push(mid);
+            }
+          }
+          const refreshed = await getMeeting(savedObj.id).catch(() => null);
+          if (refreshed?.success) savedObj = refreshed.data;
+          if (failedIds.length > 0) {
+            // meetingData only carries member IDs here (no names) — report by
+            // ID rather than silently dropping the failure like before.
+            setToastMessage(`⚠ Cuộc họp đã tạo, nhưng không thể thêm ${failedIds.length} thành viên (ID: ${failedIds.join(', ')}).`);
+            setTimeout(() => setToastMessage(null), 6000);
+          }
+        }
+        // Meeting mới luôn được chèn lên đầu mảng — nếu đang xem trang khác
+        // trang 1 thì quay lại trang 1 để thấy ngay, tránh cảm giác "biến mất".
+        setCurrentPage(1);
       }
       // Refetch instead of queryClient.setQueryData(['meetings'], ...) — the
       // real query key is ['meetings', workspaceCode] (and ['meetings',
@@ -643,7 +709,8 @@ function MeetingsPageContent() {
   };
 
   const executeDelete = async () => {
-    if (!deleteConfirmId) return;
+    if (!deleteConfirmId || isDeleting) return;
+    setIsDeleting(true);
     try {
       await deleteMeeting(parseInt(deleteConfirmId));
       await Promise.all([fetchMeetings(), fetchMyMeetings()]);
@@ -653,6 +720,8 @@ function MeetingsPageContent() {
     } catch (error: any) {
       console.error("Failed to delete meeting", error);
       alert(error.response?.data?.detail || "Có lỗi xảy ra khi xóa cuộc họp");
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -814,6 +883,15 @@ function MeetingsPageContent() {
         </div>
       )}
 
+      {/* Google OAuth callback failure (google_connected=false) */}
+      {googleCallbackError && (
+        <div role="alert" className="fixed top-5 right-5 z-[100] max-w-md bg-red-50 text-red-700 px-4 py-3 rounded-2xl shadow-2xl flex items-start gap-2 text-xs font-bold border border-red-200 animate-in fade-in slide-in-from-top-3 duration-200">
+          <Info size={18} className="text-red-500 shrink-0 mt-0.5" />
+          <span className="flex-1">{googleCallbackError}</span>
+          <button type="button" onClick={() => setGoogleCallbackError(null)} aria-label="Đóng" className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+        </div>
+      )}
+
       <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col h-screen overflow-hidden transition-[padding] duration-200`}>
 
         {/* Top Header Bar */}
@@ -832,13 +910,15 @@ function MeetingsPageContent() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
-            <button
-              onClick={() => setIsSettingsOpen(true)}
-              className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#475569] text-xs font-bold px-3.5 py-2 rounded-xl transition-colors shadow-2xs whitespace-nowrap"
-            >
-              <Sparkles size={15} className="text-[#0058be]" />
-              <span>Cấu hình AI & Google Admin</span>
-            </button>
+            {canManage && (
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="flex items-center gap-1.5 bg-white hover:bg-slate-50 border border-[#cbd5e1] text-[#475569] text-xs font-bold px-3.5 py-2 rounded-xl transition-colors shadow-2xs whitespace-nowrap"
+              >
+                <Sparkles size={15} className="text-[#0058be]" />
+                <span>Cấu hình AI & Google Admin</span>
+              </button>
+            )}
             {canCreate && (
               <button
                 onClick={() => { setEditingMeeting(null); setIsModalOpen(true); }}
@@ -1195,7 +1275,7 @@ function MeetingsPageContent() {
               {filteredMeetings.length > 0 && (
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-1 text-xs text-[#64748b] font-medium">
                   <div>
-                    Hiển thị 1–{paginatedMeetings.length} của {filteredMeetings.length} cuộc họp
+                    Hiển thị {filteredMeetings.length === 0 ? 0 : (currentPage - 1) * pageSize + 1}–{(currentPage - 1) * pageSize + paginatedMeetings.length} của {filteredMeetings.length} cuộc họp
                   </div>
 
                   <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-[#e2e8f0]">
@@ -1479,8 +1559,8 @@ function MeetingsPageContent() {
             </div>
             <p className="text-xs text-[#64748b]">Bạn có chắc chắn muốn xóa cuộc họp này? Hành động này không thể hoàn tác.</p>
             <div className="flex justify-end gap-3 pt-2">
-              <button onClick={() => setDeleteConfirmId(null)} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-[#ffffff] border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors">Hủy</button>
-              <button onClick={executeDelete} className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors shadow-sm">Xác nhận xóa</button>
+              <button onClick={() => setDeleteConfirmId(null)} disabled={isDeleting} className="px-4 py-2 text-xs font-bold text-[#64748b] bg-[#ffffff] border border-[#cbd5e1] hover:bg-slate-50 rounded-xl transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Hủy</button>
+              <button onClick={executeDelete} disabled={isDeleting} className="px-4 py-2 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded-xl transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed">{isDeleting ? 'Đang xóa...' : 'Xác nhận xóa'}</button>
             </div>
           </div>
         </div>

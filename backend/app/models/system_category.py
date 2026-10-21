@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, ForeignKey
 from ..database import Base
 
 class Position(Base):
@@ -55,3 +55,17 @@ class Workspace(Base):
     # log in with. Not used for auth in any way (that's WorkspaceGoogleAccount
     # .google_email, set only after real OAuth consent).
     expected_google_email = Column(String(255), nullable=True)
+
+
+class WorkspaceIntegrationSecret(Base):
+    """Per-Workspace secrets for inbound integrations, kept OUT of the
+    workspaces table so they can never leak through the many endpoints that
+    return Workspace rows as-is (GET /workspaces is visible to every user).
+
+    n8n_webhook_secret: value n8n must send as X-N8N-Webhook-Secret when it
+    posts a meeting summary for this Workspace (set by Super Admin in
+    Settings → Workspace). Identifies the Workspace and limits that webhook
+    call to this Workspace's meetings/projects."""
+    __tablename__ = "workspace_integration_secrets"
+    workspace_id = Column(Integer, ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True)
+    n8n_webhook_secret = Column(String(255), nullable=True)

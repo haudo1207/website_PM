@@ -9,7 +9,7 @@ import KpiCard from '@/components/dashboard/KpiCard';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
-import { projectStatusBadge, projectBarColor, getMondayToSundayRange, getWeekOfMonth, checkTaskInPeriod, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
+import { getMondayToSundayRange, getWeekOfMonth, checkTaskInPeriod, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -154,7 +154,6 @@ export default function SystemAuditTab() {
         return {
           id: p.id,
           name: p.name,
-          status: p.status || 'Developing',
           current_phase: p.current_phase || '1. Tư vấn',
           // Project Progress — source of truth from Settings.
           progress: prog,
@@ -434,13 +433,12 @@ export default function SystemAuditTab() {
               >
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
-                  <span className={`text-[9px] font-extrabold px-2 py-0.5 rounded-full ${projectStatusBadge[p.status] || 'bg-slate-100 text-slate-500'}`}>{p.status}</span>
                 </div>
                 <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 mb-2">
                   <span>Giai đoạn: <strong className="text-slate-700">{p.current_phase}</strong></span>
                   <span>{p.doneTasks}/{p.totalTasks} task</span>
                 </div>
-                <ProgressBar value={p.progress} color={projectBarColor[p.status] || 'bg-blue-500'} height="h-2.5" />
+                <ProgressBar value={p.progress} color="bg-blue-500" height="h-2.5" />
                 <div className="flex justify-between items-center mt-2.5 text-[10px]">
                   <span className="font-bold text-slate-400">Tiến độ hoàn thành:</span>
                   <span className="font-extrabold text-[#0058be] text-xs">{p.progress}%</span>

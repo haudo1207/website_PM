@@ -27,7 +27,6 @@ from ..utils.access import (
     business_label_for_project,
     business_unit_for_project,
     default_workspace,
-    get_workspaces,
     is_valid_scope,
     preload_workspace_maps,
     primary_workspace_code_for_user,
@@ -39,6 +38,8 @@ from ..utils.access import (
     ROLE_LEADER,
     ROLE_MEMBER,
     can_access_project,
+    customer_in_workspace_filter,
+    customer_query_for_user,
     has_full_project_access,
     project_query_for_user,
     require_project,
@@ -631,13 +632,53 @@ def set_project_critical(
     }
 
 
+def _is_unrestricted(db: Session, user) -> bool:
+    return getattr(user, "role", None) == ROLE_SUPER_ADMIN or user_allowed_scopes(db, user) == ALL_SCOPE
+
+
+def _require_workspace_grant(db: Session, user, scope_code: Optional[str]) -> None:
+    """Only super_admin / all-scope users may put a Project in a Workspace
+    they hold no grant for, or in 'all' (visible to everyone)."""
+    if _is_unrestricted(db, user) or scope_code is None:
+        return
+    if scope_code == ALL_SCOPE:
+        raise HTTPException(403, "Chỉ Super Admin mới được đặt dự án ở phạm vi 'All'.")
+    if scope_code not in user_allowed_scopes(db, user):
+        raise HTTPException(403, "Bạn không có quyền với Workspace này.")
+
+
+def _validate_project_customer(db: Session, user, cust_id, biz_val: str) -> Customer:
+    """400 if the Customer doesn't exist; for non super_admin users also 400 if
+    they can't see it or it isn't in the Project's Workspace — the same list
+    the project-form dropdown offers (customer_in_workspace_filter)."""
+    try:
+        cid = int(cust_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Khách hàng không hợp lệ.")
+    c_obj = db.query(Customer).filter(Customer.id == cid).first()
+    if not c_obj:
+        raise HTTPException(400, "Khách hàng không tồn tại.")
+    if _is_unrestricted(db, user):
+        return c_obj
+    if not customer_query_for_user(db, user).filter(Customer.id == cid).first():
+        raise HTTPException(400, "Bạn không có quyền với khách hàng này.")
+    if biz_val != "All":
+        ws = resolve_workspace(db, biz_val)
+        if ws and not db.query(Customer.id).filter(Customer.id == cid, customer_in_workspace_filter(db, ws)).first():
+            raise HTTPException(400, "Khách hàng không thuộc Workspace đã chọn.")
+    return c_obj
+
+
 @router.post("/projects")
 def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     biz_input = str(body.get("business") or body.get("business_unit") or "").strip().lower()
     scope_from_biz = None
     if not biz_input:
-        d_ws = default_workspace(db)
+        # No Workspace sent: a restricted user's own Workspace, never the
+        # global default (which may be one they hold no grant for).
+        d_ws = default_workspace(db) if _is_unrestricted(db, current_user) else resolve_workspace(db, user_scope(current_user))
         biz_val = d_ws.name if d_ws else "All"
+        scope_from_biz = d_ws.code if d_ws else ALL_SCOPE
     elif biz_input == "all":
         biz_val = "All"
         scope_from_biz = "all"
@@ -647,6 +688,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
             raise HTTPException(400, f"Workspace '{biz_input}' không tồn tại.")
         biz_val = ws.name
         scope_from_biz = ws.code
+    _require_workspace_grant(db, current_user, scope_from_biz)
     default_scope = scope_from_biz if biz_input else user_scope(current_user)
     requested_scope = str(body.get("data_scope") or default_scope).strip().lower()
     if not is_valid_scope(db, requested_scope):
@@ -654,37 +696,25 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     if biz_val == "All":
         requested_scope = "all"
     elif user_scope(current_user) != ALL_SCOPE:
-        requested_scope = user_scope(current_user)
+        # data_scope follows the chosen Workspace (already grant-checked
+        # above). It used to be forced to the caller's Chính Workspace, so a
+        # Leader's project in a Phụ Workspace showed under both tabs.
+        requested_scope = scope_from_biz
     project_code = body.get("project_code") or body.get("code")
-    if project_code:
-        project_code = str(project_code).strip()[:50]
+    # Blank → NULL: code is UNIQUE, so a stored "" would collide with the next blank one.
+    project_code = (str(project_code).strip()[:50] or None) if project_code else None
     if project_code and db.query(Project.id).filter(Project.code == project_code).first():
-        raise HTTPException(409, f"Project code '{project_code}' already exists.")
+        raise HTTPException(409, f"Mã dự án '{project_code}' đã tồn tại.")
 
-    cust_id = body.get("customer_id")
+    cust_id = body.get("customer_id") or None
     cust_name = body.get("customer_name")
     if cust_id:
-        from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.id == cust_id).first()
-        if c_obj:
-            cust_name = c_obj.name
-            # If business == "All", ensure customer exists in every Workspace
-            if biz_val == "All" and c_obj.name:
-                curr_bu = (c_obj.business_unit or "").lower()
-                other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
-                other_bu = other_ws.code if other_ws else None
-                other_c = db.query(DB_Customer).filter(
-                    DB_Customer.name.ilike(c_obj.name.strip()),
-                    DB_Customer.business_unit == other_bu
-                ).first()
-                if other_bu and not other_c:
-                    other_c = DB_Customer(
-                        name=c_obj.name.strip(),
-                        description=c_obj.description,
-                        business_unit=other_bu
-                    )
-                    db.add(other_c)
-                    db.flush()
+        # No per-Workspace copy of the Customer for an "All" project: a
+        # Customer's Workspaces are derived from its Projects, and an "All"
+        # project already puts it in every Workspace (customer_in_workspace_filter).
+        c_obj = _validate_project_customer(db, current_user, cust_id, biz_val)
+        cust_id = c_obj.id
+        cust_name = c_obj.name
 
     p = Project(
         name=body.get("name", "").strip(),
@@ -710,6 +740,22 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
     if body.get("technical_leader_id") and not technical_leader_ids:
         technical_leader_ids = [body.get("technical_leader_id")]
 
+    # A Leader only has full access to Phụ-Workspace projects they're assigned
+    # to (can_access_project). Creating one there without being on it would
+    # lock them out of their own project — so add them as Leader.
+    creator_member_id = getattr(current_user, "member_id", None)
+    primary_code = (getattr(current_user, "data_scope", None) or "").strip().lower()
+    if (
+        getattr(current_user, "role", None) == ROLE_LEADER
+        and creator_member_id
+        and requested_scope not in (primary_code, ALL_SCOPE)
+        and creator_member_id not in {
+            *pm_ids, *technical_leader_ids,
+            *(body.get("sales_ids") or []), *(body.get("member_ids") or []),
+        }
+    ):
+        technical_leader_ids = [*technical_leader_ids, creator_member_id]
+
     sales_ids = body.get("sales_ids", [])
     if body.get("sales_id") and not sales_ids:
         sales_ids = [body.get("sales_id")]
@@ -729,7 +775,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         db.flush()
     except (IntegrityError, DataError) as exc:
         db.rollback()
-        raise HTTPException(409, f"Project code '{project_code}' already exists or is invalid.") from exc
+        raise HTTPException(409, f"Mã dự án '{project_code}' đã tồn tại hoặc dữ liệu không hợp lệ.") from exc
 
     # 1. Create default "Master" phase for new project
     db.add(Phase(
@@ -870,11 +916,18 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
         "description": p.description,
     }
 
+    old_customer_id = p.customer_id
+    old_business = p.business
+
     for field in ["name", "code", "customer_name", "description", "status", "current_phase"]:
         if field in body:
             val = body[field]
-            if field == "code" and val:
-                setattr(p, "code", str(val).strip()[:50])
+            if field == "code":
+                # Blank → NULL (code is UNIQUE); a clash is a clear 409, not a 500 at commit.
+                new_code = (str(val).strip()[:50] or None) if val else None
+                if new_code and new_code != p.code and db.query(Project.id).filter(Project.code == new_code, Project.id != pid).first():
+                    raise HTTPException(409, f"Mã dự án '{new_code}' đã tồn tại.")
+                p.code = new_code
             else:
                 setattr(p, field, str(val).strip() if val is not None else None)
 
@@ -909,35 +962,21 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
                 raise HTTPException(400, f"Workspace '{b_in}' không tồn tại.")
             if ws:
                 p.business = ws.name
-        if "data_scope" not in body and (user_scope(current_user) == ALL_SCOPE or getattr(current_user, "role", None) == ROLE_SUPER_ADMIN):
+        if p.business != old_business:
+            _require_workspace_grant(db, current_user, ALL_SCOPE if p.business == "All" else (ws.code if ws else None))
+        # Keep data_scope in step with the Workspace for everyone (the target
+        # was grant-checked just above), not only for full-scope users.
+        if "data_scope" not in body and (p.business != old_business or _is_unrestricted(db, current_user)):
             p.data_scope = "all" if b_in == "all" else (ws.code if ws else p.data_scope)
-    if p.customer_id:
-        from ..models.system_category import Customer as DB_Customer
-        c_obj = db.query(DB_Customer).filter(DB_Customer.id == p.customer_id).first()
+    # Re-validate the Customer only when it or the Workspace changed, so editing
+    # an unrelated field of a legacy (mismatched) Project never starts failing.
+    if p.customer_id and (p.customer_id != old_customer_id or p.business != old_business):
+        p.customer_name = _validate_project_customer(db, current_user, p.customer_id, p.business).name
+    elif p.customer_id:
+        c_obj = db.query(Customer).filter(Customer.id == p.customer_id).first()
         if c_obj:
             p.customer_name = c_obj.name
 
-    # If project business is "All", ensure customer is synced across both Business Units
-    if p.business == "All" and p.customer_name and str(p.customer_name).strip():
-        from ..models.system_category import Customer as DB_Customer
-        c_name = str(p.customer_name).strip()
-        c_obj = db.query(DB_Customer).filter(DB_Customer.name.ilike(c_name)).first()
-        if c_obj:
-            curr_bu = (c_obj.business_unit or "").lower()
-            other_ws = next((w for w in get_workspaces(db) if w.code != curr_bu), None)
-            other_bu = other_ws.code if other_ws else None
-            other_c = db.query(DB_Customer).filter(
-                DB_Customer.name.ilike(c_name),
-                DB_Customer.business_unit == other_bu
-            ).first()
-            if other_bu and not other_c:
-                other_c = DB_Customer(
-                    name=c_name,
-                    description=c_obj.description,
-                    business_unit=other_bu
-                )
-                db.add(other_c)
-                db.flush()
     if "data_scope" in body:
         requested_scope = str(body["data_scope"]).strip().lower()
         if not is_valid_scope(db, requested_scope):
@@ -949,6 +988,8 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             and not has_full_project_access(db, current_user, pid)
         ):
             raise HTTPException(403, "Only full-scope users can change project scope.")
+        if requested_scope != p.data_scope:
+            _require_workspace_grant(db, current_user, requested_scope)
         p.data_scope = requested_scope
 
     # Synchronize project members
@@ -1069,7 +1110,11 @@ def update_project(pid: int, body: dict, db: Session = Depends(get_db), current_
             )
 
     p.last_activity_at = sql_func.now()
-    db.commit()
+    try:
+        db.commit()
+    except (IntegrityError, DataError) as exc:
+        db.rollback()
+        raise HTTPException(409, "Dữ liệu dự án không hợp lệ hoặc mã dự án đã tồn tại.") from exc
     db.refresh(p)
 
     try:
@@ -1118,11 +1163,32 @@ def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
     role = getattr(current_user, "role", ROLE_MEMBER)
     scope = user_scope(current_user)
     is_super = (role == ROLE_SUPER_ADMIN or scope == ALL_SCOPE)
-    is_proj_leader = (role == ROLE_LEADER and can_access_project(db, current_user, p)) or has_full_project_access(db, current_user, p.id)
+    # Must be able to see the project AND hold Leader-level rights on it.
+    # has_full_project_access() alone is True for every global Leader, so on
+    # its own it let any Leader delete projects of any Workspace (bulk-delete
+    # has no {pid} in its path, so the router-level scope check never ran).
+    is_proj_leader = can_access_project(db, current_user, p) and has_full_project_access(db, current_user, p.id)
 
     if not (is_super or is_proj_leader):
         raise HTTPException(403, "Bạn không có quyền xóa dự án này.")
 
+    p_name = p.name
+    delete_project_rows(db, p)
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
+        entity_id=pid, action="DELETE_PROJECT", resource_name=p_name,
+        description=f"Xóa dự án '{p_name}' (kèm toàn bộ phase/task/link/member/meeting liên quan)"
+    )
+    db.commit()
+
+
+def delete_project_rows(db: Session, p: Project) -> None:
+    """Delete *p* and everything hanging off it, WITHOUT committing or checking
+    permissions — the caller owns both. Shared by project delete/bulk-delete
+    and the customer cascade delete, so all three follow the same rules
+    (e.g. a meeting linked to other projects is handed over, not deleted)."""
+    pid = p.id
     # Cascade delete all child tasks, task groups, phases, links, and project members
     phases = db.query(Phase).filter(Phase.project_id == pid).all()
     phase_ids = [ph.id for ph in phases]
@@ -1138,26 +1204,31 @@ def _delete_project_cascade(pid: int, db: Session, current_user) -> None:
     db.execute(project_members.delete().where(project_members.c.project_id == pid))
 
     # Additional cascade cleanup for associated entities
-    try:
-        from ..models.meeting import Meeting
-        from ..models.ai_task_inbox import AITaskInbox
-        from ..models.ai_review import AIPrompt, AIReviewLog
-        db.query(Meeting).filter(Meeting.project_id == pid).delete(synchronize_session=False)
-        db.query(AITaskInbox).filter(AITaskInbox.project_id == pid).delete(synchronize_session=False)
-        db.query(AIPrompt).filter(AIPrompt.project_id == pid).delete(synchronize_session=False)
-        db.query(AIReviewLog).filter(AIReviewLog.project_id == pid).delete(synchronize_session=False)
-    except Exception as err:
-        print("Cascade clean warning:", err)
-
-    p_name = p.name
+    from ..models.meeting import Meeting
+    from ..models.meeting_project import MeetingProject
+    from ..models.ai_review import AIPrompt, AIReviewLog
+    # A meeting also linked to other projects (meeting_projects) is not this
+    # project's alone — hand its primary project over to one of the others
+    # instead of deleting it out from under them.
+    orphan_meeting_ids = []
+    for (meeting_id,) in db.query(Meeting.id).filter(Meeting.project_id == pid).all():
+        other_pid = db.query(MeetingProject.project_id).filter(
+            MeetingProject.meeting_id == meeting_id, MeetingProject.project_id != pid
+        ).order_by(MeetingProject.id.asc()).limit(1).scalar()
+        if other_pid:
+            db.query(Meeting).filter(Meeting.id == meeting_id).update({Meeting.project_id: other_pid}, synchronize_session=False)
+            db.query(MeetingProject).filter(
+                MeetingProject.meeting_id == meeting_id, MeetingProject.project_id == other_pid
+            ).delete(synchronize_session=False)
+        else:
+            orphan_meeting_ids.append(meeting_id)
+    if orphan_meeting_ids:
+        db.query(Meeting).filter(Meeting.id.in_(orphan_meeting_ids)).delete(synchronize_session=False)
+    db.query(MeetingProject).filter(MeetingProject.project_id == pid).delete(synchronize_session=False)
+    db.query(AITaskInbox).filter(AITaskInbox.project_id == pid).delete(synchronize_session=False)
+    db.query(AIPrompt).filter(AIPrompt.project_id == pid).delete(synchronize_session=False)
+    db.query(AIReviewLog).filter(AIReviewLog.project_id == pid).delete(synchronize_session=False)
     db.delete(p)
-    db.commit()
-    AuditService.record(
-        db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
-        entity_id=pid, action="DELETE_PROJECT", resource_name=p_name,
-        description=f"Xóa dự án '{p_name}' (kèm toàn bộ phase/task/link/member/meeting liên quan)"
-    )
-    db.commit()
 
 
 @router.delete("/projects/{pid:int}")
@@ -1180,7 +1251,15 @@ def bulk_delete_projects(body: dict, db: Session = Depends(get_db), current_user
             _delete_project_cascade(pid, db, current_user)
             deleted_ids.append(pid)
         except HTTPException as e:
+            db.rollback()
             failed.append({"id": raw_id, "reason": e.detail})
+        except (TypeError, ValueError):
+            failed.append({"id": raw_id, "reason": "id không hợp lệ"})
+        except Exception as e:
+            # Each project commits on its own; a DB error on one must not
+            # leave the session aborted for the rest or 500 the whole batch.
+            db.rollback()
+            failed.append({"id": raw_id, "reason": f"Lỗi khi xóa: {e.__class__.__name__}"})
 
     return {"deleted_ids": deleted_ids, "failed": failed}
 

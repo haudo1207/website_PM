@@ -25,6 +25,21 @@ const PROJECT_PHASES = [
   '13. Nghiệm thu', '14. Thanh toán', '15. Kết thúc dự án', '0. Huỷ'
 ];
 
+// Callers may pass the list filter's lowercase 'all' ("Tất cả Workspace") —
+// the modal's own select/option uses 'All', so map any casing onto that.
+const normalizeBusiness = (b: string) => (b.trim().toLowerCase() === 'all' ? 'All' : b);
+
+// ASCII slug + short random suffix. Accents are stripped first so Vietnamese
+// names keep their letters ("Đà Nẵng" -> "Da-Nang"), and the suffix keeps two
+// projects with the same name+year from colliding on the unique code (409).
+const buildProjectCode = (name: string, year: number) => {
+  const ascii = name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
+  const slug = ascii.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'project';
+  const suffix = Math.random().toString(36).slice(2, 6).padEnd(4, '0');
+  const tail = `-${year}-${suffix}`;
+  return slug.slice(0, 50 - tail.length) + tail;
+};
+
 export interface ProjectFormModalProps {
   isOpen: boolean;
   mode: 'create' | 'edit';
@@ -52,7 +67,8 @@ export default function ProjectFormModal({
   const [formSubmitted, setFormSubmitted] = useState(false);
   const [projectForm, setProjectForm] = useState({
     name: '',
-    year: defaultYear || new Date().getFullYear(),
+    // '' = not entered yet (e.g. editing a legacy project with no year).
+    year: (defaultYear || new Date().getFullYear()) as number | '',
     customerId: '' as string | number,
     business: '',
     pmIds: [] as number[],
@@ -82,6 +98,9 @@ export default function ProjectFormModal({
   const memberRef = useRef<HTMLDivElement>(null);
   const phaseRef = useRef<HTMLDivElement>(null);
   const nameInputRef = useRef<HTMLInputElement>(null);
+  // Set when the user picks a Workspace; the customer is cleared once that
+  // Workspace's customer list has loaded and doesn't contain it.
+  const workspaceChangedByUserRef = useRef(false);
 
   const workspacesQuery = useQuery({ queryKey: ['workspaces'], queryFn: () => getWorkspaces(), staleTime: 5 * 60_000 });
   const workspaces: Workspace[] = workspacesQuery.data || [];
@@ -136,6 +155,7 @@ export default function ProjectFormModal({
   useEffect(() => {
     if (!isOpen) return;
     setFormSubmitted(false);
+    workspaceChangedByUserRef.current = false;
     if (mode === 'edit' && editingProject) {
       const pmIds = editingProject.pm_ids || (editingProject.pm_id ? [editingProject.pm_id] : []);
       const leaderIds = editingProject.technical_leader_ids || (editingProject.technical_leader_id ? [editingProject.technical_leader_id] : []);
@@ -143,9 +163,9 @@ export default function ProjectFormModal({
       const memberIds = editingProject.member_ids || editingProject.members?.map((m: any) => m.id) || [];
       setProjectForm({
         name: editingProject.name || '',
-        year: editingProject.year || new Date().getFullYear(),
+        year: editingProject.year || '',
         customerId: editingProject.customer_id || defaultCustomerId || '',
-        business: editingProject.business || defaultBusiness || '',
+        business: normalizeBusiness(editingProject.business || defaultBusiness || ''),
         pmIds: pmIds.map(Number),
         leaderIds: leaderIds.map(Number),
         salesIds: salesIds.map(Number),
@@ -159,7 +179,7 @@ export default function ProjectFormModal({
         name: '',
         year: defaultYear || new Date().getFullYear(),
         customerId: defaultCustomerId || '',
-        business: defaultBusiness || '',
+        business: normalizeBusiness(defaultBusiness || ''),
         pmIds: [], leaderIds: [], salesIds: [], memberIds: [],
         currentPhase: '1. Tư vấn',
         status: 'Planning',
@@ -198,21 +218,41 @@ export default function ProjectFormModal({
   // tab uses, so this dropdown/mismatch check can't be thrown off by bad data.
   const businessCustomersQuery = useQuery({
     queryKey: ['customers-by-workspace', targetWsCode],
-    queryFn: () => getCustomersByWorkspace(targetWsCode).catch(() => []),
+    queryFn: () => getCustomersByWorkspace(targetWsCode),
     enabled: isOpen && projectForm.business !== 'All' && !!targetWsCode,
     staleTime: 60_000,
+    // A 403 (Workspace not granted) won't fix itself — fall back to allCustomers right away.
+    retry: false,
   });
 
-  const businessCustomers: any[] = projectForm.business === 'All'
+  // On error (403 for a Workspace the user isn't granted, network...) fall
+  // back to the full list rather than an empty dropdown.
+  const businessCustomers: any[] = projectForm.business === 'All' || businessCustomersQuery.isError
     ? allCustomers
     : (businessCustomersQuery.data || []);
 
   const customerMismatch = !!projectForm.customerId && projectForm.business !== 'All' &&
-    !businessCustomersQuery.isLoading &&
+    !businessCustomersQuery.isLoading && !businessCustomersQuery.isError &&
     !businessCustomers.some((c: any) => c.id === Number(projectForm.customerId));
 
+  // After a user-initiated Workspace switch, drop a customer that doesn't
+  // belong to it — but only once the new list has settled, so the initial
+  // edit-mode prefill is never cleared while data is still loading.
+  useEffect(() => {
+    if (!workspaceChangedByUserRef.current) return;
+    if (projectForm.business !== 'All' && (businessCustomersQuery.isPending || businessCustomersQuery.isFetching)) return;
+    workspaceChangedByUserRef.current = false;
+    if (customerMismatch) setProjectForm(f => ({ ...f, customerId: '' }));
+  }, [customerMismatch, projectForm.business, businessCustomersQuery.isPending, businessCustomersQuery.isFetching]);
+
+  const selectedCustomer = projectForm.customerId
+    ? (businessCustomers.find(c => c.id === Number(projectForm.customerId))
+      || allCustomers.find(c => c.id === Number(projectForm.customerId)))
+    : undefined;
   const selectedCustomerName = projectForm.customerId
-    ? (allCustomers.find(c => c.id === Number(projectForm.customerId))?.name || 'Chưa chọn KH')
+    ? (selectedCustomer?.name
+      || (editingProject && Number(editingProject.customer_id) === Number(projectForm.customerId) ? editingProject.customer_name : '')
+      || 'Chưa chọn KH')
     : 'Chưa chọn KH';
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -228,19 +268,23 @@ export default function ProjectFormModal({
       onFlash('Vui lòng chọn khách hàng!', true);
       return;
     }
+    if (customerMismatch) {
+      onFlash('Khách hàng không thuộc Workspace đã chọn. Vui lòng chọn lại khách hàng.', true);
+      return;
+    }
+    if (!projectForm.year) {
+      onFlash('Vui lòng nhập năm!', true);
+      return;
+    }
 
     setActionLoading(true);
     try {
-      const selectedCust = allCustomers.find(c => c.id === Number(projectForm.customerId));
-      const cleanNameSlug = projectForm.name.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-');
-      const safeCode = (cleanNameSlug.slice(0, 40) + `-${projectForm.year}`).slice(0, 50);
       const bizName = projectForm.business;
       const bizCode = wsCodeByName.get(bizName) || bizName.toLowerCase();
-      const payload = {
+      const basePayload = {
         name: projectForm.name.trim(),
-        code: safeCode,
         customer_id: Number(projectForm.customerId),
-        customer_name: selectedCust ? selectedCust.name : '',
+        customer_name: selectedCustomer ? selectedCustomer.name : (selectedCustomerName !== 'Chưa chọn KH' ? selectedCustomerName : ''),
         business: bizName,
         data_scope: bizCode,
         year: Number(projectForm.year),
@@ -252,6 +296,10 @@ export default function ProjectFormModal({
         sales_ids: projectForm.salesIds,
         member_ids: projectForm.memberIds
       };
+      // The code is generated once at creation — editing must not overwrite it.
+      const payload = mode === 'create'
+        ? { ...basePayload, code: buildProjectCode(projectForm.name, Number(projectForm.year)) }
+        : basePayload;
 
       let result: any;
       if (mode === 'create') {
@@ -348,7 +396,7 @@ export default function ProjectFormModal({
                     min={1990}
                     max={2100}
                     value={projectForm.year}
-                    onChange={e => setProjectForm({ ...projectForm, year: Number(e.target.value) })}
+                    onChange={e => setProjectForm({ ...projectForm, year: e.target.value === '' ? '' : Number(e.target.value) })}
                     className="w-full bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 font-semibold"
                   />
                 </div>
@@ -382,7 +430,7 @@ export default function ProjectFormModal({
                   </label>
                   <select
                     value={projectForm.business}
-                    onChange={e => setProjectForm({ ...projectForm, business: e.target.value })}
+                    onChange={e => { workspaceChangedByUserRef.current = true; setProjectForm({ ...projectForm, business: e.target.value }); }}
                     className="w-full bg-white border border-slate-200 rounded-lg px-2.5 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 cursor-pointer font-bold text-blue-700"
                   >
                     {workspaces.map(ws => (

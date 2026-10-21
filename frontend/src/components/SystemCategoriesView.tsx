@@ -16,6 +16,104 @@ import {
   deleteWorkspace
 } from '@/lib/api';
 
+const N8N_SECRET_MIN_LENGTH = 16;
+
+// 32 random bytes → 43-char base64url string (no padding).
+const generateWebhookSecret = (): string => {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let bin = '';
+  bytes.forEach(b => { bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+};
+
+// Shared input for the per-workspace n8n webhook secret (create + edit). The
+// stored secret is never returned by the API, so in edit mode an empty input
+// means "keep current".
+function N8nSecretField({
+  value,
+  onChange,
+  isEdit,
+  hasSecret,
+  clearPending,
+  onToggleClear,
+  onFlash,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  isEdit?: boolean;
+  hasSecret?: boolean;
+  clearPending?: boolean;
+  onToggleClear?: () => void;
+  onFlash: (msg: string) => void;
+}) {
+  const tooShort = value.length > 0 && value.length < N8N_SECRET_MIN_LENGTH;
+  const handleCopy = async () => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      onFlash('Đã sao chép secret webhook n8n');
+    } catch {
+      onFlash('Không thể sao chép — vui lòng sao chép thủ công');
+    }
+  };
+  return (
+    <div className="flex-1 flex flex-col gap-1.5">
+      <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center gap-2">
+        Secret webhook n8n (gửi về)
+        {isEdit && hasSecret && !clearPending && (
+          <span className="normal-case tracking-normal text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.5 rounded font-bold">Đã đặt</span>
+        )}
+        {isEdit && clearPending && (
+          <span className="normal-case tracking-normal text-[10px] bg-red-50 text-red-600 border border-red-200 px-1.5 py-0.5 rounded font-bold">Sẽ xóa khi lưu</span>
+        )}
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="password"
+          autoComplete="new-password"
+          placeholder={isEdit && hasSecret ? 'Để trống = giữ secret hiện tại' : `Tối thiểu ${N8N_SECRET_MIN_LENGTH} ký tự`}
+          value={value}
+          disabled={clearPending}
+          onChange={e => onChange(e.target.value)}
+          className={`bg-white border rounded-lg px-3 py-2 text-xs text-[#0f172a] outline-none focus:border-blue-500 flex-1 min-w-0 disabled:bg-slate-100 ${tooShort ? 'border-red-400' : 'border-slate-200'}`}
+        />
+        <button
+          type="button"
+          disabled={clearPending}
+          onClick={() => onChange(generateWebhookSecret())}
+          className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg font-semibold shrink-0 disabled:opacity-50"
+        >
+          Tạo ngẫu nhiên
+        </button>
+        <button
+          type="button"
+          disabled={!value || clearPending}
+          onClick={handleCopy}
+          className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-200 px-2.5 py-1 rounded-lg font-semibold shrink-0 disabled:opacity-50"
+        >
+          Sao chép
+        </button>
+        {isEdit && hasSecret && onToggleClear && (
+          <button
+            type="button"
+            onClick={onToggleClear}
+            className={`text-xs px-2.5 py-1 rounded-lg font-semibold shrink-0 border ${clearPending ? 'bg-slate-200 text-slate-700 border-slate-300' : 'bg-red-50 hover:bg-red-100 text-red-600 border-red-200'}`}
+          >
+            {clearPending ? 'Hủy xóa' : 'Xóa secret'}
+          </button>
+        )}
+      </div>
+      {tooShort && (
+        <p className="text-[10px] text-red-500 font-semibold">Secret phải có ít nhất {N8N_SECRET_MIN_LENGTH} ký tự.</p>
+      )}
+      <p className="text-[10px] text-slate-400">
+        n8n gửi giá trị này trong header <span className="font-mono">X-N8N-Webhook-Secret</span> khi đẩy biên bản họp về cho Workspace này.
+      </p>
+    </div>
+  );
+}
+
 interface SystemCategoriesViewProps {
   departments: any[]; // Teams (Infrastructure, Markee, PMO, AI, HR)
   teams: any[];       // Levels (Intern, Fresher, Junior, Middle, Senior, Leader, PM)
@@ -71,6 +169,9 @@ export default function SystemCategoriesView({
   const [editingWsDesc, setEditingWsDesc] = useState('');
   const [editingWsWebhook, setEditingWsWebhook] = useState('');
   const [editingWsExpectedEmail, setEditingWsExpectedEmail] = useState('');
+  const [newWsSecret, setNewWsSecret] = useState('');
+  const [editingWsSecret, setEditingWsSecret] = useState('');
+  const [editingWsClearSecret, setEditingWsClearSecret] = useState(false);
 
   useEffect(() => {
     loadMasterPhases();
@@ -222,13 +323,22 @@ export default function SystemCategoriesView({
   const handleAddWorkspace = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newWsName.trim() || !newWsCode.trim()) return;
+    const secret = newWsSecret.trim();
+    if (secret && secret.length < N8N_SECRET_MIN_LENGTH) {
+      onFlash(`Secret webhook n8n phải có ít nhất ${N8N_SECRET_MIN_LENGTH} ký tự`);
+      return;
+    }
     try {
-      await createWorkspace({ name: newWsName, code: newWsCode, description: newWsDesc, n8n_webhook_url: newWsWebhook, expected_google_email: newWsExpectedEmail });
+      await createWorkspace({
+        name: newWsName, code: newWsCode, description: newWsDesc, n8n_webhook_url: newWsWebhook, expected_google_email: newWsExpectedEmail,
+        ...(secret ? { n8n_webhook_secret: secret } : {}),
+      });
       setNewWsName('');
       setNewWsCode('');
       setNewWsDesc('');
       setNewWsWebhook('');
       setNewWsExpectedEmail('');
+      setNewWsSecret('');
       setShowAddWorkspace(false);
       onReload();
       onFlash('Đã thêm Workspace mới thành công');
@@ -239,9 +349,20 @@ export default function SystemCategoriesView({
 
   const handleUpdateWorkspace = async (id: number) => {
     if (!editingWsName.trim() || !editingWsCode.trim()) return;
+    const secret = editingWsSecret.trim();
+    if (!editingWsClearSecret && secret && secret.length < N8N_SECRET_MIN_LENGTH) {
+      onFlash(`Secret webhook n8n phải có ít nhất ${N8N_SECRET_MIN_LENGTH} ký tự`);
+      return;
+    }
     try {
-      await updateWorkspace(id, { name: editingWsName, code: editingWsCode, description: editingWsDesc, n8n_webhook_url: editingWsWebhook, expected_google_email: editingWsExpectedEmail });
+      await updateWorkspace(id, {
+        name: editingWsName, code: editingWsCode, description: editingWsDesc, n8n_webhook_url: editingWsWebhook, expected_google_email: editingWsExpectedEmail,
+        // Empty input = keep the current secret (omit both fields).
+        ...(editingWsClearSecret ? { clear_n8n_webhook_secret: true } : secret ? { n8n_webhook_secret: secret } : {}),
+      });
       setEditingWsId(null);
+      setEditingWsSecret('');
+      setEditingWsClearSecret(false);
       onReload();
       onFlash('Đã cập nhật Workspace thành công');
     } catch (err: any) {
@@ -745,6 +866,7 @@ export default function SystemCategoriesView({
                   />
                 </div>
               </div>
+              <N8nSecretField value={newWsSecret} onChange={setNewWsSecret} onFlash={onFlash} />
             </form>
           )}
 
@@ -796,6 +918,15 @@ export default function SystemCategoriesView({
                           className="bg-white border border-slate-300 rounded px-2.5 py-1 text-xs text-[#0f172a] flex-1"
                         />
                       </div>
+                      <N8nSecretField
+                        isEdit
+                        value={editingWsSecret}
+                        onChange={setEditingWsSecret}
+                        hasSecret={!!w.has_n8n_webhook_secret}
+                        clearPending={editingWsClearSecret}
+                        onToggleClear={() => { setEditingWsClearSecret(v => !v); setEditingWsSecret(''); }}
+                        onFlash={onFlash}
+                      />
                     </div>
                   ) : (
                     <>
@@ -819,6 +950,13 @@ export default function SystemCategoriesView({
                             <span className="text-slate-400">Chưa đặt email Google dự kiến</span>
                           )}
                         </div>
+                        <div className="text-[11px] mt-0.5">
+                          {w.has_n8n_webhook_secret ? (
+                            <span className="text-emerald-600 font-semibold">🔒 Secret webhook n8n: Đã đặt</span>
+                          ) : (
+                            <span className="text-amber-600 font-semibold">⚠️ Chưa đặt secret webhook n8n</span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center gap-3">
                         <button
@@ -829,6 +967,8 @@ export default function SystemCategoriesView({
                             setEditingWsDesc(w.description || '');
                             setEditingWsWebhook(w.n8n_webhook_url || '');
                             setEditingWsExpectedEmail(w.expected_google_email || '');
+                            setEditingWsSecret('');
+                            setEditingWsClearSecret(false);
                           }}
                           className="text-xs text-blue-600 hover:underline font-semibold"
                         >

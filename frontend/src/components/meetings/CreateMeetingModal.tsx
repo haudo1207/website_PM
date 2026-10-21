@@ -87,12 +87,6 @@ function formatWheelDate(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0');
   return `${SUMMARY_WEEKDAYS[d.getDay()]}, ${dd} tháng ${d.getMonth() + 1}`;
 }
-// Label shown on the closed trigger button, e.g. "T2, 22 tháng 9 · 08:30".
-function formatDateTimeTrigger(dateStr: string, timeStr: string): string {
-  if (!dateStr) return 'Chọn thời gian';
-  const d = new Date(dateStr + 'T00:00:00');
-  return `${formatWheelDate(d)} · ${timeStr || '00:00'}`;
-}
 function toDateInputValue(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -240,6 +234,168 @@ function DateTimeWheelPicker({ date, time, onChange, onConfirm }: {
   );
 }
 
+// ── Typed date/time entry (in addition to the wheel picker) ──
+// Digits only: separators are inserted automatically ("2210" → "22/10",
+// "1430" → "14:30"), anything else typed is dropped.
+function maskFourDigits(raw: string, sep: string): string {
+  const digits = raw.replace(/\D/g, '').slice(0, 4);
+  return digits.length > 2 ? `${digits.slice(0, 2)}${sep}${digits.slice(2)}` : digits;
+}
+function formatDayMonth(dateStr: string): string {
+  if (!dateStr) return '';
+  const [, m, d] = dateStr.split('-');
+  return `${d}/${m}`;
+}
+// "22" → day 22 of the current value's month; "2210" → 22/10. No year is
+// typed: keep the current value's year, but roll a date that would land more
+// than 30 days in the past into next year (the wheel's own range starts
+// 30 days back). Returns YYYY-MM-DD, or null if the day/month don't exist.
+function parseDayMonth(digits: string, baseDate: string, today: Date = new Date()): string | null {
+  if (!digits) return null;
+  const base = baseDate ? new Date(baseDate + 'T00:00:00') : new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const day = Number(digits.slice(0, 2));
+  const month = digits.length > 2 ? Number(digits.slice(2)) : base.getMonth() + 1;
+  if (day < 1 || month < 1 || month > 12) return null;
+  const build = (year: number) => {
+    const d = new Date(year, month - 1, day);
+    return d.getMonth() === month - 1 ? d : null;
+  };
+  let d = build(base.getFullYear());
+  if (!d) return null;
+  const floor = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30);
+  if (d < floor) d = build(base.getFullYear() + 1) || d;
+  return toDateInputValue(d);
+}
+// "9" → 09:00, "930" → 09:30, "1430" → 14:30. Returns HH:MM or null.
+function parseHourMinute(digits: string): string | null {
+  if (!digits) return null;
+  let h: number, m: number;
+  if (digits.length <= 2) { h = Number(digits); m = 0; }
+  else if (digits.length === 3) { h = Number(digits[0]); m = Number(digits.slice(1)); }
+  else { h = Number(digits.slice(0, 2)); m = Number(digits.slice(2)); }
+  if (h > 23 || m > 59) return null;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// The closed "Thời gian bắt đầu" field: day and time are typeable; the
+// calendar icon still opens DateTimeWheelPicker. Drafts stay local while
+// typing and only reach formData once committed, so the conflict check
+// (keyed on formData.date/time) never fires on a half-typed "14:3".
+function DateTimeTypeInput({ date, time, onChange, onTogglePicker, onErrorChange }: {
+  date: string;
+  time: string;
+  onChange: (date: string, time: string) => void;
+  onTogglePicker: () => void;
+  // Lets the parent block submit while a typed day/time is showing red —
+  // the committed formData.date/time stays the last VALID value, so without
+  // this the parent has no way to know an invalid draft is on screen.
+  onErrorChange?: (hasError: boolean) => void;
+}) {
+  const [dayDraft, setDayDraft] = useState(formatDayMonth(date));
+  const [timeDraft, setTimeDraft] = useState(time);
+  const [error, setError] = useState('');
+  const dayRef = useRef<HTMLInputElement>(null);
+  const timeRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    onErrorChange?.(!!error);
+    // Only the error text itself should drive this — onErrorChange is an
+    // inline setState passed fresh every parent render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [error]);
+
+  // Follow changes made elsewhere (wheel picker, form reset) unless the user
+  // is mid-typing in that box.
+  useEffect(() => {
+    if (document.activeElement !== dayRef.current) setDayDraft(formatDayMonth(date));
+  }, [date]);
+  useEffect(() => {
+    if (document.activeElement !== timeRef.current) setTimeDraft(time);
+  }, [time]);
+
+  const commitDay = (draft: string): boolean => {
+    const digits = draft.replace(/\D/g, '');
+    if (!digits) { setDayDraft(formatDayMonth(date)); setError(''); return false; }
+    const next = parseDayMonth(digits, date);
+    if (!next) { setError('Ngày không hợp lệ'); return false; }
+    setError('');
+    setDayDraft(formatDayMonth(next));
+    if (next !== date) onChange(next, time);
+    return true;
+  };
+  const commitTime = (draft: string): boolean => {
+    const digits = draft.replace(/\D/g, '');
+    if (!digits) { setTimeDraft(time); setError(''); return false; }
+    const next = parseHourMinute(digits);
+    if (!next) { setError('Giờ không hợp lệ'); return false; }
+    setError('');
+    setTimeDraft(next);
+    if (next !== time) onChange(date, next);
+    return true;
+  };
+
+  const weekday = date ? SUMMARY_WEEKDAYS[new Date(date + 'T00:00:00').getDay()] : '';
+  const inputClass = 'bg-transparent outline-none text-xs text-[#0b1c30] font-medium tabular-nums p-0 placeholder:text-[#94a3b8]';
+
+  return (
+    <>
+      <div className={`w-full px-3 py-2 border ${error ? 'border-red-400' : 'border-[#c2c6d6]'} rounded-lg bg-white focus-within:border-[#0058be] transition-colors flex items-center gap-1.5`}>
+        <span className="text-xs text-[#94a3b8] font-medium w-5 shrink-0">{weekday}</span>
+        <input
+          ref={dayRef}
+          value={dayDraft}
+          inputMode="numeric"
+          placeholder="dd/mm"
+          aria-label="Ngày bắt đầu (dd/mm)"
+          className={`${inputClass} w-[42px]`}
+          onChange={e => {
+            const masked = maskFourDigits(e.target.value, '/');
+            setDayDraft(masked);
+            if (error) setError('');
+            // A full dd/mm moves straight on to the time, emptied for retyping
+            // (an empty time box restores the old time on blur).
+            if (masked.length === 5 && commitDay(masked)) {
+              setTimeDraft('');
+              timeRef.current?.focus();
+            }
+          }}
+          // Read the live input value: on the auto-jump above, blur fires
+          // before the re-render, so the dayDraft state here is one keystroke stale.
+          onBlur={e => commitDay(e.currentTarget.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitDay(e.currentTarget.value); } }}
+        />
+        <span className="text-xs text-[#94a3b8]">·</span>
+        <input
+          ref={timeRef}
+          value={timeDraft}
+          inputMode="numeric"
+          placeholder="hh:mm"
+          aria-label="Giờ bắt đầu (hh:mm)"
+          className={`${inputClass} w-[40px]`}
+          onChange={e => {
+            const masked = maskFourDigits(e.target.value, ':');
+            setTimeDraft(masked);
+            if (error) setError('');
+            if (masked.length === 5) commitTime(masked);
+          }}
+          onBlur={e => commitTime(e.currentTarget.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commitTime(e.currentTarget.value); } }}
+        />
+        <button
+          type="button"
+          onClick={onTogglePicker}
+          aria-label="Chọn ngày giờ"
+          title="Chọn ngày giờ"
+          className="ml-auto text-[#0058be] hover:text-[#00479a] shrink-0"
+        >
+          <CalendarIcon size={13} />
+        </button>
+      </div>
+      {error && <p className="text-[11px] text-red-600 font-semibold mt-1">{error}</p>}
+    </>
+  );
+}
+
 // Default start time for a freshly-opened create form: the next half-hour
 // mark strictly after "now" (08:05 -> 08:30, 08:30 -> 09:00, 23:45 -> next
 // day 00:00) so the form never proposes a time that's already passed.
@@ -319,6 +475,11 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const [organizerConflict, setOrganizerConflict] = useState<{ message: string; organizer_google_email: string } | null>(null);
   const [suggestedSlots, setSuggestedSlots] = useState<string[]>([]);
   const [showTimePicker, setShowTimePicker] = useState(false);
+  // Mirrors DateTimeTypeInput's own red-border validation state — the typed
+  // day/time field only pushes a COMMITTED (valid) value into formData, so
+  // without this handleSubmit would happily submit the last-valid date/time
+  // while the field is still showing an error for what the user just typed.
+  const [hasTimeInputError, setHasTimeInputError] = useState(false);
   const timePickerWrapperRef = useRef<HTMLDivElement>(null);
   // Tracks project_ids across renders so the member-cascade effect below can
   // tell which project was just REMOVED (vs. this being the modal's initial
@@ -724,6 +885,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       isSubmittingRef.current = false;
       return;
     }
+    // The typed day/time box can be showing a red "invalid" error for
+    // whatever the user just typed while formData.date/time still holds the
+    // last COMMITTED valid value — block submit rather than silently saving
+    // that stale value as if the draft didn't matter.
+    if (hasTimeInputError) {
+      setError('Vui lòng nhập đúng định dạng ngày/giờ');
+      isSubmittingRef.current = false;
+      return;
+    }
     if (!initialData && toDateTimeMs(formData.date, formData.time) < Date.now()) {
       setError('Thời gian họp phải lớn hơn thời gian hiện tại.');
       isSubmittingRef.current = false;
@@ -1085,14 +1255,13 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 <div className="grid grid-cols-2 gap-2">
                   <div className="relative" ref={timePickerWrapperRef}>
                     <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">Thời gian bắt đầu *</label>
-                    <button
-                      type="button"
-                      onClick={() => setShowTimePicker(v => !v)}
-                      className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium text-left flex items-center gap-1.5"
-                    >
-                      <CalendarIcon size={13} className="text-[#0058be] shrink-0" />
-                      <span className="truncate">{formatDateTimeTrigger(formData.date, formData.time)}</span>
-                    </button>
+                    <DateTimeTypeInput
+                      date={formData.date}
+                      time={formData.time}
+                      onChange={(d, t) => setFormData(prev => ({ ...prev, date: d, time: t }))}
+                      onTogglePicker={() => setShowTimePicker(v => !v)}
+                      onErrorChange={setHasTimeInputError}
+                    />
                     {showTimePicker && (
                       <DateTimeWheelPicker
                         date={formData.date}

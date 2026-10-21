@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Date, Time, ForeignKey, DateTime, JSON, func
+from sqlalchemy import Column, Integer, String, Text, Date, Time, ForeignKey, DateTime, JSON, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -97,6 +97,12 @@ class Meeting(Base):
 
 class MeetingMember(Base):
     __tablename__ = "meeting_members"
+    __table_args__ = (
+        # One row per (meeting, member) — matches the duplicate check in
+        # add_meeting_member; the unique index also closes the race where two
+        # concurrent adds both pass that check before either commits.
+        UniqueConstraint("meeting_id", "member_id", name="uq_meeting_members_meeting_member"),
+    )
 
     id         = Column(Integer, primary_key=True, index=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False)

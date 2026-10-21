@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState, useMemo, ReactNode } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import Navbar from '@/components/Navbar';
 import { getProjects, deleteProject, bulkDeleteProjects, getCustomers, getWorkspaces, Workspace, getPinnedProjectIds, toggleProjectPin, setProjectCritical } from '@/lib/api';
@@ -9,13 +9,6 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
-
-const STATUS_STYLES: Record<string, { bg: string; bar: string }> = {
-  'Planning':   { bg: 'bg-[#fef9c3] text-[#854d0e]', bar: 'bg-[#854d0e]' },
-  'Developing': { bg: 'bg-[#dbeafe] text-[#1d4ed8]', bar: 'bg-[#0058be]' },
-  'Completed':  { bg: 'bg-[#dcfce7] text-[#15803d]', bar: 'bg-[#15803d]' },
-  'Archived':   { bg: 'bg-[#f1f5f9] text-[#64748b]', bar: 'bg-[#94a3b8]' },
-};
 
 const PROJECT_PHASES = [
   '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
@@ -120,7 +113,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const canManageCritical = isSuperAdmin();
   const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
   const [search, setSearch] = useState('');
-  const [businessFilter, setBusinessFilter] = useState(ctxWorkspaceCode || 'All');
+  // 'all' (same value as the dropdown's "Tất cả Workspace" option) = every
+  // Workspace; otherwise a Workspace name/code. Defaults to the Navbar's one.
+  const [businessFilter, setBusinessFilter] = useState(ctxWorkspaceCode || 'all');
   const [phaseFilter, setPhaseFilter] = useState('All');
   const [customerFilter, setCustomerFilter] = useState('All');
   const [pmFilter, setPmFilter] = useState('All');
@@ -187,31 +182,29 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   });
   const workspaces: Workspace[] = workspacesData || [];
 
-  // Resolve a customer_id from the URL or the customer selected inside the
-  // already Workspace-scoped dataset.
+  // Only an explicit customer_id from the URL narrows the API call. A pick
+  // from the customer-name dropdown is filtered client-side by name below —
+  // resolving it to an id here picked the wrong one of two same-named
+  // customers.
   const resolvedCustomerId: number | null = useMemo(() => {
     if (paramCustId) {
       const n = Number(paramCustId);
       if (Number.isFinite(n) && n > 0) return n;
     }
-    if (customerFilter && customerFilter !== 'All' && customers.length > 0) {
-      const c = customers.find(c => (c?.name || '').toLowerCase() === customerFilter.toLowerCase());
-      if (c && c.id) return Number(c.id);
-    }
     return null;
-  }, [paramCustId, customerFilter, customers]);
+  }, [paramCustId]);
 
   // Workspace is the first dataset constraint. Use its code for the API so
   // all later filter options and the table originate from the same scope.
+  // 'all'/'All' means every Workspace (backend treats a missing value as
+  // unscoped); the Navbar default is applied by setting businessFilter itself.
   const selectedWorkspace = useMemo(() => {
     if (lockedWorkspace) return lockedWorkspace;
-    if (businessFilter !== 'All') {
-      return workspaces.find(w => w.name === businessFilter || w.code === businessFilter)?.code || businessFilter;
-    }
-    return ctxWorkspaceCode || undefined;
-  }, [lockedWorkspace, businessFilter, ctxWorkspaceCode, workspaces]);
+    if (businessFilter.toLowerCase() === 'all') return undefined;
+    return workspaces.find(w => w.name === businessFilter || w.code === businessFilter)?.code || businessFilter;
+  }, [lockedWorkspace, businessFilter, workspaces]);
 
-  const { data: listData, refetch: reload } = useQuery({
+  const { data: listData, refetch: reload, isFetching: listFetching } = useQuery({
     queryKey: ['project-list', selectedWorkspace, resolvedCustomerId],
     queryFn: async () => {
       const projs = await getProjects({
@@ -222,6 +215,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         projects: projs || [],
       };
     },
+    // Keep showing the previous list while a new key loads, so the filter
+    // options (and the stale-filter cleanup below) don't see an empty list.
+    placeholderData: keepPreviousData,
   });
   const { data: pinnedIdsData } = useQuery({
     queryKey: ['project-pins'],
@@ -275,8 +271,22 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
     setBusinessFilter(ws?.name || ctxWorkspaceCode);
   }, [lockedWorkspace, ctxWorkspaceCode, workspaces]);
 
-  // Sync URL query params to filter states
+  // Sync URL query params to filter states — only when the params themselves
+  // change (or once customers load to resolve a customer_id). Re-running on
+  // every customers refetch (background sync) reset the user's own picks.
+  const appliedUrlParamsRef = useRef<string | null>(null);
+  // Set when we strip customer params from the URL ourselves (dropdown pick),
+  // so that URL change doesn't reset the filter the user just chose.
+  const skipUrlSyncRef = useRef(false);
   useEffect(() => {
+    const sig = `${paramCustId}|${paramCustName}|${paramYear}`;
+    if (appliedUrlParamsRef.current === sig) return;
+    if (paramCustId && customers.length === 0) return;
+    appliedUrlParamsRef.current = sig;
+    if (skipUrlSyncRef.current) {
+      skipUrlSyncRef.current = false;
+      return;
+    }
     if (paramCustId) {
       if (customers.length > 0) {
         const found = customers.find(c => String(c.id) === String(paramCustId));
@@ -299,9 +309,17 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const flash = (t: string, e = false) => { setMsg({ t, e }); setTimeout(() => setMsg(null), 4000); };
 
+  // "Xóa lọc" returns the Workspace filter to the page's default — the
+  // Navbar's Workspace, or every Workspace when the Navbar has none — so the
+  // dropdown label always matches the list actually shown.
   const handleResetFilters = () => {
     setSearch('');
-    if (!lockedWorkspace) setBusinessFilter('All');
+    if (!lockedWorkspace) {
+      manualWorkspacePickRef.current = false;
+      setBusinessFilter(ctxWorkspaceCode
+        ? (workspaces.find(w => w.code === ctxWorkspaceCode)?.name || ctxWorkspaceCode)
+        : 'all');
+    }
     setPhaseFilter('All');
     setCustomerFilter('All');
     setPmFilter('All');
@@ -364,13 +382,16 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   // A Workspace switch replaces the source dataset. Clear any downstream
   // selection that is not available in that Workspace instead of leaving a
   // stale filter that belongs to the previous one.
+  // Skipped while the list is (re)loading: the options then still describe
+  // the previous dataset (or none yet) and would wrongly reset a fresh pick.
   useEffect(() => {
+    if (listFetching || !listData) return;
     if (customerFilter !== 'All' && !uniqueCustomers.includes(customerFilter)) setCustomerFilter('All');
     if (pmFilter !== 'All' && !uniquePms.includes(pmFilter)) setPmFilter('All');
     if (salesFilter !== 'All' && !uniqueSales.includes(salesFilter)) setSalesFilter('All');
     if (memberFilter !== 'All' && !uniqueMembers.includes(memberFilter)) setMemberFilter('All');
     if (yearFilter !== 'All' && !uniqueYears.map(String).includes(yearFilter)) setYearFilter('All');
-  }, [customerFilter, pmFilter, salesFilter, memberFilter, yearFilter, uniqueCustomers, uniquePms, uniqueSales, uniqueMembers, uniqueYears]);
+  }, [listFetching, listData, customerFilter, pmFilter, salesFilter, memberFilter, yearFilter, uniqueCustomers, uniquePms, uniqueSales, uniqueMembers, uniqueYears]);
 
   // Filter memoized. No Workspace check here — the API call above is already
   // scoped to selectedWorkspace by the backend (_apply_workspace_scope), which
@@ -439,6 +460,24 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paged = sorted.slice((page - 1) * pageSize, page * pageSize);
+
+  // Clamp the page when the list shrinks (delete, refetch, filter change
+  // that didn't reset the page) so we never sit on an empty page.
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  // Bulk selection only ever covers projects in the current filtered list —
+  // otherwise "Xóa đã chọn" would also delete projects hidden by a filter,
+  // search or Workspace switch.
+  const filteredIds = useMemo(() => new Set<number>(filtered.map(p => p.id)), [filtered]);
+  useEffect(() => {
+    setSelectedIds(prev => {
+      const next = prev.filter(id => filteredIds.has(id));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [filteredIds]);
+  const visibleSelectedIds = selectedIds.filter(id => filteredIds.has(id));
   const mandayColumnCount = Number(visibleColumns.activeManday) + Number(visibleColumns.completedManday);
   const kpiColumnCount = Number(visibleColumns.activeKpi) + Number(visibleColumns.completedKpi);
   const taskColumnCount = Number(visibleColumns.activeTasks) + Number(visibleColumns.completedTasks) + Number(visibleColumns.overdueTasks);
@@ -531,7 +570,19 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               icon="🏢"
               options={uniqueCustomers.map(cust => ({ id: cust, name: cust }))}
               value={customerFilter}
-              onChange={val => { setCustomerFilter(String(val)); setPage(1); }}
+              onChange={val => {
+                // A customer from the URL (customer_id / customer) would keep
+                // winning over the dropdown — drop it so the pick takes effect.
+                if (paramCustId || paramCustName) {
+                  const next = new URLSearchParams(searchParams.toString());
+                  next.delete('customer_id');
+                  next.delete('customer');
+                  skipUrlSyncRef.current = true;
+                  router.replace(next.toString() ? `${pathname}?${next}` : pathname);
+                }
+                setCustomerFilter(String(val));
+                setPage(1);
+              }}
               placeholder="Tìm khách hàng..."
             />
 
@@ -986,7 +1037,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                   );
                 })}
                 <button
-                  disabled={page === totalPages}
+                  disabled={page >= totalPages}
                   onClick={() => setPage(p => p + 1)}
                   className="w-8 h-8 border border-slate-200 rounded-lg flex items-center justify-center bg-white hover:bg-slate-50 disabled:opacity-40 disabled:hover:bg-white transition-colors"
                 >
@@ -1000,9 +1051,9 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         </div>
       </div>
 
-      {selectedIds.length > 0 && (
+      {visibleSelectedIds.length > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-[#0b1c30] text-white rounded-xl shadow-2xl px-5 py-3 flex items-center gap-4">
-          <span className="text-sm font-semibold">Đã chọn {selectedIds.length} dự án</span>
+          <span className="text-sm font-semibold">Đã chọn {visibleSelectedIds.length} dự án</span>
           <button onClick={() => setSelectedIds([])} className="text-xs font-semibold text-slate-300 hover:text-white">Bỏ chọn</button>
           <button
             onClick={() => setShowBulkDeleteConfirm(true)}
@@ -1016,23 +1067,24 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       {showBulkDeleteConfirm && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
-            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {selectedIds.length} dự án</h2>
-            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {selectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
+            <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {visibleSelectedIds.length} dự án</h2>
+            <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {visibleSelectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
             <div className="flex justify-end gap-3">
               <button disabled={bulkDeleting} onClick={() => setShowBulkDeleteConfirm(false)} className="px-4 py-2 rounded-lg text-sm font-semibold bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#0b1c30]">Hủy</button>
               <button
                 disabled={bulkDeleting}
                 onClick={async () => {
                   setBulkDeleting(true);
+                  const idsToDelete = visibleSelectedIds;
                   try {
-                    const res = await bulkDeleteProjects(selectedIds);
+                    const res = await bulkDeleteProjects(idsToDelete);
                     reload();
                     const okCount = res.deleted_ids?.length || 0;
                     const failCount = res.failed?.length || 0;
                     if (failCount === 0) {
                       flash(`Đã xóa ${okCount} dự án!`);
                     } else {
-                      flash(`Đã xóa ${okCount}/${selectedIds.length} dự án. ${failCount} dự án không thể xóa (không có quyền hoặc không tồn tại).`, true);
+                      flash(`Đã xóa ${okCount}/${idsToDelete.length} dự án. ${failCount} dự án không thể xóa (không có quyền hoặc không tồn tại).`, true);
                     }
                   } catch (e: any) {
                     flash(e?.response?.data?.detail || 'Xóa hàng loạt thất bại', true);
@@ -1054,7 +1106,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
         isOpen={showProjectFormModal}
         mode={projectFormMode}
         editingProject={editingProject}
-        defaultBusiness={lockedWorkspace ? (workspaces.find(w => w.code === lockedWorkspace)?.name || lockedWorkspace) : (businessFilter !== 'All' ? businessFilter : undefined)}
+        defaultBusiness={lockedWorkspace ? (workspaces.find(w => w.code === lockedWorkspace)?.name || lockedWorkspace) : (businessFilter.toLowerCase() !== 'all' ? businessFilter : undefined)}
         onClose={() => setShowProjectFormModal(false)}
         onSaved={() => reload()}
         onFlash={flash}
@@ -1070,7 +1122,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
               <button onClick={async () => {
                 // Backend enforces the real rule (super_admin, or a leader scoped
                 // to this project) — no need to duplicate it here.
-                try { await deleteProject(deleteId); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
+                try { await deleteProject(deleteId); setSelectedIds(prev => prev.filter(x => x !== deleteId)); reload(); flash('Đã xóa!'); } catch(e: any) { flash(e?.response?.data?.detail || 'Xóa thất bại', true); } setDeleteId(null);
               }}
                 className="px-5 py-2 rounded-lg text-sm font-semibold bg-[#dc2626] hover:bg-red-700 text-white shadow-sm">Xóa</button>
             </div>

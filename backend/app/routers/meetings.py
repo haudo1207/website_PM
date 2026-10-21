@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 from typing import Optional, List, Dict, Any
 import datetime
@@ -15,7 +16,7 @@ from ..models.member import Member
 from ..models.user import User
 from ..models.system_category import Workspace
 from ..models.workspace_google_account import WorkspaceGoogleAccount
-from ..utils.auth import get_current_user
+from ..utils.auth import get_current_user, require_super_admin
 from ..utils.access import ALL_SCOPE, WRITE_ROLES, has_full_project_access, project_belongs_to_workspace, project_query_for_user, require_project, require_route_project_access, resolve_workspace, user_scope, workspace_id_for_project
 from ..utils.audit_service import AuditService
 from ..utils.timezone import VN_TZ as _VN_TZ
@@ -533,6 +534,79 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> bool:
         return False
 
 
+def _user_can_see_meeting(db: Session, user, m: Meeting) -> bool:
+    """Same read rule as require_route_project_access's meeting branch:
+    full-scope users, anyone who can open one of its projects, its creator or
+    a participant."""
+    if getattr(user, "role", None) == "super_admin" or user_scope(user) == ALL_SCOPE:
+        return True
+    member_id = getattr(user, "member_id", None)
+    if member_id is not None and (
+        m.created_by == member_id
+        or db.query(MeetingMember.id).filter(MeetingMember.meeting_id == m.id, MeetingMember.member_id == member_id).first()
+    ):
+        return True
+    from ..models.meeting_project import MeetingProject
+    from ..utils.access import can_access_project
+    linked = ([m.project_id] if m.project_id else []) + [
+        pid for (pid,) in db.query(MeetingProject.project_id).filter(MeetingProject.meeting_id == m.id).all()
+    ]
+    if not linked:
+        return False
+    return any(can_access_project(db, user, p) for p in db.query(Project).filter(Project.id.in_(linked)).all())
+
+
+_PUSH_MARKER_KEYS = ("ai_task_inbox_id", "imported_task_id", "task_code", "pushed_at")
+
+
+def _merge_pushed_markers(old_summary, new_summary: dict) -> dict:
+    """A re-ingested summary (n8n) replaces the AI text, but must not forget
+    which recommended tasks were already pushed — that's what the "Đã đẩy"
+    badge and push-tasks' duplicate guard read — nor manually added
+    custom_members. Pushed tasks the new summary no longer lists are kept."""
+    if not isinstance(old_summary, dict):
+        return new_summary
+    merged = dict(new_summary)
+    if "custom_members" in old_summary and "custom_members" not in merged:
+        merged["custom_members"] = old_summary["custom_members"]
+    key = lambda t: str(t.get("detail_task") or t.get("title") or t.get("name") or "").strip()
+    old_pushed = {
+        key(t): t for t in (old_summary.get("recommended_tasks") or [])
+        if isinstance(t, dict) and t.get("ai_task_inbox_id")
+    }
+    new_tasks = []
+    for t in merged.get("recommended_tasks") or []:
+        if isinstance(t, dict) and key(t) in old_pushed:
+            prev = old_pushed.pop(key(t))
+            t = {**t, **{k: prev.get(k) for k in _PUSH_MARKER_KEYS}}
+        new_tasks.append(t)
+    merged["recommended_tasks"] = new_tasks + list(old_pushed.values())
+    return merged
+
+
+def _safe_float(value, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _can_manage_meeting(db: Session, user, m: Meeting) -> bool:
+    """Super Admin / Leader, the meeting's creator, or PM/Leader of any project
+    the meeting is linked to. Used for the participant-role and remove-creator
+    rules; route access itself is decided by require_route_project_access."""
+    if getattr(user, "role", None) in WRITE_ROLES:
+        return True
+    member_id = getattr(user, "member_id", None)
+    if member_id is not None and m.created_by == member_id:
+        return True
+    from ..models.meeting_project import MeetingProject
+    linked = ([m.project_id] if m.project_id else []) + [
+        pid for (pid,) in db.query(MeetingProject.project_id).filter(MeetingProject.meeting_id == m.id).all()
+    ]
+    return any(has_full_project_access(db, user, pid) for pid in linked)
+
+
 def _host_workspace_id_for_meeting(db: Session, m: Meeting) -> Optional[int]:
     """Which Workspace's Google account actually owns this meeting's Calendar
     event — resolved from organizer_google_email, NOT from the meeting's
@@ -801,6 +875,20 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
         exclude_id = None
 
     other = _find_organizer_time_conflict(db, organizer_google_email, meeting_date, start_time, end_time, exclude_meeting_id=exclude_id)
+    if other and not _user_can_see_meeting(db, current_user, other):
+        # The Host account is shared across Workspaces — say the slot is taken
+        # without leaking another team's meeting title.
+        return {
+            "conflict": True,
+            "organizer_google_email": organizer_google_email,
+            "start_time": other.start_time.strftime("%H:%M"),
+            "end_time": other.end_time.strftime("%H:%M"),
+            "message": (
+                f"Tài khoản host {organizer_google_email} đã có cuộc họp khác "
+                f"từ {other.start_time.strftime('%H:%M')} đến {other.end_time.strftime('%H:%M')} "
+                f"ngày {other.meeting_date} — không thể tự động vào 2 cuộc họp cùng lúc."
+            ),
+        }
     if other:
         return {
             "conflict": True,
@@ -863,7 +951,9 @@ def get_meeting_insights(
             Meeting.id.in_(meetings_via_extra_ws),
         ))
 
-    today = datetime.date.today()
+    # Server runs ahead of Vietnam (see _now_vn()'s docstring) — a bare
+    # date.today() default picks VN's YESTERDAY during VN's 00:00-06:59 window.
+    today = _now_vn().date()
     fd = parse_date(from_date) if from_date else today - datetime.timedelta(days=7)
     td = parse_date(to_date) if to_date else today
     meetings = q.filter(Meeting.meeting_date >= fd, Meeting.meeting_date <= td).all()
@@ -1110,6 +1200,24 @@ def get_meeting_attendance_summary(
         s["history"].sort(key=lambda h: h["date"] or "", reverse=True)
     result.sort(key=lambda s: s["total_recorded"], reverse=True)
     return {"success": True, "data": result}
+
+
+# ─── CHANGE STAMP ────────────────────────────────────────
+@router.get("/version")
+def meetings_version(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Cheap change stamp the Meetings page polls to pick up edits by other
+    users / the meeting bot / n8n without a reload — same approach as
+    system_categories.customer_project_version. Meeting.updated_at covers
+    edits and soft deletes; member/attendance aggregates cover the rest.
+    Declared before GET /{id} so "version" isn't parsed as an id.
+    """
+    from sqlalchemy import func as sql_func
+    m_count, m_max, m_updated = db.query(
+        sql_func.count(Meeting.id), sql_func.max(Meeting.id), sql_func.max(Meeting.updated_at)
+    ).one()
+    mm_count, mm_max = db.query(sql_func.count(MeetingMember.id), sql_func.max(MeetingMember.id)).one()
+    a_count, a_updated = db.query(sql_func.count(MeetingAttendance.id), sql_func.max(MeetingAttendance.recorded_at)).one()
+    return {"version": f"{m_count}:{m_max}:{m_updated or ''}:{mm_count}:{mm_max}:{a_count}:{a_updated or ''}"}
 
 
 # ─── GET ONE ─────────────────────────────────────────────
@@ -1469,6 +1577,14 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
 
     _check_organizer_time_conflict(db, m.organizer_google_email, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
 
+    # Reschedule invalidates any reminder/start-link already sent for the old
+    # time — otherwise a meeting moved later than its old slot would never get
+    # a fresh reminder (the "already sent" guard would still see a non-NULL
+    # timestamp left over from before the move).
+    if (m.meeting_date != old_meeting_date) or (m.start_time != old_start_time):
+        m.reminder_sent_at = None
+        m.start_link_sent_at = None
+
     m.status = new_status
     m.transcript = body.get("transcript", m.transcript)
     m.objective = body.get("objective", m.objective)
@@ -1583,8 +1699,13 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
     if m.google_event_id and time_changed and m.start_time and m.end_time:
         try:
             from ..services.meeting_sync import update_google_meet_event
+            # Same day-rollover rule as _find_organizer_time_conflict: a
+            # meeting crossing midnight (end_time < start_time) ends on the
+            # NEXT calendar day — without this, rescheduling such a meeting
+            # sent Google an end instant before its own start instant.
+            end_date = m.meeting_date + datetime.timedelta(days=1) if m.end_time < m.start_time else m.meeting_date
             start_iso = datetime.datetime.combine(m.meeting_date, m.start_time).isoformat()
-            end_iso = datetime.datetime.combine(m.meeting_date, m.end_time).isoformat()
+            end_iso = datetime.datetime.combine(end_date, m.end_time).isoformat()
             workspace_id = _host_workspace_id_for_meeting(db, m)
             update_google_meet_event(db, m.google_event_id, start_iso, end_iso, workspace_id)
         except Exception as e:
@@ -1790,11 +1911,28 @@ def save_meeting_attendance(id: int, body: dict, db: Session = Depends(get_db), 
             row.late_minutes = rec["late_minutes"]
             row.recorded_by = getattr(current_user, "id", None)
         else:
-            db.add(MeetingAttendance(
-                meeting_id=id, member_id=rec["member_id"], status=rec["status"],
-                joined_at=rec["joined_at"], late_minutes=rec["late_minutes"],
-                recorded_by=getattr(current_user, "id", None),
-            ))
+            # Savepoint per insert: a concurrent first-time save for the same
+            # (meeting_id, member_id) can hit uq_meeting_attendance_meeting_member
+            # between our existence check above and this insert — fall back to
+            # an update instead of letting the whole batch 500.
+            savepoint = db.begin_nested()
+            try:
+                db.add(MeetingAttendance(
+                    meeting_id=id, member_id=rec["member_id"], status=rec["status"],
+                    joined_at=rec["joined_at"], late_minutes=rec["late_minutes"],
+                    recorded_by=getattr(current_user, "id", None),
+                ))
+                savepoint.commit()
+            except IntegrityError:
+                savepoint.rollback()
+                row = db.query(MeetingAttendance).filter(
+                    MeetingAttendance.meeting_id == id, MeetingAttendance.member_id == rec["member_id"]
+                ).first()
+                if row:
+                    row.status = rec["status"]
+                    row.joined_at = rec["joined_at"]
+                    row.late_minutes = rec["late_minutes"]
+                    row.recorded_by = getattr(current_user, "id", None)
     db.commit()
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
@@ -1823,6 +1961,10 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
     member_id = body.get("member_id")
     if not member_id:
         raise HTTPException(400, "member_id không được để trống")
+    try:
+        member_id = int(member_id)
+    except (TypeError, ValueError):
+        raise HTTPException(400, "member_id không hợp lệ")
 
     member = db.query(Member).filter(Member.id == member_id).first()
     if not member:
@@ -1836,18 +1978,30 @@ def add_meeting_member(id: int, body: dict, db: Session = Depends(get_db), curre
     if exists:
         raise HTTPException(400, "Thành viên này đã được thêm vào cuộc họp")
 
-    role = body.get("role", "PARTICIPANT")
+    # The role feeds the score's "required attendance" — only someone who
+    # manages the meeting may pick it; everyone else adds a plain participant.
+    role = body.get("role", "PARTICIPANT") if _can_manage_meeting(db, current_user, m) else "PARTICIPANT"
     if role not in ["HOST", "PM", "PARTICIPANT", "VIEWER"]:
         role = "PARTICIPANT"
 
+    # joined_at is NOT set here — this is "added as a participant", not real
+    # attendance. Actual join/attendance is recorded separately (see
+    # MeetingAttendance / the /attendance route), never guessed as "now".
     mm = MeetingMember(
         meeting_id=id,
         member_id=member_id,
         role=role,
-        joined_at=datetime.datetime.now()
     )
     db.add(mm)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Race: another request added the same (meeting_id, member_id) between
+        # our duplicate check above and this commit — uq_meeting_members_meeting_member
+        # (models/meeting.py) catches it at the DB level; surface the same
+        # clean message as the regular duplicate check instead of a raw 500.
+        db.rollback()
+        raise HTTPException(400, "Thành viên này đã được thêm vào cuộc họp")
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
         entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=member.display_name,
@@ -1900,6 +2054,8 @@ def remove_meeting_member(id: int, member_id: int, db: Session = Depends(get_db)
     ).first()
     if not mm:
         raise HTTPException(404, "Thành viên không thuộc cuộc họp này")
+    if m.created_by is not None and member_id == m.created_by and not _can_manage_meeting(db, current_user, m):
+        raise HTTPException(403, "Không thể xóa người tạo cuộc họp.")
 
     removed_member = db.query(Member).filter(Member.id == member_id).first()
     db.delete(mm)
@@ -2029,10 +2185,15 @@ def google_status(workspace: str = None, db: Session = Depends(get_db), current_
 
 
 @router.get("/google/auth")
-def google_auth_url(workspace: str = None, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
+def google_auth_url(workspace: str = None, db: Session = Depends(get_db), current_user = Depends(require_super_admin)):
     """Generate Google OAuth2 authorization URL. Pass ?workspace=<code> to connect
     a Google account that overrides the shared one for just that workspace (e.g.
-    ?workspace=infra) instead of replacing the default shared account."""
+    ?workspace=infra) instead of replacing the default shared account.
+
+    Super Admin only — the connected account organizes every meeting and
+    receives the recordings of that Workspace (or of everyone, for the shared
+    account). The `state` is a one-time random value (GoogleOAuthState) that
+    the public callback must redeem, not a guessable "<user_id>:<ws_id>"."""
     from ..config import settings
     client_id = settings.GOOGLE_CLIENT_ID
     client_secret = settings.GOOGLE_CLIENT_SECRET
@@ -2064,12 +2225,21 @@ def google_auth_url(workspace: str = None, db: Session = Depends(get_db), curren
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )
-    state = str(current_user.id)
+    workspace_id = None
     if workspace:
         ws = resolve_workspace(db, workspace)
         if not ws:
             raise HTTPException(404, f"Không tìm thấy workspace '{workspace}'")
-        state = f"{current_user.id}:{ws.id}"
+        workspace_id = ws.id
+    import secrets
+    from ..models.google_token import GoogleOAuthState
+    # Drop stale, never-redeemed states while we're here.
+    db.query(GoogleOAuthState).filter(
+        GoogleOAuthState.created_at < datetime.datetime.utcnow() - datetime.timedelta(hours=1)
+    ).delete(synchronize_session=False)
+    state = secrets.token_urlsafe(32)
+    db.add(GoogleOAuthState(state=state, user_id=current_user.id, workspace_id=workspace_id))
+    db.commit()
     auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline", state=state)
     return {"auth_url": auth_url}
 
@@ -2080,8 +2250,18 @@ def google_auth_url(workspace: str = None, db: Session = Depends(get_db), curren
 # ─── PUSH MEETING AI RECOMMENDED TASKS INTO PROJECT ───────
 @router.post("/{id}/push-tasks")
 def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), current_user = Depends(get_current_user)):
-    """Push AI recommended meeting tasks into Project/AITaskInbox."""
+    """Push AI recommended meeting tasks into Project/AITaskInbox.
+
+    Each task carries its own project_id (the UI defaults it to the meeting's
+    project but lets the user pick another per task); the caller must be able
+    to access that project. Tasks without a usable project are skipped and
+    reported, never dropped into an arbitrary project. `source_index` (the
+    task's position in ai_summary.recommended_tasks) identifies an already
+    pushed task even after its text was edited, so a second push can't
+    duplicate it."""
     m = _get_active_meeting(db, id)
+    # Serialise concurrent pushes of the same meeting (double click, two tabs).
+    db.query(Meeting).filter(Meeting.id == m.id).with_for_update().first()
 
     tasks_data = body.get("tasks", [])
     if not isinstance(tasks_data, list) or not tasks_data:
@@ -2106,28 +2286,37 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
         if isinstance(t, dict)
     }
 
+    from ..utils.access import can_access_project
+    skipped: list = []
+    pushed: list = []
     for item in tasks_data:
+        if not isinstance(item, dict):
+            continue
         detail_task = str(item.get("detail_task") or item.get("title") or item.get("name") or "").strip()
+        source_index = item.get("source_index")
         if not detail_task:
             continue
 
-        existing_idx = pushed_index_by_detail.get(detail_task)
+        existing_idx = None
+        if isinstance(source_index, int) and 0 <= source_index < len(recommended_tasks) and isinstance(recommended_tasks[source_index], dict):
+            existing_idx = source_index
+        else:
+            existing_idx = pushed_index_by_detail.get(detail_task)
         if existing_idx is not None and recommended_tasks[existing_idx].get("ai_task_inbox_id"):
             # Already pushed once — skip to avoid duplicate AITaskInbox rows.
+            skipped.append({"source_index": source_index, "detail_task": detail_task, "reason": "Đã đẩy trước đó"})
             continue
 
-        project_id = item.get("project_id") or m.project_id
-        if not project_id and item.get("project_name"):
-            p_obj = db.query(Project).filter(Project.name.ilike(str(item["project_name"]).strip())).first()
-            if p_obj:
-                project_id = p_obj.id
-
-        if not project_id:
-            first_p = db.query(Project).first()
-            if first_p:
-                project_id = first_p.id
-
-        if not project_id:
+        try:
+            project_id = int(item.get("project_id") or m.project_id or 0) or None
+        except (TypeError, ValueError):
+            project_id = None
+        target_project = db.query(Project).filter(Project.id == project_id).first() if project_id else None
+        if not target_project:
+            skipped.append({"source_index": source_index, "detail_task": detail_task, "reason": "Chưa chọn dự án"})
+            continue
+        if not can_access_project(db, current_user, target_project):
+            skipped.append({"source_index": source_index, "detail_task": detail_task, "reason": "Không có quyền với dự án đã chọn"})
             continue
 
         def _find_member_by_name(name: str):
@@ -2187,7 +2376,7 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             support_id=support_id,
             acceptance_criteria=f"Hạn hoàn thành: {item.get('deadline', 'Chưa xác định')}",
             status="PENDING",
-            manday_est=float(item.get("manday_est", 1.0)),
+            manday_est=_safe_float(item.get("manday_est"), 1.0),
         )
         db.add(inbox_task)
         db.flush()
@@ -2199,6 +2388,9 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
         # chỉ khác là chạy trong cùng transaction/commit với push này.
         imported_task_id = None
         task_code = None
+        # Savepoint: a failed auto-import must not leave the session broken
+        # for the rest of the batch (and the final commit).
+        savepoint = db.begin_nested()
         try:
             # Phase/TaskGroup đã validate ở trên; nếu người dùng chưa chọn thì
             # fallback về Phase/TaskGroup đầu tiên của project (tạo mới nếu
@@ -2276,7 +2468,11 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             inbox_task.status = "IMPORTED"
             inbox_task.imported_task_id = new_task.id
             imported_task_id = new_task.id
+            savepoint.commit()
         except Exception:
+            savepoint.rollback()
+            imported_task_id = None
+            task_code = None
             # Không chặn cả lần push chỉ vì 1 task tạo Task thật thất bại — nó
             # vẫn còn nguyên trong AI Task Inbox để import lại thủ công sau.
             logger.exception("Auto-import sau push thất bại cho task '%s'", detail_task)
@@ -2289,30 +2485,46 @@ def push_meeting_tasks(id: int, body: dict, db: Session = Depends(get_db), curre
             "task_code": task_code,
             "pushed_at": datetime.datetime.utcnow().isoformat(),
         }
+        record.pop("source_index", None)
         if existing_idx is not None:
             recommended_tasks[existing_idx] = record
+            stored_index = existing_idx
         else:
             recommended_tasks.append(record)
-            pushed_index_by_detail[detail_task] = len(recommended_tasks) - 1
+            stored_index = len(recommended_tasks) - 1
+            pushed_index_by_detail[detail_task] = stored_index
+        pushed.append({"source_index": source_index, "index": stored_index, "ai_task_inbox_id": inbox_task.id,
+                       "imported_task_id": imported_task_id, "task_code": task_code})
 
     if isinstance(m.ai_summary, dict):
         m.ai_summary = {**m.ai_summary, "recommended_tasks": recommended_tasks}
+    else:
+        # Keep the pushed markers even when the meeting had no dict summary yet,
+        # otherwise nothing records what was pushed and a retry duplicates it.
+        m.ai_summary = {"recommended_tasks": recommended_tasks}
     recalculate_meeting_score(m, db)
     db.commit()
-    return {"success": True, "pushed_count": pushed_count, "message": f"Đã push {pushed_count} task vào Project thành công!"}
+    message = f"Đã push {pushed_count} task vào Project thành công!"
+    if skipped:
+        message += f" Bỏ qua {len(skipped)} task."
+    return {
+        "success": True,
+        "pushed_count": pushed_count,
+        "pushed": pushed,
+        "skipped": skipped,
+        "recommended_tasks": recommended_tasks,
+        "message": message,
+    }
 
 
 # ─── MEETING INTELLIGENCE: SCORE / FEEDBACK / AI COPILOT / INSIGHTS ───
 @router.post("/{id}/recalculate-score")
 def recalculate_score(id: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     from ..services.meeting_score_engine import recalculate_meeting_score
-    m = db.query(Meeting).options(
-        joinedload(Meeting.project),
-        joinedload(Meeting.creator),
-        joinedload(Meeting.members).joinedload(MeetingMember.member)
-    ).filter(Meeting.id == id).first()
-    if not m:
-        raise HTTPException(404, "Không tìm thấy cuộc họp")
+    # chốt 2026-10-21: was a raw query ignoring deleted_at, letting a
+    # soft-deleted meeting's score still be recalculated — use the same
+    # active-meeting fetch as every other user-facing action.
+    m = _get_active_meeting(db, id)
     recalculate_meeting_score(m, db)
     db.commit()
     db.refresh(m)
@@ -2399,7 +2611,7 @@ def generate_ai_meeting_content(body: dict, db: Session = Depends(get_db), curre
 
 # ─── INTERNAL GOOGLE HEALTH CHECK ENDPOINT (SPEC CHAPTER 06) ───
 @router.get("/internal/health/google")
-def google_health_check(db: Session = Depends(get_db)):
+def google_health_check(db: Session = Depends(get_db), _=Depends(require_super_admin)):
     """Health check endpoint to monitor Google Refresh Token & API access status per Spec Chapter 06."""
     from ..services.meeting_sync import get_shared_google_access_token
     try:
@@ -2472,9 +2684,30 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
         dur_mins = max(end_mins - start_mins, 1)
     start_datetime = f"{m.meeting_date.isoformat()}T{m.start_time.strftime('%H:%M')}:00Z"
 
-    from ..services.meeting_sync import create_google_meet_link
+    from ..services.meeting_sync import (
+        create_google_meet_link, is_workspace_google_connected,
+        rename_google_meet_event_tag, cancel_google_meet_event, notify_n8n_meeting_created,
+    )
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
     workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, meeting_proj))
+
+    # Resolve the prospective NEW organizer and check its schedule BEFORE
+    # creating anything (chốt 2026-10-21) — this used to create the new
+    # Calendar event first and only check the conflict afterward, orphaning
+    # the freshly-created event whenever the new organizer turned out to be
+    # busy. Same no-side-effect resolution /check-conflict already uses.
+    prospective_organizer = None
+    if workspace_id:
+        prospective_organizer = (is_workspace_google_connected(db, workspace_id) or {}).get("google_email")
+    prospective_organizer = prospective_organizer or "mkt.szone@gmail.com"
+    _check_organizer_time_conflict(db, prospective_organizer, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
+
+    # Capture the OLD event/workspace before any field on `m` changes below —
+    # cancelling it must happen against the account that actually owns it,
+    # which can differ from the new workspace_id being assigned.
+    old_google_event_id = m.google_event_id
+    old_workspace_id = _host_workspace_id_for_meeting(db, m)
+
     try:
         link_data = create_google_meet_link(db, current_user.id, m.title or "Cuộc họp", start_datetime, dur_mins, workspace_id=workspace_id)
     except ValueError as e:
@@ -2487,14 +2720,17 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
         raise HTTPException(500, "Không thể tạo lại link Google Meet")
 
     new_organizer = link_data.get("organizer_google_email")
-    # Check the NEW organizer's schedule before committing — reassigning to an
-    # account that's already busy at this exact slot is exactly the conflict
-    # this whole rule exists to prevent.
-    _check_organizer_time_conflict(db, new_organizer, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
 
     m.meeting_url = link_data["join_url"]
     m.google_event_id = link_data.get("id") or m.google_event_id
     m.organizer_google_email = new_organizer or m.organizer_google_email
+    # n8n only knows about meetings via notify_n8n_meeting_created — a new
+    # event means a new join link/Drive tag it has never seen, so re-arm the
+    # notify pipeline instead of leaving it at whatever terminal state the
+    # OLD event last left it in.
+    m.n8n_notify_status = "PENDING"
+    m.n8n_notify_attempts = 0
+    m.n8n_notify_last_error = None
     db.commit()
     db.refresh(m)
     AuditService.record(
@@ -2503,10 +2739,24 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
         description=f"Tạo lại link Google Meet, đổi organizer sang {new_organizer or '(không đổi)'}"
     )
     db.commit()
+
     # New Calendar event starts with zero attendees (create_google_meet_link
     # always creates with attendees_emails=[]) — re-apply the existing
     # participant list as guests on this fresh event.
     _sync_meeting_calendar_attendees(db, m)
+    # The event was created with a throwaway placeholder tag (see
+    # create_google_meet_link) — rename it to the real "[MK-{id}]" now that
+    # m.id exists, exactly like create_meeting does for a brand-new meeting.
+    rename_google_meet_event_tag(db, m.google_event_id, m.id, m.title, workspace_id)
+    # The old event is now fully replaced — cancel it so it doesn't linger on
+    # the old organizer's Calendar (and, for the Meeting Host Bot, so it can
+    # never be mistaken for a still-live event to join).
+    if old_google_event_id and old_google_event_id != m.google_event_id:
+        cancel_google_meet_event(db, old_google_event_id, workspace_id=old_workspace_id)
+    # Let n8n know about the new meeting_url/tag right away rather than
+    # waiting for the next retry_pending_n8n_notifies sweep.
+    notify_n8n_meeting_created(db, m, workspace_id)
+
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
 
 
@@ -2537,7 +2787,12 @@ class N8nMeetingSummaryPayload(BaseModel):
     video_link: Optional[str] = None
     title: str = Field(..., min_length=1)
     meeting_date: str
-    start_time: Optional[str] = "09:00"
+    # No "09:00" default here on purpose (chốt 2026-10-21): a literal default
+    # makes "field omitted" indistinguishable from "n8n really sent 09:00",
+    # which used to stomp an existing meeting's real start_time with 09:00 on
+    # every re-ingest. None now means "not provided" — see start_time_provided
+    # below, which is what actually gates overwriting matched_meeting.
+    start_time: Optional[str] = None
     end_time: Optional[str] = None
     duration_minutes: Optional[float] = None
     platform: Optional[str] = "Google Meet"
@@ -2557,6 +2812,39 @@ class N8nMeetingSummaryPayload(BaseModel):
     sheet_row_id: Optional[str] = None
 
 
+def _authenticate_n8n_webhook(db: Session, provided: Optional[str]) -> Optional[int]:
+    """Check X-N8N-Webhook-Secret against every Workspace's secret (Settings →
+    Workspace) and the legacy server-wide N8N_WEBHOOK_SECRET. Returns the
+    matching Workspace id, or None for the server-wide secret. 503 when no
+    secret is configured anywhere (fail closed — an empty secret used to mean
+    "no auth"), 401 when the header is missing or wrong. Constant-time
+    comparisons throughout."""
+    import hmac
+    from ..config import settings
+    from ..models.system_category import WorkspaceIntegrationSecret
+    ws_secrets = [
+        (wid, sec) for (wid, sec) in db.query(
+            WorkspaceIntegrationSecret.workspace_id, WorkspaceIntegrationSecret.n8n_webhook_secret
+        ).all() if sec
+    ]
+    global_secret = (settings.N8N_WEBHOOK_SECRET or "").strip()
+    if not ws_secrets and not global_secret:
+        logger.error("n8n webhook rejected: no webhook secret configured (Settings → Workspace or N8N_WEBHOOK_SECRET).")
+        raise HTTPException(status_code=503, detail="Chưa cấu hình secret webhook n8n trên server.")
+    given = (provided or "").strip().encode()
+    if given:
+        matched_ws = None
+        for wid, sec in ws_secrets:
+            if hmac.compare_digest(given, sec.strip().encode()):
+                matched_ws = wid
+        if matched_ws is not None:
+            return matched_ws
+        if global_secret and hmac.compare_digest(given, global_secret.encode()):
+            return None
+    logger.warning("n8n webhook authentication failed: invalid or missing secret header.")
+    raise HTTPException(status_code=401, detail="X-N8N-Webhook-Secret không hợp lệ hoặc bị thiếu.")
+
+
 @router.post("/webhook/n8n-summary")
 def ingest_n8n_meeting_summary(
     payload: N8nMeetingSummaryPayload,
@@ -2568,12 +2856,9 @@ def ingest_n8n_meeting_summary(
     Validates secret, normalizes summary data, idempotently matches/updates or creates meeting,
     and preserves existing manual Project/Creator assignments.
     """
-    from ..config import settings
-    configured_secret = (settings.N8N_WEBHOOK_SECRET or "").strip()
-    if configured_secret:
-        if not x_n8n_webhook_secret or x_n8n_webhook_secret.strip() != configured_secret:
-            logger.warning("n8n webhook authentication failed: invalid or missing secret header.")
-            raise HTTPException(status_code=401, detail="X-N8N-Webhook-Secret không hợp lệ hoặc bị thiếu.")
+    # Which Workspace this call is for (None = the legacy server-wide secret,
+    # which keeps full scope). Fails closed when nothing is configured.
+    caller_ws_id = _authenticate_n8n_webhook(db, x_n8n_webhook_secret)
 
     # 1. Parse dates and times
     try:
@@ -2581,14 +2866,19 @@ def ingest_n8n_meeting_summary(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Ngày họp không hợp lệ (yêu cầu YYYY-MM-DD): {payload.meeting_date}")
 
+    # start_time_provided tracks whether the payload actually carried a
+    # usable start_time — as opposed to it being absent/unparseable — so the
+    # update path below can leave the existing meeting's start_time alone
+    # instead of silently stomping it with a 09:00 default.
     start_time = None
+    start_time_provided = False
     if payload.start_time:
         try:
             start_time = parse_time(payload.start_time)
+            start_time_provided = True
         except Exception:
-            start_time = datetime.time(9, 0)
-    else:
-        start_time = datetime.time(9, 0)
+            logger.warning(f"n8n webhook: could not parse start_time '{payload.start_time}', treating as not provided")
+            start_time = None
 
     end_time = None
     if payload.end_time:
@@ -2627,14 +2917,14 @@ def ingest_n8n_meeting_summary(
 
     # 3. Project auto-mapping
     mapped_project_id = None
+    proj = None
     if payload.project_id:
         proj = db.query(Project).filter(Project.id == payload.project_id).first()
-        if proj:
-            mapped_project_id = proj.id
     elif payload.project_name and payload.project_name.strip():
         proj = db.query(Project).filter(Project.name.ilike(payload.project_name.strip())).first()
-        if proj:
-            mapped_project_id = proj.id
+    # A Workspace-scoped call may only attach its own Workspace's projects.
+    if proj and (caller_ws_id is None or workspace_id_for_project(db, proj) == caller_ws_id):
+        mapped_project_id = proj.id
 
     # 4. Creator auto-mapping
     mapped_creator_id = None
@@ -2681,6 +2971,17 @@ def ingest_n8n_meeting_summary(
                 f"Skipping auto-update to avoid corrupting wrong meeting."
             )
 
+    # A Workspace-scoped secret may only touch that Workspace's meetings
+    # (meetings with no resolvable Workspace stay reachable).
+    if matched_meeting and caller_ws_id is not None:
+        m_ws = _host_workspace_id_for_meeting(db, matched_meeting)
+        if m_ws is not None and m_ws != caller_ws_id:
+            logger.warning(
+                "n8n webhook: secret of workspace %s tried to update meeting %s of workspace %s",
+                caller_ws_id, matched_meeting.id, m_ws,
+            )
+            raise HTTPException(status_code=403, detail="Cuộc họp không thuộc Workspace của secret này.")
+
     # 6. Execute Upsert
     if matched_meeting:
         # UPDATE existing meeting
@@ -2692,7 +2993,7 @@ def ingest_n8n_meeting_summary(
         if isinstance(matched_meeting.ai_summary, dict):
             existing_auto_created = bool(matched_meeting.ai_summary.get("is_auto_created"))
         norm_summary["is_auto_created"] = existing_auto_created
-        matched_meeting.ai_summary = norm_summary
+        matched_meeting.ai_summary = _merge_pushed_markers(matched_meeting.ai_summary, norm_summary)
         # NOTE (chốt 2026-09-13): no longer sets matched_meeting.status here.
         # Meeting lifecycle (UPCOMING/ONGOING/DONE) and the n8n processing
         # pipeline are independent — n8n finishing its AI summary does not by
@@ -2716,7 +3017,11 @@ def ingest_n8n_meeting_summary(
         # card keeps showing the stale scheduled time/link instead of the real
         # recording (e.g. "60 phút" default duration, old Meet join link).
         matched_meeting.meeting_date = meeting_date
-        matched_meeting.start_time = start_time
+        # Only overwrite start_time when the payload actually provided and
+        # successfully parsed one — never with the silent 09:00 fallback
+        # (chốt 2026-10-21, see start_time_provided above).
+        if start_time_provided:
+            matched_meeting.start_time = start_time
         if end_time:
             matched_meeting.end_time = end_time
         sanitized_meeting_url = _sanitize_meeting_join_url(payload.meeting_url)
@@ -2766,7 +3071,9 @@ def ingest_n8n_meeting_summary(
             platform=payload.platform or "Google Meet",
             meeting_url=_sanitize_meeting_join_url(payload.meeting_url),
             meeting_date=meeting_date,
-            start_time=start_time,
+            # Brand-new meeting — there's nothing to overwrite, so a sane
+            # default is fine when the payload truly has no start_time.
+            start_time=start_time if start_time_provided else datetime.time(9, 0),
             end_time=end_time,
             status="DONE",
             transcript=payload.transcript,
