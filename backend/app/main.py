@@ -1080,6 +1080,17 @@ def init_db_defaults():
 
     db = SessionLocal()
     try:
+        # Rollout moment of the 30% High / 20% Critical manday share rule —
+        # stamped ONCE (first startup with that code), from the DB clock so it
+        # compares like-for-like with tasks/task_groups.created_at. Parents
+        # created before it are never checked (see task_groups.py).
+        from .routers.task_groups import PRIORITY_RATIO_SINCE_KEY
+        if not db.query(Setting).filter(Setting.key == PRIORITY_RATIO_SINCE_KEY).first():
+            from sqlalchemy import text as _text
+            db_now = db.execute(_text("SELECT LOCALTIMESTAMP")).scalar()
+            db.add(Setting(key=PRIORITY_RATIO_SINCE_KEY, value=db_now.isoformat()))
+            db.commit()
+
         # 1. Initialize settings if missing
         if not db.query(Setting).filter(Setting.key == "column_config").first():
             cols = {
