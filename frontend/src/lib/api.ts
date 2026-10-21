@@ -101,8 +101,28 @@ api.interceptors.request.use(async cfg => {
   return cfg;
 });
 
+// Successful writes per sync domain — useDataSync() (lib/dataSync.ts) listens
+// for DATA_CHANGED_EVENT (detail = domain) to refresh that domain's cached
+// lists immediately. POSTs that only read (check-conflict,
+// generate-ai-content) are deliberately not matched.
+export const DATA_CHANGED_EVENT = 'data-changed';
+export type SyncDomain = 'customer-project' | 'meeting';
+const WRITE_URL_RES: [SyncDomain, RegExp][] = [
+  ['customer-project', /^\/(system-categories\/customers(\/\d+)?|projects(\/bulk-delete|\/\d+(\/critical|\/members(\/\d+)?)?)?)$/],
+  ['meeting', /^\/meetings(\/generate-link|\/\d+(\/[a-z-]+(\/\d+)?)?)?$/],
+];
+
 api.interceptors.response.use(
-  r => r,
+  r => {
+    const method = (r.config.method || 'get').toLowerCase();
+    if (method !== 'get' && typeof r.config.url === 'string') {
+      const path = r.config.url.split('?')[0];
+      for (const [domain, re] of WRITE_URL_RES) {
+        if (re.test(path)) window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT, { detail: domain }));
+      }
+    }
+    return r;
+  },
   async err => {
     const cfg = err?.config as AuthAwareConfig | undefined;
     const status = err?.response?.status;
@@ -628,11 +648,17 @@ export interface Workspace {
   description?: string | null;
   n8n_webhook_url?: string | null;
   expected_google_email?: string | null;
+  // The secret itself is never returned — only whether one is set.
+  has_n8n_webhook_secret?: boolean;
 }
+// n8n_webhook_secret (>=16 chars) sets the secret n8n must send in the
+// X-N8N-Webhook-Secret header; clear_n8n_webhook_secret removes it. Omitting
+// both leaves the stored secret unchanged.
+export type WorkspaceSecretInput = { n8n_webhook_secret?: string; clear_n8n_webhook_secret?: boolean };
 export const getWorkspaces = () => api.get<Workspace[]>('/system-categories/workspaces').then(r => r.data);
-export const createWorkspace = (data: { name: string; code: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
+export const createWorkspace = (data: { name: string; code: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string } & WorkspaceSecretInput) =>
   api.post('/system-categories/workspaces', data).then(r => r.data);
-export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string }) =>
+export const updateWorkspace = (id: number, data: { name?: string; code?: string; description?: string; n8n_webhook_url?: string; expected_google_email?: string } & WorkspaceSecretInput) =>
   api.put(`/system-categories/workspaces/${id}`, data).then(r => r.data);
 export const deleteWorkspace = (id: number) =>
   api.delete(`/system-categories/workspaces/${id}`).then(r => r.data);
@@ -659,6 +685,10 @@ export const getCustomers = (businessUnit?: string) =>
 // is unreliable, see access.customer_query_for_user on the backend).
 export const getCustomersByWorkspace = (code: string) =>
   api.get(`/system-categories/customers/by-workspace/${code}`).then(r => r.data);
+export const getCustomerLinkedProjects = (id: number): Promise<{ id: number; name: string; year: number | null; business: string }[]> =>
+  api.get(`/system-categories/customers/${id}/linked-projects`).then(r => r.data);
+export const getCustomerProjectVersion =(): Promise<{ version: string }> =>
+  api.get('/system-categories/customer-project-version').then(r => r.data);
 export const createCustomer = (data: { name: string; description?: string; business_unit?: string }) =>
   api.post('/system-categories/customers', data).then(r => r.data);
 export const updateCustomer = (id: number, data: { name: string; description?: string; business_unit?: string }) =>
@@ -716,6 +746,7 @@ export const getMeeting = (id: number) => api.get(`/meetings/${id}`).then(r => r
 export const createMeeting = (data: object) => api.post('/meetings', data).then(r => r.data);
 export const updateMeeting = (id: number, data: object) => api.put(`/meetings/${id}`, data).then(r => r.data);
 export const deleteMeeting = (id: number) => api.delete(`/meetings/${id}`).then(r => r.data);
+export const getMeetingsVersion = (): Promise<{ version: string }> => api.get('/meetings/version').then(r => r.data);
 export const updateTranscript = (id: number, transcript: string) => api.post(`/meetings/${id}/transcript`, { transcript }).then(r => r.data);
 export const addMeetingMember = (id: number, memberId: number, role?: string) => api.post(`/meetings/${id}/members`, { member_id: memberId, role }).then(r => r.data);
 export const removeMeetingMember = (id: number, memberId: number) => api.delete(`/meetings/${id}/members/${memberId}`).then(r => r.data);
@@ -754,7 +785,15 @@ export const getMeetingHosts = (projectIds?: number[]) =>
   api.get('/meetings/hosts', { params: projectIds && projectIds.length ? { project_ids: projectIds.join(',') } : undefined }).then(r => r.data);
 export const getGoogleStatus = (workspace?: string) => api.get('/meetings/google/status', { params: workspace ? { workspace } : undefined }).then(r => r.data);
 export const getGoogleAuthUrl = (workspace?: string) => api.get('/meetings/google/auth', { params: workspace ? { workspace } : undefined }).then(r => r.data);
-export const pushMeetingTasks = (id: number, tasks: any[]) => api.post(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
+export interface PushMeetingTasksResponse {
+  success: boolean;
+  pushed_count: number;
+  pushed: { source_index: number | null; index: number; ai_task_inbox_id: number; imported_task_id?: number | null; task_code?: string | null }[];
+  skipped: { source_index: number | null; detail_task?: string; reason: string }[];
+  recommended_tasks: any[];
+  message: string;
+}
+export const pushMeetingTasks = (id: number, tasks: any[]) => api.post<PushMeetingTasksResponse>(`/meetings/${id}/push-tasks`, { tasks }).then(r => r.data);
 
 // Meeting Intelligence — effectiveness score, feedback, AI copilot, insights
 export const recalculateMeetingScore = (id: number) => api.post(`/meetings/${id}/recalculate-score`).then(r => r.data);

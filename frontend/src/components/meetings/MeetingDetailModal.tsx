@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -18,7 +18,13 @@ function getEstimatedEndDate(startDateStr?: string, mandayStr?: string | number)
   if (isNaN(start.getTime())) return null;
   const days = Math.ceil(manday) - 1;
   const end = new Date(start.getTime() + Math.max(days, 0) * 86400000);
-  return end.toISOString().slice(0, 10);
+  // Build YYYY-MM-DD from LOCAL getters, not .toISOString() — that converts
+  // to UTC first, which lands on the previous day in UTC+7 (Vietnam) for any
+  // local midnight start, making the previewed end date one day early.
+  const yyyy = end.getFullYear();
+  const mm = String(end.getMonth() + 1).padStart(2, '0');
+  const dd = String(end.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
 }
 
 function getIsoWeekNumber(dateStr?: string): number | null {
@@ -189,6 +195,21 @@ export default function MeetingDetailModal({
     setLocalScore(null);
     setFeedbackChoice(null);
     setLocalStatus(null);
+    // Modal stays mounted across meetings (parent keeps it alive instead of
+    // unmounting), and every per-task map below is keyed by array INDEX —
+    // without this reset, switching to a different meeting whose task list
+    // happens to share indices would show the previous meeting's edits/checks
+    // bleeding onto the new one's tasks.
+    setActiveTab('overview');
+    setTaskEditMap({});
+    setTaskCheckedMap({});
+    setTaskProjectsMap({});
+    setTaskPhaseMap({});
+    setTaskGroupMap({});
+    setTaskAssigneeMap({});
+    setTaskSupportMap({});
+    setTaskSkillSolutionMap({});
+    setTaskSkillVendorMap({});
   }, [meeting?.id]);
 
   // Manual Attendance Phase 1 (chốt 2026-09-15): recorded=false from the
@@ -217,12 +238,16 @@ export default function MeetingDetailModal({
     setIsRecalculatingScore(true);
     try {
       const res = await recalculateMeetingScore(meeting.id);
+      if (res?.success === false) {
+        throw new Error(res?.message || 'Không thể tính lại điểm hiệu quả cuộc họp');
+      }
       if (res?.data) {
         setLocalScore(res.data);
         queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
       }
     } catch (e) {
       console.error('Failed to recalculate meeting score', e);
+      triggerToast(getApiErrorMessage(e, 'Không thể tính lại điểm hiệu quả cuộc họp'), 'warning');
     } finally {
       setIsRecalculatingScore(false);
     }
@@ -239,6 +264,9 @@ export default function MeetingDetailModal({
     setIsEndingMeeting(true);
     try {
       const res = await manualEndMeeting(meeting.id);
+      if (res?.success === false) {
+        throw new Error(res?.message || 'Không thể đánh dấu kết thúc cuộc họp');
+      }
       if (res?.success && res.data) {
         setLocalStatus(res.data.status);
         queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
@@ -246,6 +274,7 @@ export default function MeetingDetailModal({
       setShowEndConfirm(false);
     } catch (e) {
       console.error('Failed to manually end meeting', e);
+      triggerToast(getApiErrorMessage(e, 'Không thể đánh dấu kết thúc cuộc họp'), 'warning');
     } finally {
       setIsEndingMeeting(false);
     }
@@ -256,12 +285,16 @@ export default function MeetingDetailModal({
     setFeedbackSubmitting(true);
     try {
       const res = await submitMeetingFeedback(meeting.id, { helpful });
+      if (res?.success === false) {
+        throw new Error(res?.message || 'Không thể gửi phản hồi');
+      }
       setFeedbackChoice(helpful ? 'helpful' : 'not_helpful');
       if (res) {
         setLocalScore((prev: any) => ({ ...(prev || meeting), score_feedback: res.score_feedback, score_total: res.score_total }));
       }
     } catch (e) {
       console.error('Failed to submit meeting feedback', e);
+      triggerToast(getApiErrorMessage(e, 'Không thể gửi phản hồi'), 'warning');
     } finally {
       setFeedbackSubmitting(false);
     }
@@ -301,7 +334,12 @@ export default function MeetingDetailModal({
   const issuesList: string[] = meeting.issues || (meeting.ai_summary?.issues) || [];
   const nextStepsList: string[] = meeting.next_steps || (meeting.ai_summary?.next_steps) || [];
   const tasksList: any[] = score.recommended_tasks || (score.ai_summary?.recommended_tasks) || [];
+  // A task carrying ai_task_inbox_id was already pushed (marker written back by
+  // push-tasks) — it is locked: unchecked, not editable, never re-sent.
+  const isTaskPushed = (t: any) => Boolean(t?.ai_task_inbox_id);
+  const isTaskChecked = (t: any, idx: number) => !isTaskPushed(t) && taskCheckedMap[idx] !== false;
   const tasksNeedingReviewCount = tasksList.filter((t: any, idx: number) => {
+    if (isTaskPushed(t)) return false;
     const pid = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
     const assignee = taskAssigneeMap[idx] ?? matchAccountByName(t.owner || t.assigned_name);
     const edit = taskEditMap[idx] || {};
@@ -359,6 +397,9 @@ export default function MeetingDetailModal({
         };
       });
       const res = await saveMeetingAttendance(meeting.id, records);
+      if (res?.success === false) {
+        throw new Error(res?.message || 'Không thể lưu điểm danh');
+      }
       if (res?.success) {
         setAttendanceRows(Array.isArray(res.data) ? res.data : []);
         setAttendanceRecorded(true);
@@ -366,6 +407,7 @@ export default function MeetingDetailModal({
       }
     } catch (e) {
       console.error('Failed to save meeting attendance', e);
+      triggerToast(getApiErrorMessage(e, 'Không thể lưu điểm danh'), 'warning');
     } finally {
       setIsSavingAttendance(false);
     }
@@ -532,7 +574,10 @@ export default function MeetingDetailModal({
 
     const tasksToPush = tasksList
       .map((t: any, idx: number) => {
-        const selectedPid = taskProjectsMap[idx] || localProjectId || meeting.project_id || (projectsList[0]?.id);
+        // No fallback to "first project in the list" — a task without an
+        // explicitly resolved project is blocked below instead of silently
+        // landing in an unrelated project.
+        const selectedPid = taskProjectsMap[idx] || localProjectId || meeting.project_id || undefined;
         const selectedProj = projectsList.find((p: any) => p.id === selectedPid);
         const phase = taskPhaseMap[idx];
         const taskGroup = taskGroupMap[idx];
@@ -565,13 +610,25 @@ export default function MeetingDetailModal({
           phase_name: phase?.name,
           task_group_id: taskGroup?.id,
           task_group_name: taskGroup?.name,
-          checked: taskCheckedMap[idx] !== false
+          // Lets the backend write the pushed markers back onto the right
+          // entry of ai_summary.recommended_tasks.
+          source_index: idx,
+          checked: isTaskChecked(t, idx)
         };
       })
-      .filter((t: any) => t.checked);
+      .filter((t: any) => t.checked)
+      .map(({ checked: _checked, ...rest }: any) => rest);
 
     if (tasksToPush.length === 0) {
-      alert("Vui lòng chọn ít nhất 1 task để đẩy vào dự án.");
+      alert("Vui lòng chọn ít nhất 1 task chưa đẩy để đẩy vào dự án.");
+      return;
+    }
+
+    const missingProject = tasksToPush.filter((t: any) => !t.project_id);
+    if (missingProject.length > 0) {
+      const labels = missingProject.map((t: any) => `• Task #${t.source_index + 1}: ${t.detail_task || '(chưa có tên)'}`).join('\n');
+      triggerToast(`Có ${missingProject.length} task chưa chọn Dự án — vui lòng chọn dự án trước khi đẩy.`, 'warning');
+      alert(`Vui lòng chọn Dự án cho các task sau trước khi đẩy:\n${labels}`);
       return;
     }
 
@@ -587,10 +644,46 @@ export default function MeetingDetailModal({
     // trung gian nữa.
     setIsPushing(true);
     try {
-      await pushMeetingTasks(meeting.id, tasksToPush);
-      setPushedSuccess(true);
-      triggerToast(`✓ Đã đẩy ${tasksToPush.length} task vào dự án thành công!`);
-      setTimeout(() => setPushedSuccess(false), 3000);
+      const res = await pushMeetingTasks(meeting.id, tasksToPush);
+      // Reflect the pushed markers (ai_task_inbox_id/task_code/...) locally via
+      // localScore — the `meeting` prop itself is never mutated.
+      if (Array.isArray(res?.recommended_tasks)) {
+        const updatedTasks = res.recommended_tasks;
+        setLocalScore((prev: any) => {
+          const base = prev || meeting;
+          return {
+            ...base,
+            recommended_tasks: updatedTasks,
+            ai_summary: base.ai_summary ? { ...base.ai_summary, recommended_tasks: updatedTasks } : base.ai_summary,
+          };
+        });
+      }
+      // Pushed tasks become non-selectable; drop their stale check state.
+      const pushedIdx: number[] = (res?.pushed || []).map((p: any) => p.source_index).filter((i: any) => typeof i === 'number');
+      if (pushedIdx.length) {
+        setTaskCheckedMap(prev => {
+          const next = { ...prev };
+          pushedIdx.forEach(i => { delete next[i]; });
+          return next;
+        });
+      }
+
+      const pushedCount: number = res?.pushed_count ?? (res?.pushed?.length || 0);
+      const skipped: any[] = Array.isArray(res?.skipped) ? res.skipped : [];
+      const baseMsg: string = res?.message || `Đã đẩy ${pushedCount} task vào dự án.`;
+      if (skipped.length > 0) {
+        const skippedLines = skipped.map((s: any) => {
+          const label = typeof s.source_index === 'number' ? `Task #${s.source_index + 1}` : 'Task';
+          return `• ${label}${s.detail_task ? ` (${s.detail_task})` : ''}: ${s.reason || 'Bị bỏ qua'}`;
+        }).join('\n');
+        triggerToast(`${baseMsg}\nBỏ qua ${skipped.length} task:\n${skippedLines}`, 'warning');
+      } else {
+        triggerToast(`✓ ${baseMsg}`);
+      }
+      if (pushedCount > 0) {
+        setPushedSuccess(true);
+        setTimeout(() => setPushedSuccess(false), 3000);
+      }
     } catch (err: any) {
       alert(err.response?.data?.detail || "Có lỗi khi push task vào dự án");
     } finally {
@@ -1394,7 +1487,8 @@ export default function MeetingDetailModal({
               {tasksList.length > 0 ? (
                 <div className="space-y-4">
                   {tasksList.map((t, idx) => {
-                    const isChecked = taskCheckedMap[idx] !== false;
+                    const isPushed = isTaskPushed(t);
+                    const isChecked = isTaskChecked(t, idx);
                     const currentTaskProjectId = taskProjectsMap[idx] || localProjectId || meeting.project_id || '';
                     const edit = taskEditMap[idx] || {};
                     const detailValue = edit.detail_task ?? (t.detail_task || t.title || t.name || '');
@@ -1406,24 +1500,36 @@ export default function MeetingDetailModal({
                     const fieldLabelCls = "block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1";
 
                     return (
-                      <div key={idx} className={`border rounded-2xl p-4 transition-all ${isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-50 bg-slate-50'}`}>
+                      <div key={idx} className={`border rounded-2xl p-4 transition-all ${isPushed ? 'border-emerald-200 bg-emerald-50/40' : isChecked ? 'border-[#cbd5e1] bg-white shadow-2xs' : 'border-slate-200 opacity-50 bg-slate-50'}`}>
                         {/* Header: checkbox + Detail Task */}
                         <div className="flex items-start gap-3 mb-4">
                           <input
                             type="checkbox"
                             checked={isChecked}
+                            disabled={isPushed}
                             onChange={(e) => setTaskCheckedMap(prev => ({ ...prev, [idx]: e.target.checked }))}
-                            className="w-4 h-4 mt-1.5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer shrink-0"
-                            title="Chọn task để đẩy vào dự án"
+                            className="w-4 h-4 mt-1.5 text-[#6366f1] rounded border-slate-300 focus:ring-[#6366f1] cursor-pointer disabled:cursor-not-allowed shrink-0"
+                            title={isPushed ? 'Task đã được đẩy vào dự án' : 'Chọn task để đẩy vào dự án'}
                           />
                           <div className="flex-1 min-w-0">
-                            <label className={fieldLabelCls}>Detail Task</label>
+                            <div className="flex items-center justify-between gap-2">
+                              <label className={fieldLabelCls}>Detail Task</label>
+                              {isPushed && (
+                                <span className="px-2 py-0.5 mb-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700 shrink-0">
+                                  ✓ Đã đẩy{t.task_code ? ` · ${t.task_code}` : ''}
+                                </span>
+                              )}
+                            </div>
                             <input
                               type="text"
                               value={detailValue}
+                              disabled={isPushed}
                               onChange={(e) => setTaskEditMap(prev => ({ ...prev, [idx]: { ...prev[idx], detail_task: e.target.value } }))}
-                              className="w-full px-2.5 py-1.5 text-sm font-bold text-[#0b1c30] border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1]"
+                              className="w-full px-2.5 py-1.5 text-sm font-bold text-[#0b1c30] border border-[#cbd5e1] rounded-lg focus:outline-none focus:border-[#6366f1] disabled:bg-slate-50 disabled:text-slate-500"
                             />
+                            {!isPushed && !currentTaskProjectId && (
+                              <p className="text-[11px] font-semibold text-red-500 mt-1">⚠ Chưa chọn Dự án — chọn dự án ở ô &quot;Dự án&quot; bên dưới trước khi đẩy task này.</p>
+                            )}
                             {t.kpi_output && (
                               <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">
                                 <b className="text-[#64748b]">KPI/Output (AI):</b> {t.kpi_output}
@@ -1435,6 +1541,9 @@ export default function MeetingDetailModal({
                           </div>
                         </div>
 
+                        {/* Pushed tasks are read-only: fieldset disables native controls,
+                            pointer-events-none also blocks the custom select cells. */}
+                        <fieldset disabled={isPushed} className={`min-w-0 ${isPushed ? 'pointer-events-none opacity-60' : ''}`}>
                         {/* Field grid — tự xuống dòng theo bề rộng màn hình, không cuộn ngang */}
                         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                           <div>
@@ -1602,6 +1711,7 @@ export default function MeetingDetailModal({
                             className="text-xs border border-[#cbd5e1] rounded-lg px-2.5 py-1.5 w-full focus:outline-none focus:border-[#6366f1] resize-y"
                           />
                         </div>
+                        </fieldset>
                       </div>
                     );
                   })}
@@ -1776,7 +1886,7 @@ export default function MeetingDetailModal({
           ) : (
             <Check size={18} className="text-emerald-400 shrink-0" />
           )}
-          <span>{toastText}</span>
+          <span className="whitespace-pre-line">{toastText}</span>
         </div>
       )}
 

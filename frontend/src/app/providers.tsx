@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { usePathname } from 'next/navigation';
 import { restoreSession } from '@/lib/api';
 import { WorkspaceFilterProvider } from '@/lib/workspaceFilter';
 import { SidebarCollapseProvider } from '@/lib/sidebarCollapse';
+import { useDataSync } from '@/lib/dataSync';
 
 function SessionBootstrap({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -35,7 +37,14 @@ function SessionBootstrap({ children }: { children: React.ReactNode }) {
       </div>
     );
   }
-  return <>{children}</>;
+  return <><DataSync />{children}</>;
+}
+
+// Not on /login or public share pages — polling there would 401 into the auth flow.
+function DataSync() {
+  const pathname = usePathname() || '';
+  useDataSync(pathname !== '/' && pathname !== '/login' && !pathname.startsWith('/share/project/'));
+  return null;
 }
 
 export default function Providers({ children }: { children: React.ReactNode }) {

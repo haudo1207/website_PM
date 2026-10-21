@@ -14,7 +14,7 @@ import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
-import { projectStatusBadge, projectBarColor, MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, isTaskDoneInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
+import { MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, isTaskDoneInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 import { getKpiGiaoForMember, getProjectKpiGiao } from '@/lib/kpiPotential';
 
 const getShortName = (name: string) => {
@@ -1612,7 +1612,7 @@ export default function OverviewTab() {
       // surface fed by this same object still wants it.
       const teamTaskProgressPct = pTasksForStats.length ? Math.round((done / pTasksForStats.length) * 100) : 0;
       return {
-        id: p.id, name: p.name, status: p.status || 'Developing', current_phase: p.current_phase || '1. Tư vấn',
+        id: p.id, name: p.name, current_phase: p.current_phase || '1. Tư vấn',
         progress: teamTaskProgressPct,
         phaseProgressPct: typeof p.progress_pct === 'number' ? Math.round(p.progress_pct) : 0,
         taskCompletionPct: teamTaskProgressPct,
@@ -2761,9 +2761,6 @@ export default function OverviewTab() {
                 </div>
                 <div className="flex items-center gap-1.5 mb-3">
                   <span className="text-[10px] text-slate-400 font-semibold">{p.current_phase || '1. Tư vấn'}</span>
-                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${projectStatusBadge[p.status] || 'bg-blue-100 text-blue-700'}`}>
-                    {p.status || 'Developing'}
-                  </span>
                 </div>
                 <div className="grid grid-cols-5 gap-1.5 mt-3.5">
                   <div className="bg-slate-50 rounded-lg py-2 px-1 text-center" title={`% task Done/Tổng của team đang xem trong kỳ đang lọc: ${p.doneTasks}/${p.totalTasks}`}>
@@ -3117,9 +3114,7 @@ export default function OverviewTab() {
                       <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Khách hàng</dt><dd className="font-black text-slate-700 text-right">{p.customerName}</dd></div>
                     )}
                     <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Giai đoạn chung</dt><dd className="font-black text-slate-700 text-right">{p.current_phase}</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>
-                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Trạng thái</dt><dd className="font-black text-slate-700">{p.status}</dd></div>
-                  </dl>
+                    <div className="flex justify-between gap-3"><dt className="text-slate-400 font-semibold">Tiến độ được chia sẻ</dt><dd className="font-black text-slate-700">{p.progress}%</dd></div>                  </dl>
                 </div>
                 {hasAccess ? (
                   <div className="border border-emerald-200 rounded-xl p-4 bg-emerald-50/60 flex flex-col items-center justify-center text-center">

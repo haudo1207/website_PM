@@ -361,7 +361,7 @@ Mọi router được mount trong `app/main.py` qua `app.include_router(<router>
 | `GET/POST/PUT/DELETE /api/members*` (+ workspace-roles, workspace-leaders, kpi-summary, sync-candidate, sync-from-recruitment, account-prefill) | `members.py` | Thành viên CRUD + KPI + meta/leaders + workspace-leaders + sync-candidate + sync-from-recruitment + employment_status | user (write qua `require_manager_write`) |
 | `GET/POST/PUT/DELETE /api/meetings*` (+ `/generate-link`, `/check-conflict`, `/insights`, `/hosts`, `/attendance-summary`, `/{id}/{transcript,attendance,members,sync,push-tasks,recalculate-score,feedback,manual-ended}`) | `meetings.py` | Meetings + Google/Zoom sync + n8n webhook + scoring + attendance + push-tasks | `require_route_project_access` |
 | `GET /api/meetings/google/{status,auth}` | `meetings.py` | Google OAuth status / initiate auth | user |
-| `GET /api/meetings/google/auth-direct` | `main.py` | Public Google OAuth kickoff (legacy) | public |
+| `GET /api/meetings/google/auth-direct` | `main.py` | Đã ngừng (410) — kết nối Google qua `GET /api/meetings/google/auth` (Super Admin, state dùng 1 lần) | public |
 | `GET /api/meetings/google/callback` | `main.py` | Public OAuth callback → save token (per-user hoặc per-Workspace qua `state=user_id:workspace_id`) | public |
 | `POST /api/meetings/generate-ai-content` | `meetings.py` | AI generate lại prep/followthrough | user |
 | `GET/POST /api/meeting-bot/{queue,ended,drive-token}` | `meeting_bot.py` | meeting-host-bot Chrome extension handshake + Drive upload | `require_zalo_user` pattern (host bot auth) |

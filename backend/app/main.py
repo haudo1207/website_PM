@@ -1056,6 +1056,23 @@ def apply_schema_updates():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_considerations_user_id ON member_considerations (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_member_considerations_member_id ON member_considerations (member_id)"))
 
+        # Meeting participants: one row per (meeting, member) — add_meeting_member
+        # already rejects a duplicate at the app level, but under concurrent
+        # requests both can pass that check before either commits, so enforce
+        # it at the DB level too (see models/meeting.py MeetingMember). Dedupe
+        # any pre-existing duplicates first (keep the oldest row) so the unique
+        # index can actually be created on installs that already have some.
+        conn.execute(text("""
+            DELETE FROM meeting_members a USING meeting_members b
+            WHERE a.id > b.id
+              AND a.meeting_id = b.meeting_id
+              AND a.member_id = b.member_id
+        """))
+        conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_meeting_members_meeting_member "
+            "ON meeting_members (meeting_id, member_id)"
+        ))
+
         # ── KPI split data fix: a 0% ratio side must get 0 KPI. ──
         # kpi_engine used `ratio or 10` / `ratio or 90`, so a deliberate 0
         # (e.g. 100/0) was stored as 10% for Support (110% total). The code
@@ -1789,56 +1806,52 @@ def health():
 
 @app.get("/api/meetings/google/auth-direct")
 def google_auth_direct_public():
-    """Public helper endpoint to launch Google OAuth authorization flow directly from browser."""
-    from .config import settings
-    from google_auth_oauthlib.flow import Flow
-    from fastapi.responses import RedirectResponse
+    """Retired: this public kickoff had no state, so its callback overwrote the
+    shared Google account for whoever completed it. Connect accounts from
+    Meetings → Cấu hình AI & Google (Super Admin), which issues a one-time state."""
     from fastapi import HTTPException
-    
-    client_id = settings.GOOGLE_CLIENT_ID
-    client_secret = settings.GOOGLE_CLIENT_SECRET
-    if not client_id or not client_secret:
-        raise HTTPException(400, "Thiếu GOOGLE_CLIENT_ID hoặc GOOGLE_CLIENT_SECRET trong .env")
-
-    flow = Flow.from_client_config(
-        {
-            "web": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-            }
-        },
-        scopes=[
-            "https://www.googleapis.com/auth/calendar",
-            "https://www.googleapis.com/auth/drive.readonly",
-            "https://www.googleapis.com/auth/meetings.space.readonly",
-            "https://www.googleapis.com/auth/spreadsheets.readonly",
-        ],
-        redirect_uri=settings.GOOGLE_REDIRECT_URI,
-    )
-    auth_url, _ = flow.authorization_url(prompt="consent", access_type="offline")
-    return RedirectResponse(url=auth_url)
+    raise HTTPException(410, "Đã ngừng hỗ trợ. Super Admin kết nối Google trong Meetings → Cấu hình AI & Google.")
 
 @app.get("/api/meetings/google/callback")
 def google_callback_public(code: str, state: str = None, db: Session = Depends(get_db)):
     """Handle Google OAuth2 callback and save tokens (Public Route).
 
-    `state` is either "<user_id>" (default/shared-account connect, unchanged
-    legacy behavior) or "<user_id>:<workspace_id>" (workspace-scoped connect,
-    e.g. from GET /api/meetings/google/auth?workspace=infra) — in that case the
-    token is stored as a WorkspaceGoogleAccount override instead of overwriting
-    the shared account, and the global .env is left untouched.
+    `state` must be a one-time value issued by GET /api/meetings/google/auth
+    (Super Admin only) and stored in google_oauth_states — it says who started
+    the flow and for which Workspace (none = the shared account). A missing,
+    unknown, expired or reused state is rejected before the code is even
+    exchanged, so nobody can bind their own Google account by crafting a
+    callback. With a workspace the token is stored as a WorkspaceGoogleAccount
+    override; otherwise it replaces the shared account.
     """
     import os
     import logging
     import requests
     from .config import settings
     from google_auth_oauthlib.flow import Flow
+    from datetime import datetime as _dt, timedelta as _td
+    from .services import meeting_sync as _ms
     from .services.meeting_sync import _save_google_tokens, _save_workspace_google_tokens
+    from .models.google_token import GoogleOAuthState
+    from .models.user import User as _User
     from fastapi.responses import RedirectResponse
 
     logger = logging.getLogger("google_callback")
+
+    # Redeem the one-time state first (consumed even if it turns out stale).
+    pending = db.query(GoogleOAuthState).filter(GoogleOAuthState.state == (state or "")).first() if state else None
+    if pending:
+        db.delete(pending)
+        db.commit()
+    starter = db.query(_User).filter(_User.id == pending.user_id).first() if pending else None
+    if (
+        not pending
+        or pending.created_at < _dt.utcnow() - _td(minutes=10)
+        or not starter
+        or getattr(starter, "role", None) != "super_admin"
+    ):
+        logger.warning("Rejected Google OAuth callback: missing, unknown, expired or non-admin state.")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=false&google_error=invalid_state")
 
     flow = Flow.from_client_config(
         {
@@ -1861,14 +1874,8 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
     flow.fetch_token(code=code)
     creds = flow.credentials
 
-    user_id = 1
-    workspace_id = None
-    if state:
-        state_parts = state.split(":")
-        if state_parts[0].isdigit():
-            user_id = int(state_parts[0])
-        if len(state_parts) > 1 and state_parts[1].isdigit():
-            workspace_id = int(state_parts[1])
+    user_id = pending.user_id
+    workspace_id = pending.workspace_id
 
     if workspace_id:
         google_email = None
@@ -1887,6 +1894,9 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
             "access_token": creds.token,
             "refresh_token": creds.refresh_token,
         }, google_email=google_email)
+        # Stop using the previous account's cached access token right away
+        # (this worker; the other worker's entry expires on its own).
+        _ms._workspace_google_token_cache.pop(workspace_id, None)
 
         return RedirectResponse(url=f"{settings.FRONTEND_URL}/meetings?google_connected=true")
 
@@ -1896,6 +1906,8 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
     })
     db.commit()
 
+    _ms._google_token_cache["token"] = None
+    _ms._google_token_cache["exp"] = 0
     if creds.refresh_token:
         settings.GOOGLE_REFRESH_TOKEN = creds.refresh_token
         # Automatically update .env and env files on server

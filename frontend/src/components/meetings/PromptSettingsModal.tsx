@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
 import { getGoogleStatus, getGoogleAuthUrl, getAiSettings, saveAiSettings, getWorkspaces, Workspace } from '@/lib/api';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
+import { isSuperAdmin } from '@/lib/auth';
 
 interface Props { isOpen: boolean; onClose: () => void; }
 
@@ -15,6 +16,11 @@ function WorkspaceGoogleCard({ code, label }: { code: string; label: string }) {
   const [email, setEmail] = useState<string | null>(null);
   const [expectedEmail, setExpectedEmail] = useState<string | null>(null);
   const [isChecking, setIsChecking] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
+  // GET /meetings/google/auth is Super Admin only (403 otherwise) — hide the
+  // connect action for everyone else rather than letting it fail.
+  const canConnect = isSuperAdmin();
 
   const check = async () => {
     setIsChecking(true);
@@ -41,15 +47,27 @@ function WorkspaceGoogleCard({ code, label }: { code: string; label: string }) {
   useEffect(() => { check(); }, [code]);
 
   const handleConnect = async () => {
+    if (!canConnect) return;
+    setConnectError(null);
+    setIsConnecting(true);
     try {
       const data = await getGoogleAuthUrl(code);
-      if (data.auth_url) {
-        window.open(data.auth_url, '_blank');
+      if (data?.auth_url) {
+        const win = window.open(data.auth_url, '_blank');
+        if (!win) setConnectError('Trình duyệt đã chặn cửa sổ đăng nhập Google — hãy cho phép pop-up rồi thử lại.');
       } else {
-        alert(`Không thể lấy liên kết xác thực Google cho workspace ${label}.`);
+        setConnectError(`Không thể lấy liên kết xác thực Google cho workspace ${label}.`);
       }
     } catch (err: any) {
-      alert(`Lỗi kết nối API Google Auth (${label}): ` + (err.response?.data?.detail || err.message));
+      const status = err?.response?.status;
+      const detail = err?.response?.data?.detail;
+      setConnectError(
+        status === 403
+          ? 'Chỉ Super Admin được kết nối tài khoản Google.'
+          : `Lỗi kết nối API Google Auth (${label}): ${typeof detail === 'string' ? detail : (err?.message || 'Không xác định')}`
+      );
+    } finally {
+      setIsConnecting(false);
     }
   };
 
@@ -78,14 +96,19 @@ function WorkspaceGoogleCard({ code, label }: { code: string; label: string }) {
       </div>
 
       <div className="flex flex-wrap items-center gap-3 pt-1">
-        <button
-          type="button"
-          onClick={handleConnect}
-          className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs"
-        >
-          <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
-          <span>{isConnected ? `🔄 Ủy quyền lại tài khoản ${label}` : `🔗 Kết nối tài khoản Google ${label}`}</span>
-        </button>
+        {canConnect ? (
+          <button
+            type="button"
+            onClick={handleConnect}
+            disabled={isConnecting}
+            className="bg-white hover:bg-slate-50 text-[#0058be] border border-[#0058be] text-xs font-bold px-3.5 py-1.5 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-2xs disabled:opacity-60"
+          >
+            <img src="https://www.google.com/favicon.ico" alt="Google" className="w-3.5 h-3.5" />
+            <span>{isConnecting ? 'Đang lấy liên kết...' : isConnected ? `🔄 Ủy quyền lại tài khoản ${label}` : `🔗 Kết nối tài khoản Google ${label}`}</span>
+          </button>
+        ) : (
+          <span className="text-[11px] text-[#565e74] italic">Chỉ Super Admin được kết nối tài khoản Google.</span>
+        )}
 
         <button
           type="button"
@@ -98,6 +121,12 @@ function WorkspaceGoogleCard({ code, label }: { code: string; label: string }) {
           {isChecking ? 'Đang kiểm tra...' : 'Kiểm tra lại kết nối'}
         </button>
       </div>
+      {connectError && (
+        <div className="p-2.5 bg-red-50 text-red-600 text-[11px] rounded-lg flex items-start gap-2 font-semibold border border-red-200">
+          <AlertTriangle size={14} className="mt-0.5 flex-shrink-0" />
+          <span>{connectError}</span>
+        </div>
+      )}
     </div>
   );
 }

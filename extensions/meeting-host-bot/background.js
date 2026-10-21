@@ -121,7 +121,7 @@ async function getDriveUploadInfo(meetingId) {
   try {
     const config = await getConfig();
     if (!config.apiBaseUrl || !config.botToken) return null;
-    const url = `${config.apiBaseUrl}/api/meeting-bot/drive-token?meeting_id=${encodeURIComponent(meetingId)}`;
+    const url = `${config.apiBaseUrl}/api/meeting-bot/drive-token?meeting_id=${encodeURIComponent(meetingId)}&google_email=${encodeURIComponent(config.googleEmail || "")}`;
     const resp = await fetch(url, { headers: { "x-meeting-bot-token": config.botToken } });
     if (!resp.ok) {
       log("Drive token fetch failed:", resp.status);

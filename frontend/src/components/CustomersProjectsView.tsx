@@ -1,5 +1,5 @@
 'use client';
-import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -12,8 +12,8 @@ import {
   createCustomer,
   updateCustomer,
   deleteCustomer,
+  getCustomerLinkedProjects,
   getProjects,
-  updateProject,
   deleteProject,
   getMembers,
   getWorkspaces,
@@ -37,6 +37,11 @@ interface ComboboxOption {
   id: number;
   name: string;
 }
+
+// Projects with a null/empty year go into a "Không rõ năm" bucket,
+// represented internally by the sentinel year 0.
+const UNKNOWN_YEAR = 0;
+const yearOf = (p: any): number => (p.year ? Number(p.year) : UNKNOWN_YEAR);
 
 
 
@@ -111,7 +116,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
   // Company selection is shared app-wide via WorkspaceFilterProvider (see
   // Navbar's Workspace switcher) — follow it here too so switching Workspace
   // there also switches this tab, instead of staying on whatever was first.
-  const { workspaceCode: ctxWorkspaceCode } = useWorkspaceFilter();
+  const { workspaceCode: ctxWorkspaceCode, setWorkspaceCode: setCtxWorkspaceCode } = useWorkspaceFilter();
 
   useEffect(() => {
     if (lockedWorkspace) {
@@ -128,10 +133,12 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
   const baseDataKey = ['workspace-base-data', activeBU, lockedWorkspace ? 'by-project' : 'by-business-unit'];
   const baseQuery = useQuery({
     queryKey: baseDataKey,
+    // Errors are re-thrown (not swallowed into []) so a failed load surfaces
+    // as an error state instead of looking like "no customers".
     queryFn: async () => {
       const [custs, mems] = await Promise.all([
-        (lockedWorkspace ? getCustomersByWorkspace(activeBU) : getCustomers(activeBU)).catch((e: any) => { console.error('getCustomers error:', e); return []; }),
-        getMembers().catch((e: any) => { console.error('getMembers error:', e); return []; }),
+        (lockedWorkspace ? getCustomersByWorkspace(activeBU) : getCustomers(activeBU)).catch((e: any) => { console.error('getCustomers error:', e); throw e; }),
+        getMembers().catch((e: any) => { console.error('getMembers error:', e); throw e; }),
       ]);
       return { customers: custs || [], members: mems || [] };
     },
@@ -151,35 +158,52 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
       sales_ids: selectedSalesIds.length > 0 ? selectedSalesIds.join(',') : undefined,
       member_ids: selectedMemberIds.length > 0 ? selectedMemberIds.join(',') : undefined,
       sort: sortMode
-    }).catch((e: any) => { console.error('getProjects error:', e); return []; }),
+    }).catch((e: any) => { console.error('getProjects error:', e); throw e; }),
     enabled: !!activeBU,
   });
   const projects: any[] = projectsQuery.data || [];
   const loading = baseQuery.isLoading || projectsQuery.isLoading;
+  const loadError = baseQuery.isError || projectsQuery.isError;
 
   // Auto-select the first Customer once per Workspace switch (matches the
   // legacy behavior) — but never on a silent background revalidation, so an
   // in-progress selection isn't yanked away by cache/focus refetches.
+  // Only marked done once the list is non-empty, so a later successful load
+  // (e.g. after an empty/failed one) still auto-selects.
   const autoSelectedForBU = useRef<string | null>(null);
   useEffect(() => {
     if (!baseQuery.data || autoSelectedForBU.current === activeBU) return;
-    autoSelectedForBU.current = activeBU;
     const custs = baseQuery.data.customers;
-    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
+    if (custs.length > 0) {
+      autoSelectedForBU.current = activeBU;
+      setSelectedCustomerId(custs[0].id);
+    } else {
+      setSelectedCustomerId(null);
+    }
   }, [activeBU, baseQuery.data]);
 
-  // Compatibility wrappers — every existing call site (CRUD handlers) keeps
-  // calling loadData()/reloadProjects() exactly as before; only the
-  // implementation changed to invalidate the React Query cache instead of
-  // doing a bespoke fetch + setState.
-  const loadData = async () => {
+  // Dangling selection: the selected Customer disappeared after a refetch
+  // (deleted here or by someone else) → fall back to the first one (or none).
+  useEffect(() => {
+    if (!baseQuery.data || selectedCustomerId == null) return;
+    const custs = baseQuery.data.customers;
+    if (!custs.some((c: any) => c.id === selectedCustomerId)) {
+      setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
+    }
+  }, [baseQuery.data, selectedCustomerId]);
+
+  // Clear the Customer search when switching Workspace.
+  useEffect(() => {
+    setCustomerSearch('');
+  }, [activeBU]);
+
+  // Refetch Customers + Projects without touching the current selection
+  // (the dangling-selection effect above handles removed Customers).
+  const reloadAll = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ['workspace-base-data', activeBU] }),
       queryClient.invalidateQueries({ queryKey: ['workspace-projects', activeBU] }),
     ]);
-    const fresh = queryClient.getQueryData<{ customers: any[] }>(baseDataKey);
-    const custs = fresh?.customers || [];
-    setSelectedCustomerId(custs.length > 0 ? custs[0].id : null);
   };
 
   const reloadProjects = async () => {
@@ -192,6 +216,15 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
       c.name.toLowerCase().includes(customerSearch.toLowerCase())
     );
   }, [customers, customerSearch]);
+
+  // Keep the selection visible: if the search hides the selected Customer,
+  // move the selection to the first match.
+  useEffect(() => {
+    if (!customerSearch.trim() || filteredCustomers.length === 0) return;
+    if (!filteredCustomers.some(c => c.id === selectedCustomerId)) {
+      setSelectedCustomerId(filteredCustomers[0].id);
+    }
+  }, [customerSearch, filteredCustomers, selectedCustomerId]);
 
   // Workspace code → display name, used to prefill <ProjectFormModal>'s
   // default workspace from the currently active Workspace tab.
@@ -206,62 +239,88 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
     return customers.find(c => c.id === selectedCustomerId) || null;
   }, [customers, selectedCustomerId]);
 
-  // BUG 5 fix: shared Customer→Project matching helper.
-  // Customer identity = id (authoritative) OR matching `customer_name`
-  // (legacy rows where `customer_id` may be NULL but `customer_name`
-  // still carries the Customer's name). Used by both the project list
-  // (customerProjects) and the per-Customer count badge so they stay
-  // consistent. Mirrors the backend `customer_id OR customer_name`
-  // pattern now applied in `/api/projects`.
-  const projectMatchesCustomer = useCallback(
-    (p: any, cust: any): boolean => {
-      if (!p || !cust) return false;
-      if (p.customer_id != null && Number(p.customer_id) === Number(cust.id)) {
-        return true;
+  // Customer id → Projects index, built once per data change (instead of
+  // filtering all projects per Customer on every render).
+  // Customer identity = `customer_id` (authoritative), or — for legacy rows
+  // where `customer_id` is NULL — a matching `customer_name`. Same rule as
+  // the backend cascade/unlink on Customer delete. Used by the count badge,
+  // the project list (customerProjects) and the delete dialog so they stay
+  // consistent. Preserves the backend's project order (sortMode).
+  const projectsByCustomer = useMemo(() => {
+    const idsByName = new Map<string, number[]>();
+    customers.forEach(c => {
+      const n = (c.name || '').trim().toLowerCase();
+      if (!n) return;
+      const arr = idsByName.get(n);
+      if (arr) arr.push(c.id); else idsByName.set(n, [c.id]);
+    });
+    const index = new Map<number, any[]>();
+    const add = (cid: number, p: any) => {
+      const arr = index.get(cid);
+      if (arr) arr.push(p); else index.set(cid, [p]);
+    };
+    projects.forEach(p => {
+      if (p.customer_id != null) {
+        add(Number(p.customer_id), p);
+      } else {
+        const n = (p.customer_name || '').trim().toLowerCase();
+        if (n) (idsByName.get(n) || []).forEach(cid => add(cid, p));
       }
-      const pName = (p.customer_name || '').trim().toLowerCase();
-      const cName = (cust.name || '').trim().toLowerCase();
-      return Boolean(pName) && pName === cName;
-    },
-    [],
-  );
+    });
+    return index;
+  }, [projects, customers]);
 
   // All projects belonging to the selected customer
   const customerProjects = useMemo(() => {
     if (!selectedCustomerId || !selectedCustomer) return [];
-    return projects.filter(p => projectMatchesCustomer(p, selectedCustomer));
-  }, [projects, selectedCustomerId, selectedCustomer, projectMatchesCustomer]);
+    return projectsByCustomer.get(Number(selectedCustomer.id)) || [];
+  }, [projectsByCustomer, selectedCustomerId, selectedCustomer]);
 
-  // Computed distinct years for selected customer
+  // Computed distinct years for selected customer (unknown bucket last)
   const customerYears = useMemo(() => {
     const yearsSet = new Set<number>();
     customerProjects.forEach(p => {
-      if (p.year) yearsSet.add(p.year);
+      yearsSet.add(yearOf(p));
     });
-    return Array.from(yearsSet).sort((a, b) => b - a); // Descending order
+    return Array.from(yearsSet).sort((a, b) => b - a); // Descending order (0 last)
   }, [customerProjects]);
+
+  // Year to select once the refetched projects include it (set after
+  // creating a project) — keeps the sync effect below from clobbering it.
+  const pendingYearRef = useRef<number | null>(null);
 
   // Sync selected year when customerYears change
   useEffect(() => {
+    const pending = pendingYearRef.current;
+    if (pending != null) {
+      if (customerYears.includes(pending)) {
+        pendingYearRef.current = null;
+        setSelectedYear(pending);
+        return;
+      }
+      // Wait for the in-flight refetch before giving up on the pending year.
+      if (projectsQuery.isFetching) return;
+      pendingYearRef.current = null;
+    }
     if (customerYears.length > 0) {
-      if (!selectedYear || !customerYears.includes(selectedYear)) {
+      if (selectedYear === null || !customerYears.includes(selectedYear)) {
         setSelectedYear(customerYears[0]);
       }
     } else {
       setSelectedYear(null);
     }
-  }, [customerYears]);
+  }, [customerYears, projectsQuery.isFetching]);
 
   // Final filtered projects for the third column (selected customer + selected year)
   const filteredProjects = useMemo(() => {
-    if (!selectedYear) return [];
-    return customerProjects.filter(p => p.year === selectedYear);
+    if (selectedYear === null) return [];
+    return customerProjects.filter(p => yearOf(p) === selectedYear);
   }, [customerProjects, selectedYear]);
 
   // Statistics for Customer Card
   const customerStats = useMemo(() => {
     const projCount = customerProjects.length;
-    const yearsCount = customerYears.length;
+    const yearsCount = customerYears.filter(y => y !== UNKNOWN_YEAR).length;
     let totalTasks = 0;
     
     customerProjects.forEach(p => {
@@ -320,15 +379,19 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
     }
   };
 
-  const handleDeleteCustomerClick = (id: number, name: string) => {
+  const handleDeleteCustomerClick = async (id: number, name: string) => {
     if (!isAdmin()) {
       alert('Bạn không có quyền thực hiện thao tác xóa khách hàng!');
       return;
     }
-    const linkedProjects = projects.filter(p => 
-      p.customer_id === id || 
-      (p.customer_name && p.customer_name.trim().toLowerCase() === name.trim().toLowerCase())
-    );
+    // The cascade/unlink spans every Workspace, so ask the backend for the real
+    // list; fall back to this Workspace's projects (same rule) if that fails.
+    let linkedProjects: any[] = projectsByCustomer.get(Number(id)) || [];
+    try {
+      linkedProjects = await getCustomerLinkedProjects(id);
+    } catch (e) {
+      console.error('getCustomerLinkedProjects error:', e);
+    }
     setDeletingCustomer({ id, name, linkedProjects });
     setShowCustomerDeleteModal(true);
   };
@@ -342,7 +405,9 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
       onFlash(cascade ? `Đã xóa khách hàng "${name}" cùng toàn bộ dự án liên quan` : `Đã xóa khách hàng "${name}" thành công`);
       setShowCustomerDeleteModal(false);
       setDeletingCustomer(null);
-      await loadData();
+      // Selection is kept if it still exists; otherwise the dangling-selection
+      // effect picks the first remaining Customer.
+      await reloadAll();
     } catch (err: any) {
       onFlash(err.response?.data?.detail || err.message || 'Lỗi xóa khách hàng', true);
     } finally {
@@ -364,27 +429,12 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
   };
 
   const handleProjectFormSaved = async (created: any) => {
+    // Keep the selected Customer; after create, jump to the new project's year.
     if (modalMode === 'create' && created?.year) {
-      setSelectedYear(created.year);
+      pendingYearRef.current = Number(created.year);
+      setSelectedYear(Number(created.year));
     }
-    await loadData();
-  };
-
-  const handleArchiveProject = async (proj: any) => {
-    const isArchived = proj.status === 'Archived';
-    const nextStatus = isArchived ? 'Planning' : 'Archived';
-    try {
-      await updateProject(proj.id, { 
-        status: nextStatus,
-        // Send existing properties to preserve them
-        pm_ids: proj.pm_ids || [],
-        technical_leader_ids: proj.technical_leader_ids || []
-      });
-      onFlash(isArchived ? 'Đã kích hoạt lại dự án' : 'Đã đưa dự án vào Lưu trữ (Archive)');
-      reloadProjects();
-    } catch (err: any) {
-      onFlash('Không thể thay đổi trạng thái dự án: ' + (err.response?.data?.detail || err.message), true);
-    }
+    await reloadAll();
   };
 
   const handleDeleteProjectClick = (proj: any) => {
@@ -404,7 +454,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
       onFlash(`Đã xóa dự án "${deletingProject.name}" thành công`);
       setShowProjectDeleteModal(false);
       setDeletingProject(null);
-      await loadData();
+      await reloadAll();
     } catch (err: any) {
       onFlash('Lỗi xóa dự án: ' + (err.response?.data?.detail || err.message), true);
     } finally {
@@ -456,7 +506,15 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                 icon="🏢"
                 options={workspaces.map(ws => ({ id: ws.code, name: ws.name }))}
                 value={activeBU}
-                onChange={val => setActiveBU(String(val))}
+                onChange={val => {
+                  // This view always shows one Workspace — ignore the picker's "all" row.
+                  const code = String(val);
+                  if (!code || code.toLowerCase() === 'all') return;
+                  setActiveBU(code);
+                  // Write it to the shared filter too, so the Navbar agrees and the
+                  // effect above doesn't snap back to the old Navbar Workspace.
+                  setCtxWorkspaceCode(code);
+                }}
                 placeholder="Tìm Workspace..."
                 align="right"
                 className="w-[200px]"
@@ -468,6 +526,21 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
       )}
 
 
+
+      {/* Load error — queries throw instead of returning [] so a failure
+          isn't mistaken for an empty Workspace. */}
+      {loadError && (
+        <div className="flex items-center justify-between gap-3 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-800">
+          <span className="font-semibold">⚠️ Không tải được dữ liệu</span>
+          <button
+            type="button"
+            onClick={() => { baseQuery.refetch(); projectsQuery.refetch(); }}
+            className="bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded text-xs font-bold transition-all shadow-sm"
+          >
+            Thử lại
+          </button>
+        </div>
+      )}
 
       {/* 3-Column Portfolio UI Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -503,9 +576,9 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
               const isSelected = selectedCustomerId === cat.id;
               const isEditing = editingCustomerId === cat.id;
               
-              // Count projects for this customer — BUG 5 fix: use the shared
-              // helper so the badge matches the project list (id OR name).
-              const pCount = projects.filter(p => projectMatchesCustomer(p, cat)).length;
+              // Count projects for this customer — same index as the project
+              // list so the badge matches it (id OR legacy name).
+              const pCount = (projectsByCustomer.get(Number(cat.id)) || []).length;
 
               return (
                 <div
@@ -607,7 +680,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
         <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm flex flex-col h-[calc(100vh-206px)] min-h-[480px] max-h-[750px] transition-all">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
             <span className="text-xs font-bold text-[#0f172a] uppercase tracking-wider">📅 Năm</span>
-            <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerYears.length}</span>
+            <span className="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded-full font-bold">{customerStats.years}</span>
           </div>
 
           {/* Customer Statistics Card (Tích hợp thống kê ở Cột 2 khi chọn khách hàng) */}
@@ -616,9 +689,6 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
               <div className="bg-white border border-slate-150 rounded-lg p-3 shadow-xs space-y-2">
                 <div className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
                   🏢 {selectedCustomer.name}
-                  <span className="px-1.5 py-0.2 rounded text-[8px] font-bold uppercase tracking-wider bg-emerald-100 text-emerald-800">
-                    ACTIVE
-                  </span>
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-center pt-1 border-t border-slate-100">
                   <div>
@@ -645,7 +715,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                 const isSelected = selectedYear === yr;
                 
                 // Count projects under this year
-                const yProjCount = customerProjects.filter(p => p.year === yr).length;
+                const yProjCount = customerProjects.filter(p => yearOf(p) === yr).length;
 
                 return (
                   <div
@@ -656,7 +726,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                     }`}
                   >
                     <span className="font-semibold text-xs text-[#0f172a]">
-                      📆 Năm {yr}
+                      📆 {yr === UNKNOWN_YEAR ? 'Không rõ năm' : `Năm ${yr}`}
                     </span>
                     <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">
                       {yProjCount} dự án
@@ -702,33 +772,27 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
 
           {/* Projects list */}
           <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-50/50">
-            {selectedYear ? (
+            {selectedYear !== null ? (
               filteredProjects.map(proj => {
                 // Get PM & Leader names
                 const pmText = proj.pm_name || 'Chưa phân công';
                 const leaderText = proj.technical_leader_name || 'Chưa phân công';
                 
-                const isArchived = proj.status === 'Archived';
-                const statusColor = 
-                  proj.status === 'Completed' ? 'bg-emerald-100 text-emerald-800' :
-                  proj.status === 'Developing' || proj.status === 'Process' ? 'bg-blue-100 text-blue-800' :
-                  isArchived ? 'bg-slate-200 text-slate-700' :
-                  'bg-amber-100 text-amber-800';
-
                 return (
                   <div
                     key={proj.id}
-                    className={`bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col gap-2.5 relative ${
-                      isArchived ? 'opacity-70 bg-slate-50' : ''
-                    }`}
+                    className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-all flex flex-col gap-2.5 relative"
                   >
-                    {/* Project Header */}
+                    {/* Project Header: name + current phase (project status is not shown) */}
                     <div className="flex justify-between items-start gap-2">
                       <div className="font-bold text-sm text-[#0f172a]">
                         {proj.name}
                       </div>
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${statusColor}`}>
-                        {proj.status}
+                      <span
+                        className="px-2 py-0.5 rounded text-[9px] font-semibold bg-slate-100 text-slate-600 whitespace-nowrap shrink-0 max-w-[50%] truncate"
+                        title={proj.current_phase || undefined}
+                      >
+                        {proj.current_phase || '—'}
                       </span>
                     </div>
 
@@ -762,14 +826,6 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                           className="text-[10px] text-blue-600 hover:underline font-semibold"
                         >
                           Sửa
-                        </button>
-                        <button
-                          onClick={() => handleArchiveProject(proj)}
-                          className={`text-[10px] font-semibold hover:underline ${
-                            isArchived ? 'text-emerald-600' : 'text-slate-500'
-                          }`}
-                        >
-                          {isArchived ? 'Mở lại' : 'Archive'}
                         </button>
                         {isAdmin() && (
                           <button
@@ -837,7 +893,7 @@ export default function CustomersProjectsView({ onFlash, lockedWorkspace, render
                   </p>
                   <ul className="mt-1.5 ml-4 list-disc space-y-0.5 max-h-28 overflow-y-auto font-medium">
                     {deletingCustomer.linkedProjects.map(p => (
-                      <li key={p.id}>{p.name} ({p.year || '—'})</li>
+                      <li key={p.id}>{p.name} ({p.year || '—'}{p.business ? ` · ${p.business}` : ''})</li>
                     ))}
                   </ul>
                 </div>

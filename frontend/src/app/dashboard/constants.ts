@@ -28,22 +28,6 @@ export const activityIcon: Record<string, string> = {
   update: '📝',
 };
 
-export const projectStatusBadge: Record<string, string> = {
-  Developing: 'bg-blue-100 text-blue-700',
-  Active: 'bg-emerald-100 text-emerald-700',
-  Completed: 'bg-purple-100 text-purple-700',
-  Archived: 'bg-slate-100 text-slate-500',
-  Planning: 'bg-amber-100 text-amber-700',
-};
-
-export const projectBarColor: Record<string, string> = {
-  Developing: 'bg-blue-500',
-  Active: 'bg-emerald-500',
-  Completed: 'bg-purple-500',
-  Archived: 'bg-slate-400',
-  Planning: 'bg-amber-500',
-};
-
 // Company Fiscal Calendar Week Configuration per Month
 export const MONTH_WEEKS_COUNT: Record<number, number> = {
   1: 4,

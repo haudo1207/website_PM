@@ -1,6 +1,6 @@
 import re
 from fastapi import Depends, HTTPException, Request
-from sqlalchemy import or_, func as sql_func
+from sqlalchemy import and_, or_, func as sql_func
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -669,18 +669,15 @@ def can_access_project(db: Session, user, project: Project) -> bool:
             or _is_member_of_project(db, user, project.id)
         )
 
-    # member / viewer — explicit project membership overrides Workspace,
-    # same as Leader: an assigned member/viewer sees the project regardless
-    # of which Workspace it belongs to.
+    # member / viewer — only projects they're explicitly assigned to, in any
+    # Workspace: exactly what project_query_for_user() lists for them. Being in
+    # the project's Workspace (or the project being 'All') no longer opens an
+    # unassigned project by id. Meetings keep their own participant override
+    # in require_route_project_access.
     member_id = getattr(user, "member_id", None)
     if not member_id:
         return False
-    return (
-        (project.data_scope in scopes)
-        or (project.data_scope == ALL_SCOPE)
-        or (project.business == "All")
-        or _is_member_of_project(db, user, project.id)
-    )
+    return _is_member_of_project(db, user, project.id)
 
 
 def customer_query_for_user(db: Session, user):
@@ -691,8 +688,9 @@ def customer_query_for_user(db: Session, user):
     a Customer's effective Workspace(s) are derived from its linked Projects:
 
     - super_admin / scope=all: every customer.
-    - leader with Workspace access: customers with at least one Project whose
-      business matches one of the allowed Workspaces (or the 'All' escape hatch).
+    - leader: customers with at least one Project the Leader can see
+      (project_query_for_user), plus project-less customers whose
+      business_unit is one of their Workspaces (or 'all').
     - member / viewer: no Customer access — Project access does not imply
       Customer access.
     """
@@ -705,16 +703,51 @@ def customer_query_for_user(db: Session, user):
     if role != ROLE_LEADER:
         return db.query(Customer).filter(Customer.id == -1)
 
-    ws_names = {w.name for w in db.query(Workspace).filter(Workspace.code.in_(scopes)).all()}
-    filters = [Project.business == "All"]
-    if ws_names:
-        filters.append(Project.business.in_(ws_names))
+    # Customers of the Projects this Leader can actually see (Chính Workspace
+    # in full, Phụ Workspaces only where they/their team are assigned) — the
+    # same rule as the project list, so a Leader never sees the name of a
+    # Customer whose Projects are all hidden from them.
     customer_ids = (
-        db.query(Project.customer_id)
-        .filter(Project.customer_id.isnot(None), or_(*filters))
-        .subquery()
+        project_query_for_user(db, user)
+        .filter(Project.customer_id.isnot(None))
+        .with_entities(Project.customer_id)
     )
-    return db.query(Customer).filter(Customer.id.in_(customer_ids))
+    # A Customer with no Projects yet has nothing to derive a Workspace from —
+    # fall back to business_unit so a Leader can pick a freshly created
+    # Customer when adding its first Project.
+    customer_ids_with_projects = (
+        db.query(Project.customer_id)
+        .filter(Project.customer_id.isnot(None))
+    )
+    projectless_in_scope = and_(
+        ~Customer.id.in_(customer_ids_with_projects),
+        Customer.business_unit.in_(list(scopes) + [ALL_SCOPE]),
+    )
+    return db.query(Customer).filter(or_(Customer.id.in_(customer_ids), projectless_in_scope))
+
+
+def customer_in_workspace_filter(db: Session, ws: Workspace):
+    """SQL condition: Customer belongs to Workspace *ws* — it has a Project
+    there (or an 'All' Project), or it has no Projects at all and its legacy
+    business_unit is *ws* (or 'all'). Same rule the project-form dropdown
+    (list_customers_by_workspace) shows, so create/update validation agrees
+    with what the user could pick."""
+    # project_belongs_to_workspace (data_scope OR business name OR global
+    # 'All'), not just `business == ws.name`: a project whose business holds a
+    # raw code or that matches only via data_scope used to drop its Customer
+    # from the Workspace entirely.
+    in_ws = db.query(Project.customer_id).filter(
+        Project.customer_id.isnot(None),
+        or_(*project_belongs_to_workspace(db, {ws.code})),
+    )
+    with_projects = db.query(Project.customer_id).filter(Project.customer_id.isnot(None))
+    return or_(
+        Customer.id.in_(in_ws),
+        and_(
+            ~Customer.id.in_(with_projects),
+            or_(Customer.business_unit == ws.code, Customer.business_unit == ALL_SCOPE),
+        ),
+    )
 
 
 def require_project(db: Session, user, project_id: int) -> Project:
@@ -941,6 +974,9 @@ def require_route_project_access(
     # full control over it (edit/delete/sync/push-tasks/...), not just the
     # narrow "add/remove participant" write _is_meeting_member_write covers.
     meeting_creator_id = None
+    # Every project the targeted meeting is linked to (primary + extras), for
+    # the member write-checks below.
+    meeting_linked_project_ids: list = []
     if project_id is None and request.url.path.startswith("/api/meetings/") and params.get("id") is not None:
         meeting = db.query(Meeting).filter(Meeting.id == int(params["id"])).first()
         if meeting:
@@ -950,6 +986,7 @@ def require_route_project_access(
                 .filter(MeetingProject.meeting_id == meeting.id).all()
             ]
             linked_project_ids = ([meeting.project_id] if meeting.project_id else []) + extra_ids
+            meeting_linked_project_ids = linked_project_ids
             if linked_project_ids and user_scope(user) != ALL_SCOPE:
                 linked_projects = db.query(Project).filter(Project.id.in_(linked_project_ids)).all()
                 has_project_access = any(can_access_project(db, user, p) for p in linked_projects)
@@ -1013,6 +1050,11 @@ def require_route_project_access(
             if project_id is not None and has_full_project_access(db, user, int(project_id)):
                 print("--- ACCESS GRANTED FOR MEMBER (project PM/Leader) ---")
                 return user
+            # A meeting can hang off several projects — PM/Leader of ANY of
+            # them manages it, not only of the primary project_id.
+            if any(has_full_project_access(db, user, pid) for pid in meeting_linked_project_ids):
+                print("--- ACCESS GRANTED FOR MEMBER (PM/Leader of a linked project) ---")
+                return user
             # Whoever created a meeting gets full control over THAT meeting
             # specifically (edit/delete/sync/push-tasks/feedback/...), even
             # without a PM/Leader project role — matches the read-side
@@ -1021,9 +1063,20 @@ def require_route_project_access(
             if meeting_creator_id is not None and member_id is not None and meeting_creator_id == member_id:
                 print("--- ACCESS GRANTED FOR MEMBER (meeting creator) ---")
                 return user
-            if (is_task_write_result or _is_document_write(request) or _is_meeting_member_write(request)) and project_id is not None:
+            if (is_task_write_result or _is_document_write(request)) and project_id is not None:
                 print("--- ACCESS GRANTED FOR MEMBER ---")
                 return user
+            if _is_meeting_member_write(request):
+                # Adding/removing participants: only members actually assigned
+                # to one of the meeting's projects. A plain participant (who
+                # can READ the meeting) may only take themselves off it.
+                if any(_is_member_of_project(db, user, pid) for pid in meeting_linked_project_ids):
+                    print("--- ACCESS GRANTED FOR MEMBER (meeting project member) ---")
+                    return user
+                target = params.get("member_id")
+                if request.method == "DELETE" and member_id is not None and str(target) == str(member_id):
+                    print("--- ACCESS GRANTED FOR MEMBER (leaving meeting) ---")
+                    return user
             if _is_meeting_create(request):
                 print("--- ACCESS GRANTED FOR MEMBER (meeting create) ---")
                 return user

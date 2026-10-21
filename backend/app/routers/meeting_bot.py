@@ -10,6 +10,7 @@ router, which requires get_current_user for every route) so the extension
 never needs a portal user session.
 """
 import datetime
+import hmac
 import logging
 from typing import Optional
 
@@ -56,7 +57,7 @@ def _check_bot_token(x_meeting_bot_token: Optional[str] = Header(default=None)):
         # endpoint that an unset MEETING_BOT_TOKEN let ANY caller list every
         # upcoming meeting's title + join link with zero credentials.
         raise HTTPException(status_code=503, detail="MEETING_BOT_TOKEN chưa được cấu hình trên server.")
-    if x_meeting_bot_token != expected:
+    if not hmac.compare_digest((x_meeting_bot_token or "").encode(), expected.encode()):
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
@@ -251,7 +252,15 @@ def report_meeting_ended(
     if not meeting:
         raise HTTPException(status_code=404, detail="Meeting not found")
 
+    # organizer_google_email is the frozen ground truth when present, but
+    # (like /queue and drive-token above) a meeting whose link predates that
+    # column, or wasn't Google-Meet-generated, needs to fall back to the
+    # owning workspace's configured mailbox instead of outright rejecting —
+    # an empty organizer must NOT mean "no bot may ever report this ended."
     organizer = (meeting.organizer_google_email or "").strip().lower()
+    if not organizer:
+        workspace_id = _resolve_meeting_workspace_id(db, meeting)
+        organizer = (_workspace_google_email(db, workspace_id) or "").strip().lower()
     if not organizer or organizer != google_email:
         raise HTTPException(
             status_code=403,
@@ -274,6 +283,7 @@ def report_meeting_ended(
 @router.get("/drive-token")
 def get_drive_upload_token(
     meeting_id: int,
+    google_email: Optional[str] = None,
     db: Session = Depends(get_db),
     _=Depends(_check_bot_token),
 ):
@@ -304,6 +314,18 @@ def get_drive_upload_token(
     workspace_id = _resolve_workspace_id_by_email(db, meeting.organizer_google_email)
     if workspace_id is None:
         workspace_id = _resolve_meeting_workspace_id(db, meeting)
+
+    # Only the bot signed in as this meeting's mailbox gets a Drive token for
+    # it — the bot token is shared by every bot, so without this any of them
+    # could fetch any Workspace's Drive token by guessing meeting ids.
+    # Transitional: bots on an older extension don't send google_email yet;
+    # they're still served (with a warning) until every bot is updated.
+    expected_mailbox = meeting.organizer_google_email or _workspace_google_email(db, workspace_id)
+    if google_email:
+        if expected_mailbox and google_email.strip().lower() != expected_mailbox.strip().lower():
+            raise HTTPException(status_code=403, detail="Bot này không phải hộp thư tổ chức của cuộc họp.")
+    else:
+        logger.warning("drive-token for meeting %s called without google_email (old extension?)", meeting_id)
     try:
         access_token = get_workspace_google_access_token(db, workspace_id)
     except Exception as exc:

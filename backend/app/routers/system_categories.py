@@ -6,7 +6,7 @@ import re
 
 from sqlalchemy import func as sql_func, or_ as sql_or
 from ..database import get_db
-from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer, Workspace
+from ..models.system_category import Position, Department, TaskPriority, TaskStatus, Team, Customer, Workspace, WorkspaceIntegrationSecret
 from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
@@ -20,6 +20,7 @@ from ..utils.access import (
     user_allowed_scopes,
     resolve_workspace,
     customer_query_for_user,
+    customer_in_workspace_filter,
     ALL_SCOPE,
     ROLE_SUPER_ADMIN,
     WORKSPACE_SCOPED_ROLES,
@@ -478,14 +479,40 @@ def list_customers(business_unit: Optional[str] = None, db: Session = Depends(ge
             # trusting Customer.business_unit alone, so the dropdown never
             # exposes a Customer whose Projects the Leader can't actually see.
             q = customer_query_for_user(db, current_user)
-            if business_unit and business_unit.strip().lower() not in ("all", "null", "none", ""):
-                q = q.filter(Customer.business_unit == business_unit.strip().lower())
-            return q.order_by(Customer.name.asc()).all()
-    if business_unit:
-        # A "all"-scope Customer belongs to every Workspace — same fallback
-        # already applied to Project/Member workspace filters.
-        q = q.filter(sql_or(Customer.business_unit == business_unit.lower().strip(), Customer.business_unit == ALL_SCOPE))
+    bu = (business_unit or "").strip().lower()
+    if bu and bu not in ("all", "null", "none"):
+        # Same Workspace rule as the project form (project-derived, with a
+        # business_unit fallback only for project-less Customers) — the legacy
+        # Customer.business_unit column alone hid Customers of "All" projects
+        # and of projects whose Customer row carries a stale BU.
+        ws = resolve_workspace(db, bu)
+        if ws:
+            q = q.filter(customer_in_workspace_filter(db, ws))
+        else:
+            q = q.filter(sql_or(Customer.business_unit == bu, Customer.business_unit == ALL_SCOPE))
     return q.order_by(Customer.name.asc()).all()
+
+
+@router.get("/customer-project-version")
+def customer_project_version(db: Session = Depends(get_db), _=Depends(get_current_user)):
+    """Cheap change stamp the frontend polls to refresh Customer/Project lists
+    when another user edits them (no WebSocket/Redis, and uvicorn runs several
+    workers, so an in-process push channel wouldn't reach every client).
+
+    Built from aggregates instead of a dedicated column: counts/max ids catch
+    creates and deletes, Project.updated_at catches project edits, and the
+    Customer audit trail catches renames (Customer has no updated_at; its
+    audit rows survive deletion — customer_id is SET NULL, not CASCADE).
+    """
+    from ..models.project import Project as ProjectModel
+    from ..models.audit_log import AuditLog
+
+    c_count, c_max = db.query(sql_func.count(Customer.id), sql_func.max(Customer.id)).one()
+    p_count, p_max, p_updated = db.query(
+        sql_func.count(ProjectModel.id), sql_func.max(ProjectModel.id), sql_func.max(ProjectModel.updated_at)
+    ).one()
+    c_audit = db.query(sql_func.max(AuditLog.id)).filter(AuditLog.module == "Customer").scalar()
+    return {"version": f"{c_count}:{c_max}:{c_audit}:{p_count}:{p_max}:{p_updated or ''}"}
 
 
 @router.get("/customers/by-workspace/{code}")
@@ -496,8 +523,6 @@ def list_customers_by_workspace(code: str, db: Session = Depends(get_db), curren
     access.customer_query_for_user for details). 403 if the caller hasn't
     been granted *code*.
     """
-    from ..models.project import Project as ProjectModel
-
     ws = resolve_workspace(db, code)
     if not ws:
         raise HTTPException(404, "Không tìm thấy workspace")
@@ -508,12 +533,11 @@ def list_customers_by_workspace(code: str, db: Session = Depends(get_db), curren
         if scopes != ALL_SCOPE and ws.code not in scopes:
             raise HTTPException(403, "Bạn không có quyền truy cập Workspace này.")
 
+    # Project-derived Workspace, plus a business_unit fallback for Customers with
+    # no Projects yet — otherwise a freshly created Customer could never be
+    # picked when creating its first Project.
     base = customer_query_for_user(db, current_user)
-    customer_ids_in_ws = db.query(ProjectModel.customer_id).filter(
-        ProjectModel.customer_id.isnot(None),
-        sql_or(ProjectModel.business == ws.name, ProjectModel.business == "All"),
-    ).subquery()
-    return base.filter(Customer.id.in_(customer_ids_in_ws)).order_by(Customer.name.asc()).all()
+    return base.filter(customer_in_workspace_filter(db, ws)).order_by(Customer.name.asc()).all()
 
 
 @router.post("/customers")
@@ -524,7 +548,7 @@ def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depe
         raise HTTPException(400, f"Business Unit '{bu}' không hợp lệ")
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
-    if db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu).first():
+    if db.query(Customer).filter(sql_func.lower(Customer.name) == name.lower(), Customer.business_unit == bu).first():
         raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
     c = Customer(name=name, description=body.get("description") or None, business_unit=bu)
     db.add(c)
@@ -538,6 +562,48 @@ def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depe
     db.commit()
     return c
 
+def _customer_projects_filter(c: Customer):
+    """Projects linked to Customer *c*: by customer_id, or — legacy rows only,
+    where customer_id is NULL — by customer_name. Never match by name a
+    Project that already points at another Customer (same-named Customers
+    exist in different Workspaces)."""
+    from sqlalchemy import and_
+    from ..models.project import Project
+    cond = Project.customer_id == c.id
+    if c.name:
+        cond = sql_or(cond, and_(Project.customer_id.is_(None), Project.customer_name == c.name))
+    return cond
+
+
+def _sync_project_customer_name(db: Session, c: Customer, old_name: str) -> None:
+    """After a rename, keep Projects' denormalised customer_name in step and
+    adopt legacy name-only Projects (customer_id NULL, old name) so they don't
+    silently detach — unless another Customer still carries the old name, in
+    which case those legacy rows are ambiguous and left alone."""
+    from sqlalchemy import and_
+    from ..models.project import Project
+    db.query(Project).filter(Project.customer_id == c.id).update(
+        {Project.customer_name: c.name}, synchronize_session=False
+    )
+    if old_name and not db.query(Customer.id).filter(Customer.name == old_name, Customer.id != c.id).first():
+        db.query(Project).filter(
+            and_(Project.customer_id.is_(None), Project.customer_name == old_name)
+        ).update({Project.customer_id: c.id, Project.customer_name: c.name}, synchronize_session=False)
+
+
+@router.get("/customers/{id}/linked-projects")
+def list_customer_linked_projects(id: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
+    """Every Project a delete of this Customer would cascade to / unlink —
+    across ALL Workspaces, not just the one on screen — so the delete dialog
+    can show the real list before the user confirms."""
+    from ..models.project import Project
+    c = db.query(Customer).filter(Customer.id == id).first()
+    if not c:
+        raise HTTPException(404, "Không tìm thấy khách hàng")
+    rows = db.query(Project).filter(_customer_projects_filter(c)).order_by(Project.year.desc(), Project.name.asc()).all()
+    return [{"id": p.id, "name": p.name, "year": p.year, "business": p.business} for p in rows]
+
+
 @router.put("/customers/{id}")
 def update_customer(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
     c = db.query(Customer).filter(Customer.id == id).first()
@@ -549,13 +615,18 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), current_
         raise HTTPException(400, f"Business Unit '{bu}' không hợp lệ")
     if not name:
         raise HTTPException(400, "Tên khách hàng không được để trống")
-    dup = db.query(Customer).filter(Customer.name.ilike(name), Customer.business_unit == bu, Customer.id != id).first()
+    dup = db.query(Customer).filter(sql_func.lower(Customer.name) == name.lower(), Customer.business_unit == bu, Customer.id != id).first()
     if dup:
         raise HTTPException(400, f"Khách hàng '{name}' đã tồn tại")
     old_dict = {"name": c.name, "business_unit": c.business_unit, "description": c.description}
+    old_name = c.name
     c.name = name
     c.business_unit = bu
-    c.description = body.get("description") or None
+    # The inline rename only sends `name` — don't wipe the description then.
+    if "description" in body:
+        c.description = body.get("description") or None
+    if old_name != name:
+        _sync_project_customer_name(db, c, old_name)
     db.commit()
     db.refresh(c)
     AuditService.record_diff(
@@ -570,37 +641,22 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), current_
 
 @router.delete("/customers/{id}")
 def delete_customer(id: int, cascade_projects: bool = False, db: Session = Depends(get_db), current_user=Depends(require_admin)):
-    from sqlalchemy import or_
-    from ..models.project import Project, project_members, ProjectLink
-    from ..models.phase import Phase
-    from ..models.task_group import TaskGroup
+    from ..models.project import Project
+    from .projects import delete_project_rows
 
     c = db.query(Customer).filter(Customer.id == id).first()
     if not c:
         raise HTTPException(404, "Không tìm thấy khách hàng")
 
     # Find associated projects
-    linked_projects = db.query(Project).filter(
-        or_(
-            Project.customer_id == id,
-            (Project.customer_name == c.name if c.name else False)
-        )
-    ).all()
+    linked_projects = db.query(Project).filter(_customer_projects_filter(c)).all()
 
     if cascade_projects:
+        # Same cascade as deleting a project directly (tasks, phases, links,
+        # members, meetings — shared meetings handed over, AI rows), all in
+        # this one transaction with the Customer delete.
         for p in linked_projects:
-            phases = db.query(Phase).filter(Phase.project_id == p.id).all()
-            phase_ids = [ph.id for ph in phases]
-            if phase_ids:
-                task_groups = db.query(TaskGroup).filter(TaskGroup.phase_id.in_(phase_ids)).all()
-                tg_ids = [tg.id for tg in task_groups]
-                if tg_ids:
-                    db.query(Task).filter(Task.task_group_id.in_(tg_ids)).delete(synchronize_session=False)
-                    db.query(TaskGroup).filter(TaskGroup.id.in_(tg_ids)).delete(synchronize_session=False)
-                db.query(Phase).filter(Phase.id.in_(phase_ids)).delete(synchronize_session=False)
-            db.query(ProjectLink).filter(ProjectLink.project_id == p.id).delete(synchronize_session=False)
-            db.execute(project_members.delete().where(project_members.c.project_id == p.id))
-            db.delete(p)
+            delete_project_rows(db, p)
     else:
         for p in linked_projects:
             p.customer_id = None
@@ -736,6 +792,45 @@ def delete_master_phase(id: int, db: Session = Depends(get_db), current_user=Dep
 
 
 # ----------------- WORKSPACES -----------------
+def _with_secret_flags(db: Session, workspaces):
+    """Attach has_n8n_webhook_secret (never the secret itself) for the
+    Settings UI."""
+    rows = workspaces if isinstance(workspaces, list) else [workspaces]
+    ids = [w.id for w in rows]
+    configured = {
+        wid for (wid, sec) in db.query(WorkspaceIntegrationSecret.workspace_id, WorkspaceIntegrationSecret.n8n_webhook_secret)
+        .filter(WorkspaceIntegrationSecret.workspace_id.in_(ids)).all()
+        if sec
+    } if ids else set()
+    for w in rows:
+        w.has_n8n_webhook_secret = w.id in configured
+    return workspaces
+
+
+def _apply_n8n_secret(db: Session, workspace_id: int, body: dict) -> Optional[str]:
+    """Set (non-empty `n8n_webhook_secret`) or clear (`clear_n8n_webhook_secret`)
+    the Workspace's inbound n8n secret. Omitted = unchanged. Returns an audit
+    note, never the value."""
+    new_secret = str(body.get("n8n_webhook_secret") or "").strip()
+    clear = bool(body.get("clear_n8n_webhook_secret"))
+    if not new_secret and not clear:
+        return None
+    if new_secret and len(new_secret) < 16:
+        raise HTTPException(400, "Secret webhook n8n phải có ít nhất 16 ký tự")
+    if new_secret and db.query(WorkspaceIntegrationSecret).filter(
+        WorkspaceIntegrationSecret.n8n_webhook_secret == new_secret,
+        WorkspaceIntegrationSecret.workspace_id != workspace_id,
+    ).first():
+        # The secret is what identifies the Workspace on an inbound call.
+        raise HTTPException(400, "Secret này đang được Workspace khác sử dụng")
+    row = db.query(WorkspaceIntegrationSecret).filter(WorkspaceIntegrationSecret.workspace_id == workspace_id).first()
+    if not row:
+        row = WorkspaceIntegrationSecret(workspace_id=workspace_id)
+        db.add(row)
+    row.n8n_webhook_secret = None if clear and not new_secret else new_secret
+    return "Đặt secret webhook n8n" if row.n8n_webhook_secret else "Xóa secret webhook n8n"
+
+
 @router.get("/workspaces")
 def list_workspaces(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     q = db.query(Workspace).order_by(Workspace.id.asc())
@@ -746,7 +841,7 @@ def list_workspaces(db: Session = Depends(get_db), current_user=Depends(get_curr
         scopes = user_allowed_scopes(db, current_user)
         if scopes != ALL_SCOPE:
             q = q.filter(Workspace.code.in_(scopes))
-    return q.all()
+    return _with_secret_flags(db, q.all())
 
 @router.post("/workspaces")
 def create_workspace(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
@@ -768,15 +863,17 @@ def create_workspace(body: dict, db: Session = Depends(get_db), current_user=Dep
         expected_google_email=body.get("expected_google_email") or None,
     )
     db.add(w)
+    db.flush()
+    secret_note = _apply_n8n_secret(db, w.id, body)
     db.commit()
     db.refresh(w)
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Workspace", entity_type="Workspace",
         entity_id=w.id, action="CREATE", resource_name=w.name,
-        description=f"Tạo workspace '{w.name}' (mã: {w.code})"
+        description=f"Tạo workspace '{w.name}' (mã: {w.code})" + (f" — {secret_note}" if secret_note else "")
     )
     db.commit()
-    return w
+    return _with_secret_flags(db, w)
 
 @router.put("/workspaces/{id}")
 def update_workspace(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
@@ -805,6 +902,7 @@ def update_workspace(id: int, body: dict, db: Session = Depends(get_db), current
     w.description = body.get("description") or None
     w.n8n_webhook_url = body.get("n8n_webhook_url") or None
     w.expected_google_email = body.get("expected_google_email") or None
+    secret_note = _apply_n8n_secret(db, w.id, body)
 
     # Cascade changes to every entity that stores workspace values
     if old_name.lower() != name.lower():
@@ -826,8 +924,14 @@ def update_workspace(id: int, body: dict, db: Session = Depends(get_db), current
         new_dict={"name": w.name, "code": w.code, "n8n_webhook_url": w.n8n_webhook_url, "expected_google_email": w.expected_google_email},
         field_labels={"name": "Tên workspace", "code": "Mã workspace", "n8n_webhook_url": "Webhook n8n", "expected_google_email": "Email Google dự kiến"}
     )
+    if secret_note:
+        AuditService.record(
+            db=db, user_id=getattr(current_user, "id", None), module="Workspace", entity_type="Workspace",
+            entity_id=w.id, action="UPDATE", resource_name=w.name,
+            description=f"{secret_note} cho workspace '{w.name}'"
+        )
     db.commit()
-    return w
+    return _with_secret_flags(db, w)
 
 @router.delete("/workspaces/{id}")
 def delete_workspace(id: int, db: Session = Depends(get_db), current_user=Depends(require_admin)):
