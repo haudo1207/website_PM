@@ -1073,6 +1073,19 @@ def apply_schema_updates():
             "ON meeting_members (meeting_id, member_id)"
         ))
 
+        # ── KPI split data fix: a 0% ratio side must get 0 KPI. ──
+        # kpi_engine used `ratio or 10` / `ratio or 90`, so a deliberate 0
+        # (e.g. 100/0) was stored as 10% for Support (110% total). The code
+        # is fixed; this zeroes the already-stored wrong shares. Idempotent.
+        conn.execute(text(
+            "UPDATE tasks_v2 SET kpi_support = 0 "
+            "WHERE kpi_ratio_support = 0 AND kpi_support IS NOT NULL AND kpi_support <> 0"
+        ))
+        conn.execute(text(
+            "UPDATE tasks_v2 SET kpi_assigned = 0 "
+            "WHERE kpi_ratio_assign = 0 AND kpi_assigned IS NOT NULL AND kpi_assigned <> 0"
+        ))
+
 def init_db_defaults():
     from .database import SessionLocal
     from .models.user import User

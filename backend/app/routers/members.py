@@ -217,6 +217,8 @@ def list_members(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     leader_name: Optional[str] = None,
+    # This Leader plus the members whose Leader (members.leader_member_id) is them.
+    leader_member_id: Optional[int] = None,
     scope: Optional[bool] = Query(
         False,
         description=(
@@ -236,12 +238,15 @@ def list_members(
         q = db.query(Member, User.id.label("user_id")).outerjoin(User, User.member_id == Member.id).options(joinedload(Member.skills))
     else:
         # Subquery to calculate KPI from Tasks for each member
-        # Using UNION ALL to combine assigned and support portions of the task
+        # Using UNION ALL to combine assigned and support portions of the task.
+        # Manday is split by the same KPI Ratio as KPI itself (3 manday at
+        # 50/50 → 1.5 each) — it used to give BOTH people the full manday,
+        # double-counting every task (same split /kpi-summary already uses).
         q_assigned = db.query(
             Task.assigned_id.label('member_id'),
             Task.kpi_assigned.label('kpi_final'),
-            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (func.coalesce(Task.manday_actual, Task.manday_est, 0.0) * Task.kpi_ratio_assign / 100.0).label('manday_actual'),
+            (func.coalesce(Task.manday_est, 0.0) * Task.kpi_ratio_assign / 100.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_assign / 100.0).label('kpi_base'),
             Task.id.label('task_id')
         ).filter(
@@ -253,8 +258,8 @@ def list_members(
         q_support = db.query(
             Task.support_id.label('member_id'),
             Task.kpi_support.label('kpi_final'),
-            func.coalesce(Task.manday_actual, Task.manday_est, 0.0).label('manday_actual'),
-            func.coalesce(Task.manday_est, 0.0).label('manday_est'),
+            (func.coalesce(Task.manday_actual, Task.manday_est, 0.0) * Task.kpi_ratio_support / 100.0).label('manday_actual'),
+            (func.coalesce(Task.manday_est, 0.0) * Task.kpi_ratio_support / 100.0).label('manday_est'),
             (Task.kpi_base * Task.kpi_ratio_support / 100.0).label('kpi_base'),
             Task.id.label('task_id')
         ).filter(
@@ -350,6 +355,13 @@ def list_members(
         q = q.filter(Member.department == department)
     if leader_name:
         q = q.filter(Member.leader_name == leader_name)
+    if leader_member_id:
+        # Same Leader→members resolution as Calendar/Dashboard (FK + legacy
+        # leader_name/leader_email text). The Leader's own row is included
+        # too (FE pins it first).
+        from .calendar import _leader_managed_member_ids
+        team_ids = _leader_managed_member_ids(db, leader_member_id) + [leader_member_id]
+        q = q.filter(Member.id.in_(team_ids))
     if workspace:
         ws = resolve_workspace(db, workspace)
         if ws:
@@ -456,6 +468,51 @@ def list_workspace_leaders(db: Session = Depends(get_db), current_user=Depends(g
     the full unrestricted leader list.
     """
     return {"leaders": workspace_leader_names(db, current_user)}
+
+
+# ─── LEADERS WITH THEIR MEMBER COUNT (/kpi "Leader" filter options) ──
+# Declared before /{id} so the literal path is not captured by the int route.
+@router.get("/leaders")
+def list_leaders_with_members(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Every member that is some other member's Leader, with how many members
+    report to them. Same visibility rule as the default GET /members: Leaders
+    see everyone, Member/Viewer are Workspace-scoped.
+
+    A member's Leader is resolved exactly like calendar's
+    _leader_managed_member_ids (and the Dashboard Leader card): the
+    `leader_member_id` FK when set, otherwise the legacy `leader_name` /
+    `leader_email` text — which is all "Quản lý thành viên" ever saves —
+    matched case-insensitively against a member's display/full name or
+    member/account email."""
+    key = lambda s: str(s or "").strip().lower()
+    members = db.query(Member.id, Member.display_name, Member.full_name, Member.email,
+                       Member.leader_member_id, Member.leader_name, Member.leader_email).all()
+    account_email = {mid: key(email) for mid, email in db.query(User.member_id, User.email).filter(User.member_id.isnot(None))}
+
+    by_name, by_email = {}, {}
+    for mid, dn, fn, email, *_ in members:
+        for k in {key(dn), key(fn)} - {""}:
+            by_name.setdefault(k, set()).add(mid)
+        for k in {key(email), account_email.get(mid, "")} - {""}:
+            by_email.setdefault(k, set()).add(mid)
+
+    visible = None
+    if current_user.role != ROLE_LEADER:
+        visible = {mid for (mid,) in member_query_for_user(db, current_user).with_entities(Member.id)}
+
+    counts = {}
+    for mid, _dn, _fn, _email, lid, lname, lemail in members:
+        if visible is not None and mid not in visible:
+            continue
+        leaders = {lid} if lid else (by_name.get(key(lname), set()) | by_email.get(key(lemail), set()))
+        for leader_id in leaders - {mid}:
+            counts[leader_id] = counts.get(leader_id, 0) + 1
+
+    names = {mid: (dn or fn) for mid, dn, fn, *_ in members}
+    return sorted(
+        ({"id": lid, "display_name": names.get(lid) or f"#{lid}", "member_count": n} for lid, n in counts.items()),
+        key=lambda r: key(r["display_name"]),
+    )
 
 
 # ─── KPI SUMMARY FOR RECRUITMENT ──────────────────────────────

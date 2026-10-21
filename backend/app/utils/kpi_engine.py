@@ -388,8 +388,12 @@ def recalculate_task(task, db):
 
     # 9. KPI Split
     if task.kpi_final is not None:
+        # Default only a MISSING ratio — `or` also replaced a deliberate 0
+        # (e.g. 100/0), silently handing Support an extra 10% (110% total).
         task.kpi_assigned, task.kpi_support = calc_kpi_split(
-            task.kpi_final, task.kpi_ratio_assign or 90, task.kpi_ratio_support or 10
+            task.kpi_final,
+            90 if task.kpi_ratio_assign is None else task.kpi_ratio_assign,
+            10 if task.kpi_ratio_support is None else task.kpi_ratio_support,
         )
     else:
         task.kpi_assigned = None
