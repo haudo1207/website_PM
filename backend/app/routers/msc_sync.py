@@ -35,21 +35,32 @@ from . import task_groups as tg_router
 logger = logging.getLogger("msc_sync")
 router = APIRouter()
 
-DEFAULT_PHASE_NAME = "KPI MSC theo tuần"
-GROUP_KEY_PREFIX = "msc-kpi:"
+# Mỗi hệ thống gọi sang có token riêng (X-MSC-Sync-Token) và tiền tố externalKey riêng; token quyết định nguồn nên MarkeeAI không thể ghi đè dữ liệu của MSC và ngược lại.
+SOURCES = {
+    "msc": {"prefix": "msc-kpi:", "phase": "KPI MSC theo tuần", "label": "MSC"},
+    "markeeai": {"prefix": "markeeai-kpi:", "phase": "KPI MarkeeAI theo tuần", "label": "MarkeeAI"},
+}
+DEFAULT_PHASE_NAME = SOURCES["msc"]["phase"]
+GROUP_KEY_PREFIX = SOURCES["msc"]["prefix"]
 MAX_TASKS = 60
 ALLOWED_PRIORITIES = {"Normal", "High", "Critical"}
 # System principal: behaves like a super_admin for the route functions we call, but is not a portal user (id None => audit "user" empty).
 SERVICE_USER = SimpleNamespace(id=None, role="super_admin", data_scope="all", member_id=None, name="MSC Sync")
 
 
-def _check_token(x_msc_sync_token: Optional[str] = Header(default=None)):
-    expected = (settings.MSC_SYNC_TOKEN or "").strip()
-    if not expected:
+def _check_token(x_msc_sync_token: Optional[str] = Header(default=None)) -> str:
+    """Returns the source ("msc" | "markeeai") whose token matches X-MSC-Sync-Token."""
+    tokens = {"msc": (settings.MSC_SYNC_TOKEN or "").strip(), "markeeai": (settings.MARKEEAI_SYNC_TOKEN or "").strip()}
+    configured = {k: v for k, v in tokens.items() if v}
+    if not configured:
         # Fail closed: an unset token must never mean "auth disabled".
-        raise HTTPException(status_code=503, detail="MSC_SYNC_TOKEN chưa được cấu hình trên server.")
-    if not x_msc_sync_token or not hmac.compare_digest(str(x_msc_sync_token), expected):
-        raise HTTPException(status_code=403, detail="Forbidden")
+        raise HTTPException(status_code=503, detail="MSC_SYNC_TOKEN / MARKEEAI_SYNC_TOKEN chưa được cấu hình trên server.")
+    given = str(x_msc_sync_token or "")
+    if given:
+        for source, expected in configured.items():
+            if hmac.compare_digest(given, expected):
+                return source
+    raise HTTPException(status_code=403, detail="Forbidden")
 
 
 # ── skills ────────────────────────────────────────────────────────────────────
@@ -147,8 +158,8 @@ def _num(v):
 
 # ── weekly KPI ────────────────────────────────────────────────────────────────
 
-@router.post("/projects/{pid}/weekly-kpi", dependencies=[Depends(_check_token)])
-def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db)):
+@router.post("/projects/{pid}/weekly-kpi")
+def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db), source: str = Depends(_check_token)):
     """Create or update the week's Task Group and its child tasks (idempotent by externalKey). Returns 200 even when some tasks were
     rejected: those are listed in `errors`, the others are saved."""
     project = db.query(Project).filter(Project.id == pid).first()
@@ -161,17 +172,19 @@ def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db)):
     group_name = str(group_in.get("name") or "").strip()[:200]
     group_key = str(group_in.get("externalKey") or "").strip()
     start_date = str(week.get("startDate") or "")
-    if not group_name or not group_key.startswith(GROUP_KEY_PREFIX):
-        raise HTTPException(400, "group.name và group.externalKey (msc-kpi:…) là bắt buộc.")
+    src = SOURCES.get(source if isinstance(source, str) else "msc", SOURCES["msc"])  # gọi trực tiếp trong test (không qua FastAPI) thì mặc định MSC
+    prefix = src["prefix"]
+    if not group_name or not group_key.startswith(prefix):
+        raise HTTPException(400, f"group.name và group.externalKey ({prefix}…) là bắt buộc.")
     if not tasks_in:
         raise HTTPException(400, "Không có task nào để đồng bộ.")
     if len(tasks_in) > MAX_TASKS:
         raise HTTPException(400, f"Tối đa {MAX_TASKS} task mỗi lần.")
     for t in tasks_in:
-        if not isinstance(t, dict) or not str(t.get("externalKey") or "").startswith(GROUP_KEY_PREFIX):
-            raise HTTPException(400, "Mỗi task cần externalKey (msc-kpi:…).")
+        if not isinstance(t, dict) or not str(t.get("externalKey") or "").startswith(prefix):
+            raise HTTPException(400, f"Mỗi task cần externalKey ({prefix}…).")
 
-    phase = _find_or_create_phase(db, pid, str(body.get("phaseName") or DEFAULT_PHASE_NAME).strip()[:200] or DEFAULT_PHASE_NAME)
+    phase = _find_or_create_phase(db, pid, str(body.get("phaseName") or src["phase"]).strip()[:200] or src["phase"])
     tg = _find_group(db, pid, phase, group_in)
 
     # Task Group MANDAY EST is a whole number 1..MAX_GROUP_MANDAY and must cover its children (PM rules): size it to the tasks of this
@@ -198,7 +211,7 @@ def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db)):
             upd = {"name": group_name, "manday_est": group_manday}
             if start_date:
                 upd["start_date_est"] = start_date
-            if not (tg.description or "").startswith(GROUP_KEY_PREFIX):
+            if not (tg.description or "").startswith(prefix):
                 upd["description"] = group_key
             tg_router.update_task_group(tg.phase_id, tg.id, upd, db, SERVICE_USER)
     except HTTPException as e:

@@ -79,7 +79,7 @@ def test_token_fails_closed_and_checks(monkeypatch):
         with pytest.raises(HTTPException) as e:
             ms._check_token(bad)
         assert e.value.status_code == 403
-    assert ms._check_token("s3cret") is None
+    assert ms._check_token("s3cret") == "msc"
 
 
 # ── skills ──
@@ -199,3 +199,68 @@ def test_member_matched_by_email_case_insensitively(db, world):
     t = task_in(world, assignee={"email": "HAN@X.VN", "name": "Han"})
     out = push(db, world, [t])
     assert out["errors"] == [] and db.get(Task, out["tasks"][0]["id"]).assigned_id == world["han"].id
+
+
+# ── MarkeeAI (nguồn thứ hai): token riêng, tiền tố externalKey riêng, Phase riêng ──
+
+MKEY = "markeeai-kpi:Chien dich A:week1"
+
+
+def mk_task(w, who="han", support="an", **over):
+    t = task_in(w, who=who, support=support, **over)
+    t["externalKey"] = f"{MKEY}:{who}"
+    return t
+
+
+def mk_body(tasks):
+    return {"source": "markeeai", "week": WEEK, "group": {"externalKey": MKEY, "name": "Tuần 3 · KPI MarkeeAI · Chien dich A"}, "tasks": tasks}
+
+
+def test_token_decides_source(monkeypatch):
+    monkeypatch.setattr(settings, "MSC_SYNC_TOKEN", "msc-secret")
+    monkeypatch.setattr(settings, "MARKEEAI_SYNC_TOKEN", "ai-secret")
+    assert ms._check_token("msc-secret") == "msc"
+    assert ms._check_token("ai-secret") == "markeeai"
+    for bad in (None, "", "nope", "msc-secret ", "AI-SECRET"):
+        with pytest.raises(HTTPException) as e:
+            ms._check_token(bad)
+        assert e.value.status_code == 403
+    monkeypatch.setattr(settings, "MSC_SYNC_TOKEN", "")
+    assert ms._check_token("ai-secret") == "markeeai", "chỉ cấu hình token MarkeeAI vẫn dùng được"
+    with pytest.raises(HTTPException) as e:
+        ms._check_token("msc-secret")
+    assert e.value.status_code == 403, "token MSC chưa cấu hình thì không được coi là hợp lệ"
+
+
+def test_markeeai_source_uses_own_prefix_and_phase(db, world):
+    from app.models.phase import Phase
+    out = ms.upsert_weekly_kpi(world["pid"], mk_body([mk_task(world)]), db=db, source="markeeai")
+    assert out["errors"] == [] and out["group"]["action"] == "created"
+    tg = db.get(TaskGroup, out["group"]["id"])
+    assert tg.description == MKEY
+    assert db.get(Phase, tg.phase_id).name == "KPI MarkeeAI theo tuần"
+    assert db.get(Task, out["tasks"][0]["id"]).ticket_id == f"{MKEY}:han"
+    # đồng bộ lại cập nhật đúng task (idempotent)
+    again = ms.upsert_weekly_kpi(world["pid"], mk_body([mk_task(world, priority="Critical", manday=2)]), db=db, source="markeeai")
+    assert again["tasks"][0]["id"] == out["tasks"][0]["id"] and again["tasks"][0]["action"] == "updated"
+    assert db.query(TaskGroup).count() == 1
+
+
+def test_sources_cannot_cross(db, world):
+    # token MarkeeAI không được ghi khóa của MSC và ngược lại
+    with pytest.raises(HTTPException) as e:
+        ms.upsert_weekly_kpi(world["pid"], body([task_in(world)]), db=db, source="markeeai")
+    assert e.value.status_code == 400 and "markeeai-kpi:" in e.value.detail
+    with pytest.raises(HTTPException) as e:
+        ms.upsert_weekly_kpi(world["pid"], mk_body([mk_task(world)]), db=db, source="msc")
+    assert e.value.status_code == 400 and "msc-kpi:" in e.value.detail
+    assert db.query(TaskGroup).count() == 0
+
+
+def test_two_sources_get_separate_phases(db, world):
+    from app.models.phase import Phase
+    ms.upsert_weekly_kpi(world["pid"], body([task_in(world)]), db=db, source="msc")
+    ms.upsert_weekly_kpi(world["pid"], mk_body([mk_task(world)]), db=db, source="markeeai")
+    names = {p.name for p in db.query(Phase).filter(Phase.project_id == world["pid"]).all()}
+    assert {"KPI MSC theo tuần", "KPI MarkeeAI theo tuần"} <= names
+    assert db.query(TaskGroup).count() == 2

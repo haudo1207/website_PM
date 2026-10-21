@@ -20,3 +20,15 @@ Code: `backend/app/routers/msc_sync.py`, test: `backend/tests/test_msc_sync.py`.
 - Ghép người theo **email** (`Member.email`, hoặc `User.email` đã gắn member). Người được giao và người hỗ trợ phải **thuộc project** và **khác nhau**; thiếu thì task đó báo lỗi (không tự thêm vào project).
 - Task Group MANDAY EST = tổng manday các task (làm tròn lên, số nguyên 1–10, theo luật PM). Vượt 10 thì từ chối cả yêu cầu với thông báo rõ.
 - Ghi bằng chính các hàm route của PM (`create_task_group`, `update_task_group`, `create_task`, `update_task`) với tài khoản hệ thống nên mọi kiểm tra và tính KPI giống tạo trên giao diện. Task Done sẽ gửi thông báo Zalo như bình thường nếu người được giao đã nối Zalo.
+
+## Nguồn thứ hai: MarkeeAI (KPI Priority theo bài đăng)
+Cùng 2 endpoint `/api/msc-sync/skills` và `/api/msc-sync/projects/{pid}/weekly-kpi`, nhưng **token riêng quyết định nguồn**:
+
+| Nguồn | Token (header `X-MSC-Sync-Token`) | Tiền tố `externalKey` | Phase mặc định |
+|---|---|---|---|
+| MSC | `MSC_SYNC_TOKEN` | `msc-kpi:` | KPI MSC theo tuần |
+| MarkeeAI | `MARKEEAI_SYNC_TOKEN` | `markeeai-kpi:` | KPI MarkeeAI theo tuần |
+
+- Token nào khớp thì nguồn đó; yêu cầu mang tiền tố của nguồn khác bị từ chối (400), nên hai hệ thống không ghi đè dữ liệu của nhau.
+- Chỉ cần đặt `MARKEEAI_SYNC_TOKEN` thì MarkeeAI dùng được (MSC vẫn khóa nếu chưa đặt `MSC_SYNC_TOKEN`). Cả hai trống = 503.
+- Ghép người theo email như MSC (người dùng markeeai đăng nhập bằng cùng email với PM).

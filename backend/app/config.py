@@ -153,6 +153,8 @@ class Settings(BaseSettings):
     # MSC (Mua Sắm Công) -> PM weekly KPI sync — shared secret MSC sends in X-MSC-Sync-Token to /api/msc-sync/*.
     # Unset (empty) means the endpoints are locked (fails closed), not "auth disabled" — see routers/msc_sync.py.
     MSC_SYNC_TOKEN: str = ""
+    # MarkeeAI (appmarkeeai, KPI Priority theo bài đăng) -> PM: token RIÊNG, cùng endpoint /api/msc-sync (xem routers/msc_sync.py: token quyết định nguồn và tiền tố externalKey).
+    MARKEEAI_SYNC_TOKEN: str = ""
 
     @property
     def telegram_base_url(self) -> str:
