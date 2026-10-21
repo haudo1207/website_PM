@@ -1,7 +1,8 @@
 # MSC → PM: đồng bộ KPI Priority theo tuần
 
-MSC (Mua Sắm Công, "Thiết lập KPI Team > Priority") đẩy mỗi tuần KPI thành **1 Task Group** (Task Cha) và mỗi member × trạng thái
-(Cần xem xét / Presale Check / Tham gia) đã đạt mức Priority thành **1 Task con** (Priority = mức đã đạt, status Done).
+MSC (Mua Sắm Công, "Thiết lập KPI Team > Priority") đẩy mỗi tuần KPI thành **1 Task Group** (Task Cha) và mỗi **member** thành **1 Task con cho cả tuần**,
+chỉ khi member đã đạt đủ các trạng thái đã đặt mức (Cần xem xét / Presale Check / Tham gia). Priority = mức **thấp nhất** trong các trạng thái đó, status Done.
+Khóa `externalKey` của task theo member: `msc-kpi:<team>:<tuần>:<mscUserId>`; số gói từng trạng thái nằm trong `achieved.items`.
 Code: `backend/app/routers/msc_sync.py`, test: `backend/tests/test_msc_sync.py`.
 
 ## Cấu hình
