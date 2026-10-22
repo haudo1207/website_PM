@@ -33,6 +33,7 @@ from .routers import member_loans as member_loans_router
 from .routers import workload_settings as workload_settings_router
 from .routers import calendar as calendar_router
 from .routers import meeting_bot as meeting_bot_router
+from .routers import msc_sync as msc_sync_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -1097,6 +1098,17 @@ def init_db_defaults():
 
     db = SessionLocal()
     try:
+        # Rollout moment of the 30% High / 20% Critical manday share rule —
+        # stamped ONCE (first startup with that code), from the DB clock so it
+        # compares like-for-like with tasks/task_groups.created_at. Parents
+        # created before it are never checked (see task_groups.py).
+        from .routers.task_groups import PRIORITY_RATIO_SINCE_KEY
+        if not db.query(Setting).filter(Setting.key == PRIORITY_RATIO_SINCE_KEY).first():
+            from sqlalchemy import text as _text
+            db_now = db.execute(_text("SELECT LOCALTIMESTAMP")).scalar()
+            db.add(Setting(key=PRIORITY_RATIO_SINCE_KEY, value=db_now.isoformat()))
+            db.commit()
+
         # 1. Initialize settings if missing
         if not db.query(Setting).filter(Setting.key == "column_config").first():
             cols = {
@@ -1780,6 +1792,7 @@ app.include_router(zalo_router.router,          prefix="/api/zalo")
 app.include_router(workload_settings_router.router, prefix="/api/workload-settings")
 app.include_router(calendar_router.router,          prefix="/api/calendar")
 app.include_router(meeting_bot_router.router,       prefix="/api/meeting-bot")
+app.include_router(msc_sync_router.router,          prefix="/api/msc-sync")
 app.include_router(ai_skills_router.router,     prefix="/api")
 app.include_router(ai_sessions_router.router,   prefix="/api")
 app.include_router(public_share_router.router,  prefix="/api")
