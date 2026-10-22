@@ -197,6 +197,11 @@ def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db), sourc
             if ex.ticket_id not in payload_keys and ex.id not in payload_ids:
                 need += float(ex.manday_est or 0)
     group_manday = max(1, math.ceil(need - 1e-9))
+    # Luật "High ≤30% / Critical ≤20% manday của task cha" tính trên manday của task cha, không phải tổng task con: người gọi có thể xin task cha lớn hơn
+    # (vd 10 để chứa 3 manday High) bằng group.mandayEst. Không bao giờ nhỏ hơn tổng các task con.
+    wanted = group_in.get("mandayEst")
+    if isinstance(wanted, (int, float)) and not isinstance(wanted, bool) and wanted >= 1:
+        group_manday = max(group_manday, min(int(math.ceil(wanted)), tg_router.MAX_GROUP_MANDAY))
     if group_manday > tg_router.MAX_GROUP_MANDAY:
         raise HTTPException(400, f"Tổng manday các task trong tuần là {need:g}, vượt giới hạn {tg_router.MAX_GROUP_MANDAY} manday của một Task Group bên PM. Giảm manday các task rồi đồng bộ lại.")
 

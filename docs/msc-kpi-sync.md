@@ -1,8 +1,8 @@
 # MSC → PM: đồng bộ KPI Priority theo tuần
 
-MSC (Mua Sắm Công, "Thiết lập KPI Team > Priority") đẩy mỗi tuần KPI thành **1 Task Group** (Task Cha) và mỗi **member** thành **1 Task con cho cả tuần**,
+MSC (Mua Sắm Công, "Thiết lập KPI Team > Priority") đẩy, với mỗi **member**, **1 Task Group riêng** (Task Cha, tên theo người, 10 manday) cho tuần KPI và **1 Task con** trong đó,
 chỉ khi member đã đạt đủ các trạng thái đã đặt mức (Cần xem xét / Presale Check / Tham gia). Priority = mức **thấp nhất** trong các trạng thái đó, status Done.
-Khóa `externalKey` của task theo member: `msc-kpi:<team>:<tuần>:<mscUserId>`; số gói từng trạng thái nằm trong `achieved.items`.
+Khóa `externalKey`: Task Cha `msc-kpi:<team>:<tuần>:<mscUserId>`, task con `<khóa task cha>:kpi`; số gói từng trạng thái nằm trong `achieved.items`.
 Code: `backend/app/routers/msc_sync.py`, test: `backend/tests/test_msc_sync.py`.
 
 ## Cấu hình
@@ -18,7 +18,8 @@ Code: `backend/app/routers/msc_sync.py`, test: `backend/tests/test_msc_sync.py`.
 - Task Group nằm trong Phase tên **"KPI MSC theo tuần"** (tự tạo nếu chưa có; đổi bằng `phaseName` trong body). Tìm lại Task Group theo `description = externalKey`, rồi `pmGroupId`, rồi tên.
 - Task con tìm theo `pmTaskId`, rồi `Task.ticket_id = externalKey`. Có rồi thì cập nhật (priority, manday, người, skill, detail), chưa có thì tạo.
 - Ghép người theo **email** (`Member.email`, hoặc `User.email` đã gắn member). Người được giao và người hỗ trợ phải **thuộc project** và **khác nhau**; thiếu thì task đó báo lỗi (không tự thêm vào project).
-- Task Group MANDAY EST = tổng manday các task (làm tròn lên, số nguyên 1–10, theo luật PM). Vượt 10 thì từ chối cả yêu cầu với thông báo rõ.
+- Task Group MANDAY EST = tổng manday các task (làm tròn lên, số nguyên 1–10, theo luật PM), hoặc `group.mandayEst` nếu người gọi xin lớn hơn (kẹp ở 10, không bao giờ nhỏ hơn tổng task con). Vượt 10 thì từ chối cả yêu cầu với thông báo rõ.
+- **Luật High ≤30% / Critical ≤20% manday của task cha** (nhánh `kpipromt`, chỉ áp cho task cha tạo sau khi bản đó chạy): vì vậy mỗi người có Task Cha riêng 10 manday (`mandayEst: 10`) để chứa tối đa 3 manday High + 2 manday Critical. Task vượt luật bị trả vào `errors` với lời nhắn của PM.
 - Ghi bằng chính các hàm route của PM (`create_task_group`, `update_task_group`, `create_task`, `update_task`) với tài khoản hệ thống nên mọi kiểm tra và tính KPI giống tạo trên giao diện. Task Done sẽ gửi thông báo Zalo như bình thường nếu người được giao đã nối Zalo.
 
 ## Nguồn thứ hai: MarkeeAI (KPI Priority theo bài đăng)
