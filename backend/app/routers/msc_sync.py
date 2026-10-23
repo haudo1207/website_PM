@@ -14,6 +14,7 @@ recalculation, group dates, audit log) behaves exactly like a task created in th
 import hmac
 import logging
 import math
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Optional
 
@@ -46,6 +47,16 @@ MAX_TASKS = 60
 ALLOWED_PRIORITIES = {"Normal", "High", "Critical"}
 # System principal: behaves like a super_admin for the route functions we call, but is not a portal user (id None => audit "user" empty).
 SERVICE_USER = SimpleNamespace(id=None, role="super_admin", data_scope="all", member_id=None, name="MSC Sync")
+
+
+@contextmanager
+def _sync_source():
+    """Trong khối này task do hệ thống ngoài đồng bộ không bị luật High 30% / Critical 20% và giới hạn 10 manday của Task Group (xem task_groups.SYNC_SOURCE_BYPASS)."""
+    tok = tg_router.SYNC_SOURCE_BYPASS.set(True)
+    try:
+        yield
+    finally:
+        tg_router.SYNC_SOURCE_BYPASS.reset(tok)
 
 
 def _check_token(x_msc_sync_token: Optional[str] = Header(default=None)) -> str:
@@ -160,6 +171,11 @@ def _num(v):
 
 @router.post("/projects/{pid}/weekly-kpi")
 def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db), source: str = Depends(_check_token)):
+    with _sync_source():
+        return _upsert_weekly_kpi(pid, body, db, source)
+
+
+def _upsert_weekly_kpi(pid: int, body: dict, db: Session, source):
     """Create or update the week's Task Group and its child tasks (idempotent by externalKey). Returns 200 even when some tasks were
     rejected: those are listed in `errors`, the others are saved."""
     project = db.query(Project).filter(Project.id == pid).first()
@@ -187,8 +203,8 @@ def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db), sourc
     phase = _find_or_create_phase(db, pid, str(body.get("phaseName") or src["phase"]).strip()[:200] or src["phase"])
     tg = _find_group(db, pid, phase, group_in)
 
-    # Task Group MANDAY EST is a whole number 1..MAX_GROUP_MANDAY and must cover its children (PM rules): size it to the tasks of this
-    # request plus tasks already in the group that this request does not touch.
+    # Task Group MANDAY EST is a whole number >= 1 and must cover its children: size it to the tasks of this request plus tasks already in the
+    # group that this request does not touch. Nguồn đồng bộ KHÔNG bị giới hạn 10 manday (xem _sync_source).
     payload_keys = {str(t.get("externalKey")) for t in tasks_in}
     payload_ids = {t.get("pmTaskId") for t in tasks_in if isinstance(t.get("pmTaskId"), int)}
     need = sum((_num(t.get("manday")) or 0) for t in tasks_in)
@@ -197,13 +213,10 @@ def upsert_weekly_kpi(pid: int, body: dict, db: Session = Depends(get_db), sourc
             if ex.ticket_id not in payload_keys and ex.id not in payload_ids:
                 need += float(ex.manday_est or 0)
     group_manday = max(1, math.ceil(need - 1e-9))
-    # Luật "High ≤30% / Critical ≤20% manday của task cha" tính trên manday của task cha, không phải tổng task con: người gọi có thể xin task cha lớn hơn
-    # (vd 10 để chứa 3 manday High) bằng group.mandayEst. Không bao giờ nhỏ hơn tổng các task con.
+    # group.mandayEst (tuỳ chọn, giữ để tương thích bản cũ): xin task cha lớn hơn tổng task con; không còn bị kẹp ở 10.
     wanted = group_in.get("mandayEst")
     if isinstance(wanted, (int, float)) and not isinstance(wanted, bool) and wanted >= 1:
-        group_manday = max(group_manday, min(int(math.ceil(wanted)), tg_router.MAX_GROUP_MANDAY))
-    if group_manday > tg_router.MAX_GROUP_MANDAY:
-        raise HTTPException(400, f"Tổng manday các task trong tuần là {need:g}, vượt giới hạn {tg_router.MAX_GROUP_MANDAY} manday của một Task Group bên PM. Giảm manday các task rồi đồng bộ lại.")
+        group_manday = max(group_manday, int(math.ceil(wanted)))
 
     group_action = "updated"
     try:

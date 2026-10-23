@@ -12,6 +12,7 @@ Business Rules:
 """
 from fastapi import APIRouter, Depends, HTTPException
 import math
+from contextvars import ContextVar
 from datetime import timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func, delete
@@ -232,6 +233,10 @@ def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, ex
 # is stamped once into settings[PRIORITY_RATIO_SINCE_KEY] by init_db_defaults
 # on the first startup with this code, so pre-existing parents keep working
 # exactly as before.
+# Task do hệ thống ngoài đồng bộ sang (MSC / MarkeeAI, routers/msc_sync.py) KHÔNG bị luật High ≤30% / Critical ≤20% và giới hạn 10 manday của Task Group:
+# msc_sync bật cờ này quanh các lệnh gọi route. Người dùng PM tạo tay vẫn bị luật như cũ.
+SYNC_SOURCE_BYPASS: ContextVar[bool] = ContextVar("sync_source_bypass", default=False)
+
 PRIORITY_MANDAY_CAPS = {"high": (Decimal("0.30"), "High", "30%"), "critical": (Decimal("0.20"), "Critical", "20%")}
 PRIORITY_RATIO_SINCE_KEY = "priority_manday_ratio_since"
 
@@ -267,6 +272,8 @@ def _ratio_applies(created_at, db: Session) -> bool:
 def validate_priority_manday_ratio(gid: int, task_code: str, priority, manday_est, db: Session, exclude_task_id: int = None):
     """Block a child task that would push its parent's High (>30%) or
     Critical (>20%) MANDAY EST share over the cap."""
+    if SYNC_SOURCE_BYPASS.get():
+        return
     cap = PRIORITY_MANDAY_CAPS.get(str(priority or "").strip().lower())
     if not cap or manday_est is None or not task_code:
         return
@@ -303,6 +310,8 @@ def validate_parent_manday_reduction(gid: int, parent_code, new_manday, created_
     """Lowering a parent's own MANDAY EST must not leave its existing High /
     Critical children over their share. parent_code=None = the Task Group
     level (its top-level tasks)."""
+    if SYNC_SOURCE_BYPASS.get():
+        return
     new_manday = decimal_or_zero(new_manday)
     if new_manday <= 0 or not _ratio_applies(created_at, db):
         return
@@ -393,7 +402,7 @@ def validate_group_manday(manday_est) -> None:
     manday_int = int(manday_est)
     if manday_int < 1:
         raise HTTPException(400, "Manday EST của Task Group phải là số nguyên dương, không được là 0 hoặc số âm.")
-    if manday_int > MAX_GROUP_MANDAY:
+    if manday_int > MAX_GROUP_MANDAY and not SYNC_SOURCE_BYPASS.get():
         raise HTTPException(400, f"Manday EST của Task Group không được vượt quá {MAX_GROUP_MANDAY}.")
 
 
