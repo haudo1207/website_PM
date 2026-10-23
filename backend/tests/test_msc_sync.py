@@ -172,12 +172,13 @@ def test_per_task_errors_do_not_block_other_tasks(db, world):
     assert db.query(Task).filter(Task.task_group_id == out["group"]["id"]).count() == 1, "failed tasks leave nothing behind"
 
 
-def test_total_manday_over_group_cap_is_rejected_clearly(db, world, status_of):
-    tasks = [task_in(world, manday=4), task_in(world, who="an", support="han", metric="thamGia", manday=4), task_in(world, who="an", support="han", metric="presaleCheck", manday=4)]
-    with pytest.raises(HTTPException) as e:
-        push(db, world, tasks)
-    assert e.value.status_code == 400 and "vượt giới hạn" in e.value.detail
-    assert db.query(TaskGroup).count() == 0, "nothing created when the week can't fit one Task Group"
+def test_total_manday_over_10_is_accepted_for_sync_source(db, world, status_of):
+    # Nguồn đồng bộ không còn bị giới hạn 10 manday của Task Group: Task Group tự lớn lên theo tổng task con (làm tròn lên)
+    tasks = [task_in(world, manday=4, priority="Normal"), task_in(world, who="an", support="han", metric="thamGia", manday=4, priority="Normal"), task_in(world, who="an", support="han", metric="presaleCheck", manday=4.5, priority="Normal")]
+    r = push(db, world, tasks)
+    assert r["errors"] == [] and len(r["tasks"]) == 3
+    tg = db.query(TaskGroup).filter(TaskGroup.description == GKEY).one()
+    assert float(tg.manday_est) == 13  # ceil(12.5)
 
 
 def test_request_validation(db, world):
@@ -266,7 +267,7 @@ def test_two_sources_get_separate_phases(db, world):
     assert db.query(TaskGroup).count() == 2
 
 
-# ── luật High ≤30% / Critical ≤20% manday của task cha (bản kpipromt) ──
+# ── luật High ≤30% / Critical ≤20% (bản kpipromt): KHÔNG áp cho task đồng bộ, vẫn áp cho người dùng PM tạo tay ──
 @pytest.fixture
 def ratio_rule(db):
     from app.models.setting import Setting
@@ -275,42 +276,45 @@ def ratio_rule(db):
     db.commit()
 
 
-def test_group_sized_by_children_is_rejected_for_high_under_ratio_rule(db, world, ratio_rule):
+def test_sync_high_and_critical_are_not_capped_by_ratio_rule(db, world, ratio_rule):
+    # trước đây 3 manday High trong Task Group 3 manday (100%) bị chặn vì vượt 30%
     r = push(db, world, [task_in(world, priority="High", manday=3)])
-    assert r["tasks"] == [] and "30%" in r["errors"][0]["message"]
-
-
-def test_group_mandayEst_10_fits_3_high_or_2_critical(db, world, ratio_rule):
-    r = push(db, world, [task_in(world, priority="High", manday=3)], mandayEst=10)
     assert r["errors"] == [] and r["tasks"][0]["action"] == "created"
+    r = push(db, world, [task_in(world, priority="Critical", manday=2)])  # cập nhật chính task đó lên Critical
+    assert r["errors"] == [] and r["tasks"][0]["action"] == "updated"
+    t = db.query(Task).filter(Task.ticket_id == f"{GKEY}:han:canXemXet").one()
+    assert (t.priority, float(t.manday_est)) == ("Critical", 2.0)
+
+
+def test_sync_task_group_is_not_capped_at_10(db, world, ratio_rule):
+    r = push(db, world, [task_in(world, priority="Critical", manday=25)])
+    assert r["errors"] == []
     tg = db.query(TaskGroup).filter(TaskGroup.description == GKEY).one()
-    assert float(tg.manday_est) == 10
-    # Critical 2 manday cùng task cha khác (người khác) cũng vừa
-    key2 = "msc-kpi:Team Minh:sess_w3:an"
-    r2 = ms.upsert_weekly_kpi(world["pid"], {
-        "source": "msc", "team": "Team Minh", "week": WEEK,
-        "group": {"externalKey": key2, "name": "An · Tuần 3", "mandayEst": 10},
-        "tasks": [task_in(world, who="an", support="han", priority="Critical", manday=2, externalKey=key2 + ":canXemXet")]}, db=db)
-    assert r2["errors"] == []
+    assert float(tg.manday_est) == 25
 
 
-def test_group_mandayEst_10_still_rejects_4_high(db, world, ratio_rule):
-    r = push(db, world, [task_in(world, priority="High", manday=4)], mandayEst=10)
-    assert r["tasks"] == [] and "30%" in r["errors"][0]["message"]
-
-
-def test_decimal_manday_and_mandayEst_never_below_children(db, world, ratio_rule):
-    # 5 bài High = 2.5 manday ≤ 3; mandayEst nhỏ hơn tổng con (2) vẫn được nâng lên bằng tổng con
-    r = push(db, world, [task_in(world, priority="High", manday=2.5)], mandayEst=2)
-    assert r["tasks"] == [] or r["errors"]  # 2.5 > 30% của 3 -> bị luật chặn, không lỗi 500
+def test_mandayEst_is_a_minimum_not_a_cap(db, world, ratio_rule):
     r = push(db, world, [task_in(world, priority="Normal", manday=4.5)], mandayEst=2)
     assert r["errors"] == []
     tg = db.query(TaskGroup).filter(TaskGroup.description == GKEY).one()
-    assert float(tg.manday_est) >= 5
+    assert float(tg.manday_est) == 5  # không nhỏ hơn tổng con (ceil 4.5)
+    r = push(db, world, [task_in(world, priority="Normal", manday=1)], mandayEst=40)
+    assert float(db.query(TaskGroup).filter(TaskGroup.description == GKEY).one().manday_est) == 40
 
 
-def test_mandayEst_over_cap_is_clamped_to_10(db, world, ratio_rule):
-    r = push(db, world, [task_in(world, priority="Normal", manday=1)], mandayEst=99)
-    assert r["errors"] == []
+def test_manual_pm_users_are_still_capped(db, world, ratio_rule, admin):
+    # task tạo tay qua route PM (không qua msc_sync) vẫn bị luật: cờ bypass chỉ bật trong msc_sync và tắt lại sau đó
+    from app.routers import task_groups as tgr
+    assert tgr.SYNC_SOURCE_BYPASS.get() is False
+    push(db, world, [task_in(world, priority="Normal", manday=1)])
+    assert tgr.SYNC_SOURCE_BYPASS.get() is False, "cờ phải được tắt lại sau mỗi lần đồng bộ"
     tg = db.query(TaskGroup).filter(TaskGroup.description == GKEY).one()
-    assert float(tg.manday_est) == 10
+    tgr.update_task_group(tg.phase_id, tg.id, {"manday_est": 10}, db, admin)
+    with pytest.raises(HTTPException) as e:
+        tgr.update_task_group(tg.phase_id, tg.id, {"manday_est": 25}, db, admin)
+    assert e.value.status_code == 400 and "10" in str(e.value.detail)
+    with pytest.raises(HTTPException) as e:
+        tgr.create_task(tg.id, {"detail": "tay", "priority": "Critical", "manday_est": 5, "status": "Process", "start_date": "2026-10-19",
+                                "assigned_id": world["han"].id, "support_id": world["an"].id, "kpi_ratio_assign": 90, "kpi_ratio_support": 10,
+                                "skill_solution_id": world["net"].id, "skill_vendor_id": world["cisco"].id}, db, admin)
+    assert e.value.status_code == 400 and "20%" in str(e.value.detail)
