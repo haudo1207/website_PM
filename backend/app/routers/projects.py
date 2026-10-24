@@ -785,6 +785,20 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         status="Waiting"
     ))
 
+    # 1b. "MA" - the system-seeded phase holding weekly feedback Group Tasks.
+    # is_protected=True blocks delete_phase() below; create_task_group()
+    # auto-fills Detail/Manday/Start Date for Group Tasks created under it
+    # from the admin-configured template (Settings > ma-group-task-template).
+    # Only new projects get this - existing projects are intentionally left
+    # as-is (no backfill).
+    db.add(Phase(
+        project_id=p.id,
+        name="MA",
+        sort_order=2,
+        status="Waiting",
+        is_protected=True,
+    ))
+
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
     links_to_create = []
     if body.get("zalo_link"):
@@ -1424,6 +1438,7 @@ def serialize_phase(ph, db):
         "description": ph.description,
         "sort_order": getattr(ph, "sort_order", 0) or 0,
         "status": getattr(ph, "status", "Waiting") or "Waiting",
+        "is_protected": bool(getattr(ph, "is_protected", False)),
         "task_group_count": tg_count,
         "task_count": task_count,
         "ai_status": getattr(ph, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
@@ -1586,6 +1601,8 @@ def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_use
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
+    if ph.is_protected:
+        raise HTTPException(400, f"Phase '{ph.name}' là phase hệ thống, không thể xóa.")
     phase_name = ph.name
 
     group_ids = [g.id for g in db.query(TaskGroup).filter(TaskGroup.phase_id == phid).all()]

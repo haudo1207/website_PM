@@ -1,3 +1,4 @@
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -285,6 +286,44 @@ def update_my_zalo_name(payload: UpdateZaloNameRequest, db: Session = Depends(ge
     member.zalo_name = zalo_name or None
     db.commit()
     return {"zalo_name": member.zalo_name}
+
+
+class KpiFilterPreference(BaseModel):
+    month: str = ""
+    year: str = ""
+    workspace: str = ""
+    leaderFilter: str = ""
+
+
+@router.get("/me/kpi-filter-preference")
+def get_my_kpi_filter_preference(user=Depends(get_current_user)):
+    """Self-service — the /kpi page's own last-picked Tháng/Năm/Workspace/
+    Leader filter for THIS account, so it's restored on the next visit
+    instead of resetting to defaults. Empty object when nothing saved yet
+    (new account, or cleared via DELETE below)."""
+    if not user.kpi_filter_preference:
+        return {}
+    try:
+        return json.loads(user.kpi_filter_preference)
+    except (TypeError, ValueError):
+        return {}
+
+
+@router.put("/me/kpi-filter-preference")
+def save_my_kpi_filter_preference(payload: KpiFilterPreference, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    user.kpi_filter_preference = json.dumps(payload.dict())
+    db.commit()
+    return {"ok": True}
+
+
+@router.delete("/me/kpi-filter-preference")
+def clear_my_kpi_filter_preference(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Mirrors the /kpi page's "Xóa bộ lọc" button — clearing filters there
+    also forgets the saved preference, instead of silently re-applying it on
+    the next visit."""
+    user.kpi_filter_preference = None
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/me/login-history")

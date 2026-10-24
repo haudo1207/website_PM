@@ -29,6 +29,7 @@ import {
   getMembers, getCategories, getPriorities, getStatuses, getPerformanceSettings, getParentRemarks,
   createGroup, createSkill,
   getWorkspaces, Workspace,
+  getMaGroupTaskTemplate,
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
   getReviewChecklist, createReviewChecklistItem, toggleReviewChecklistItem, deleteReviewChecklistItem, notifyReviewToLeader,
@@ -801,6 +802,14 @@ function ProjectDetailContent() {
     manday_est: '',
     status: 'Waiting',
     start_date_est: ''
+  });
+  // Phase "MA" (weekly feedback) pre-fills the "Thêm Group Task" form from
+  // this admin-configured template instead of opening it blank - see the
+  // "Thêm Group Task" menu action below and Settings > Template Phase MA.
+  const { data: maGroupTaskTemplate } = useQuery({
+    queryKey: ['ma-group-task-template'],
+    queryFn: () => getMaGroupTaskTemplate(),
+    staleTime: 5 * 60_000,
   });
 
   const [loadingTasks, setLoadingTasks] = useState(true);
@@ -2471,8 +2480,14 @@ function ProjectDetailContent() {
   };
 
   const handleDeletePhase = (pid: number, pname: string) => {
-    if (pname.toLowerCase() === 'master') {
-      flash('Không thể xóa Phase Master!', true);
+    const ph = phases.find((p: any) => p.id === pid);
+    // "Master" is blocked by name only (never had a protection flag -
+    // see models/phase.py); "MA" and any future system-seeded Phase carry
+    // the real is_protected flag from the backend, which also hard-blocks
+    // the delete endpoint itself - this is just the same guard client-side
+    // so the confirm dialog never opens for one in the first place.
+    if (pname.toLowerCase() === 'master' || ph?.is_protected) {
+      flash(`Không thể xóa Phase "${pname}" — đây là phase hệ thống!`, true);
       return;
     }
     setPhaseToDelete({ id: pid, name: pname });
@@ -2498,26 +2513,32 @@ function ProjectDetailContent() {
     }
   };
 
-  // Kéo-thả đổi thứ tự Phase. `realPhases` giữ đúng thứ tự sort_order hiện
-  // tại (never re-sorted for display priority - xem comment ở khai báo
-  // realPhases), nên tính order mới dựa thẳng trên nó là đủ, không cần lo
-  // lệch với Phase đang bị ẩn vào "Phase khác" (chúng vẫn có mặt trong
-  // realPhases, chỉ không hiện thành tab). Gửi lên FULL danh sách vì backend
-  // từ chối reorder thiếu Phase.
+  // Kéo-thả đổi thứ tự Phase. Backend từ chối reorder thiếu bất kỳ Phase nào
+  // đang thực sự thuộc project (xem comment ở routers/projects.py). `phases`
+  // trong state có thể đã CŨ hơn DB - ví dụ 1 Phase vừa được "Chuyển sang
+  // project khác" chuyển VÀO project này từ 1 tab/phiên khác, hoặc trang này
+  // được điều hướng quay lại qua client-side cache của Next.js mà không
+  // remount để chạy lại reloadAll() ở effect [id] bên dưới. Để không gửi
+  // thiếu Phase trong tình huống đó, luôn lấy lại danh sách Phase mới nhất
+  // từ server ngay trước khi tính toán payload, thay vì tin vào `realPhases`
+  // đang có sẵn trên trang.
   const commitPhaseReorder = async (draggedId: number, targetId: number | 'end', side?: 'before' | 'after') => {
     if (targetId !== 'end' && draggedId === targetId) return;
-    const currentOrder = realPhases.map((p: any) => p.id as number);
-    const withoutDragged = currentOrder.filter((pid: number) => pid !== draggedId);
-    let insertAt: number;
-    if (targetId === 'end') {
-      insertAt = withoutDragged.length;
-    } else {
-      const targetIdx = withoutDragged.indexOf(targetId);
-      insertAt = side === 'before' ? targetIdx : targetIdx + 1;
-    }
-    const newOrder = [...withoutDragged.slice(0, insertAt), draggedId, ...withoutDragged.slice(insertAt)];
     setReorderingPhaseId(draggedId);
     try {
+      const freshPhases = await getPhases(Number(id));
+      const currentOrder = (freshPhases || [])
+        .filter((p: any) => !p.is_master && (p.name || '').toLowerCase() !== 'master')
+        .map((p: any) => p.id as number);
+      const withoutDragged = currentOrder.filter((pid: number) => pid !== draggedId);
+      let insertAt: number;
+      if (targetId === 'end') {
+        insertAt = withoutDragged.length;
+      } else {
+        const targetIdx = withoutDragged.indexOf(targetId);
+        insertAt = side === 'before' ? targetIdx : targetIdx + 1;
+      }
+      const newOrder = [...withoutDragged.slice(0, insertAt), draggedId, ...withoutDragged.slice(insertAt)];
       await reorderPhases(Number(id), newOrder.map((phaseId: number, idx: number) => ({ phase_id: phaseId, sort_order: idx })));
       await reloadAll(true);
     } catch (err: any) {
@@ -3727,30 +3748,72 @@ function ProjectDetailContent() {
     return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
   })();
 
-  // Khối lượng công việc theo thành viên - bản đầy đủ hơn workloadStats (có
-  // thêm cột Đang làm/Trễ hạn), vẫn key theo assigned_name như workloadStats
-  // đã làm (field thật trên task, không phải FK sang projectMembers).
+  // KPI tổng của từng thành viên, lấy thẳng từ hệ thống KPI có sẵn (cùng
+  // endpoint/field "/members" + kpi_total mà trang /kpi dùng) - widget này
+  // CHỈ hiển thị lại, không tự tính. Luôn dùng CÙNG overviewYear/overviewMonth
+  // đang lọc Assign/Support/Hoàn thành ở trên để tránh lệch kỳ; vẫn có thể
+  // lệch "ranh giới" kỳ nếu hệ KPI dùng chu kỳ khác tháng dương lịch - xem
+  // chú thích (title) cạnh header cột KPI bên dưới.
+  const { data: overviewMemberKpiData } = useQuery({
+    queryKey: ['overview-member-kpi', overviewYear, overviewMonth],
+    queryFn: () => {
+      const kpiParams: any = {};
+      if (overviewMonth !== 'all') kpiParams.month = overviewMonth;
+      if (overviewYear !== 'all') kpiParams.year = overviewYear;
+      return getMembers(kpiParams);
+    },
+    enabled: !!id && activeMainTab === 'overview' && overviewSubTab === 'summary',
+    staleTime: 2 * 60_000,
+  });
+  const overviewMemberKpiById = useMemo(() => {
+    const map = new Map<number, number>();
+    (overviewMemberKpiData || []).forEach((m: any) => {
+      if (m?.id != null && typeof m.kpi_total === 'number') map.set(Number(m.id), m.kpi_total);
+    });
+    return map;
+  }, [overviewMemberKpiData]);
+  const overviewKpiPeriodLabel = overviewMonth !== 'all' && overviewYear !== 'all'
+    ? `Tháng ${overviewMonth}/${overviewYear}`
+    : overviewYear !== 'all'
+      ? `Năm ${overviewYear}`
+      : overviewMonth !== 'all'
+        ? `Tháng ${overviewMonth} (mọi năm)`
+        : 'Tất cả thời gian';
+
+  // Khối lượng công việc theo thành viên - Assign (assigned_id) + Support
+  // (support_id) tách riêng thay cho cột "Tổng" cũ (gộp 2 vai trò làm mất
+  // thông tin ai là người chính/người hỗ trợ). Hoàn thành/Đang làm/Trễ hạn
+  // giữ nguyên scope cũ (chỉ tính trên vai trò Assign, field thật trên task,
+  // không phải FK sang projectMembers).
   const overviewMemberWorkload = (() => {
-    const map: Record<string, { name: string; total: number; done: number; inProgress: number; overdue: number }> = {};
+    const map: Record<string, { id: number | null; name: string; assign: number; support: number; done: number; inProgress: number; overdue: number }> = {};
     // Seed từ TOÀN BỘ member đang tham gia project (kể cả chưa có task nào
     // trong kỳ đang lọc) - khớp với "Đội ngũ phát triển dự án" bên dưới, để
     // member không có việc vẫn hiện dòng 0 thay vì biến mất hoàn toàn khỏi bảng.
     projectMembers.forEach((m: any) => {
       const name = (m.display_name || '').trim();
-      if (name && !map[name]) map[name] = { name, total: 0, done: 0, inProgress: 0, overdue: 0 };
+      if (name && !map[name]) map[name] = { id: m.id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
     });
     kpiTasks.forEach((t: any) => {
       const name = (t.assigned_name || '').trim();
       if (!name) return;
-      if (!map[name]) map[name] = { name, total: 0, done: 0, inProgress: 0, overdue: 0 };
-      map[name].total += 1;
+      if (!map[name]) map[name] = { id: t.assigned_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
+      map[name].assign += 1;
       const s = (t.status || '').toLowerCase();
       const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
       if (isDone) map[name].done += 1;
       else if (calculateDaysLate(t) > 0) map[name].overdue += 1;
       else if (s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress') map[name].inProgress += 1;
     });
-    return Object.values(map).sort((a, b) => b.total - a.total);
+    kpiTasks.forEach((t: any) => {
+      const name = (t.support_name || '').trim();
+      if (!name) return;
+      if (!map[name]) map[name] = { id: t.support_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
+      map[name].support += 1;
+    });
+    return Object.values(map)
+      .map(row => ({ ...row, kpi: row.id != null ? overviewMemberKpiById.get(Number(row.id)) : undefined }))
+      .sort((a, b) => (b.assign + b.support) - (a.assign + a.support));
   })();
 
   // "Cần chú ý" - toàn bộ là aggregate trên data đã có, không thêm nguồn mới.
@@ -7458,7 +7521,7 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
-                  {/* ROW: Tiến độ theo Phase | Phân bổ task theo trạng thái | Khối lượng theo thành viên */}
+                  {/* ROW: Tiến độ theo Phase | Task theo loại | Khối lượng theo thành viên */}
                   <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-stretch">
                     {/* TIẾN ĐỘ THEO PHASE */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
@@ -7492,17 +7555,28 @@ function ProjectDetailContent() {
                       )}
                     </div>
 
-                    {/* PHÂN BỔ TASK THEO TRẠNG THÁI */}
-                    <OverviewDonutCard
-                      title="Phân bổ task theo trạng thái"
-                      centerLabel="Tasks"
-                      data={[
-                        { name: 'Hoàn thành', value: overviewStatusDistribution.done, fill: '#10b981' },
-                        { name: 'Đang thực hiện', value: overviewStatusDistribution.inProgress, fill: '#3b82f6' },
-                        { name: 'Chờ xử lý', value: overviewStatusDistribution.waiting, fill: '#cbd5e1' },
-                        { name: 'Trễ hạn', value: overviewStatusDistribution.overdue, fill: '#ef4444' },
-                      ]}
-                    />
+                    {/* TASK THEO LOẠI */}
+                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
+                      <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Task theo loại</h3>
+                      {overviewSkillDistribution.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Area.</p>
+                      ) : (
+                        <div className="space-y-2.5">
+                          {overviewSkillDistribution.map(s => {
+                            const max = overviewSkillDistribution[0]?.value || 1;
+                            return (
+                              <div key={s.name} className="flex items-center gap-2">
+                                <span className="text-[11px] text-slate-600 w-20 shrink-0 truncate" title={s.name}>{s.name}</span>
+                                <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
+                                  <div className="h-full bg-[#0058be] rounded" style={{ width: `${(s.value / max) * 100}%` }} />
+                                </div>
+                                <span className="text-[11px] font-bold text-[#0b1c30] w-6 text-right shrink-0">{s.value}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
 
                     {/* KHỐI LƯỢNG CÔNG VIỆC THEO THÀNH VIÊN */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
@@ -7525,10 +7599,14 @@ function ProjectDetailContent() {
                             <thead>
                               <tr className="text-slate-400 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-100">
                                 <th className="py-1.5 pr-2">Thành viên</th>
-                                <th className="py-1.5 px-2 text-center">Tổng</th>
+                                <th className="py-1.5 px-2 text-center">Assign</th>
+                                <th className="py-1.5 px-2 text-center">Support</th>
                                 <th className="py-1.5 px-2 text-center">Hoàn thành</th>
                                 <th className="py-1.5 px-2 text-center">Đang làm</th>
-                                <th className="py-1.5 pl-2 text-center">Trễ hạn</th>
+                                <th className="py-1.5 px-2 text-center">Trễ hạn</th>
+                                <th className="py-1.5 pl-2 text-center" title={`KPI lấy từ hệ thống KPI theo kỳ: ${overviewKpiPeriodLabel}. Chu kỳ KPI có thể không khớp hoàn toàn ranh giới với các cột Assign/Support/Hoàn thành ở bên trái.`}>
+                                  KPI
+                                </th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-50">
@@ -7542,10 +7620,12 @@ function ProjectDetailContent() {
                                         <span className="font-semibold text-[#0b1c30] truncate max-w-[110px]" title={m.name}>{m.name}</span>
                                       </div>
                                     </td>
-                                    <td className="py-2 px-2 text-center font-bold text-[#0b1c30]">{m.total}</td>
+                                    <td className="py-2 px-2 text-center font-bold text-[#0b1c30]">{m.assign}</td>
+                                    <td className="py-2 px-2 text-center font-bold text-[#0b1c30]">{m.support}</td>
                                     <td className="py-2 px-2 text-center text-emerald-600 font-semibold">{m.done}</td>
                                     <td className="py-2 px-2 text-center text-blue-600 font-semibold">{m.inProgress}</td>
-                                    <td className="py-2 pl-2 text-center text-red-600 font-semibold">{m.overdue}</td>
+                                    <td className="py-2 px-2 text-center text-red-600 font-semibold">{m.overdue}</td>
+                                    <td className="py-2 pl-2 text-center font-bold text-[#0058be]">{typeof m.kpi === 'number' ? m.kpi.toFixed(1) : '--'}</td>
                                   </tr>
                                 );
                               })}
@@ -7556,7 +7636,7 @@ function ProjectDetailContent() {
                     </div>
                   </div>
 
-                  {/* ROW: Task theo Priority | Task theo loại | Hoạt động gần đây | Cần chú ý */}
+                  {/* ROW: Task theo Priority | Phân bổ task theo trạng thái | Hoạt động gần đây | Cần chú ý */}
                   <div className="grid grid-cols-1 lg:grid-cols-4 gap-4 items-stretch">
                     <OverviewDonutCard
                       title="Task theo Priority"
@@ -7569,27 +7649,17 @@ function ProjectDetailContent() {
                       ]}
                     />
 
-                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
-                      <h3 className="text-xs font-bold text-[#0b1c30] uppercase tracking-wider mb-3">Task theo loại</h3>
-                      {overviewSkillDistribution.length === 0 ? (
-                        <p className="text-xs text-slate-500 italic text-center py-6 flex-1 flex items-center justify-center">Chưa có dữ liệu Skill Area.</p>
-                      ) : (
-                        <div className="space-y-2.5">
-                          {overviewSkillDistribution.map(s => {
-                            const max = overviewSkillDistribution[0]?.value || 1;
-                            return (
-                              <div key={s.name} className="flex items-center gap-2">
-                                <span className="text-[11px] text-slate-600 w-20 shrink-0 truncate" title={s.name}>{s.name}</span>
-                                <div className="flex-1 h-4 bg-slate-100 rounded overflow-hidden">
-                                  <div className="h-full bg-[#0058be] rounded" style={{ width: `${(s.value / max) * 100}%` }} />
-                                </div>
-                                <span className="text-[11px] font-bold text-[#0b1c30] w-6 text-right shrink-0">{s.value}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
+                    {/* PHÂN BỔ TASK THEO TRẠNG THÁI */}
+                    <OverviewDonutCard
+                      title="Phân bổ task theo trạng thái"
+                      centerLabel="Tasks"
+                      data={[
+                        { name: 'Hoàn thành', value: overviewStatusDistribution.done, fill: '#10b981' },
+                        { name: 'Đang thực hiện', value: overviewStatusDistribution.inProgress, fill: '#3b82f6' },
+                        { name: 'Chờ xử lý', value: overviewStatusDistribution.waiting, fill: '#cbd5e1' },
+                        { name: 'Trễ hạn', value: overviewStatusDistribution.overdue, fill: '#ef4444' },
+                      ]}
+                    />
 
                     {/* HOẠT ĐỘNG GẦN ĐÂY */}
                     <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 h-full flex flex-col">
@@ -8495,7 +8565,22 @@ function ProjectDetailContent() {
                                 return;
                               }
                               setAddingTaskGroupPhaseId(defaultPhaseId);
-                              setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                              const targetPhase = phases.find(p => p.id === defaultPhaseId);
+                              if ((targetPhase?.name || '').trim() === 'MA') {
+                                const today = new Date();
+                                const monday = new Date(today);
+                                // getDay(): 0=Sun..6=Sat - roll back to this week's Monday.
+                                monday.setDate(today.getDate() - ((today.getDay() + 6) % 7));
+                                const mondayStr = monday.toISOString().slice(0, 10);
+                                setNewTgForm({
+                                  name: maGroupTaskTemplate?.description || '',
+                                  manday_est: String(maGroupTaskTemplate?.manday_est ?? 7),
+                                  status: 'Waiting',
+                                  start_date_est: mondayStr,
+                                });
+                              } else {
+                                setNewTgForm({ name: '', manday_est: '', status: 'Waiting', start_date_est: '' });
+                              }
                             }}
                             className="w-full h-9 text-left px-3 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50 flex items-center gap-2"
                           >

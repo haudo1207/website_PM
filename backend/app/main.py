@@ -134,6 +134,11 @@ def apply_schema_updates():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_sub_unique "
             "ON users (outlook_sub) WHERE outlook_sub IS NOT NULL"
         ))
+        # /kpi page's own last-picked Tháng/Năm/Workspace/Leader filter, saved
+        # per account so it's restored on the next visit instead of resetting.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS kpi_filter_preference VARCHAR NULL"
+        ))
         # Consolidate the legacy three-role model into the new 4-role model.
         # Permissions remain independent from project data scope.
         conn.execute(text(
@@ -201,6 +206,12 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+        # System-seeded Phase the user cannot delete (e.g. "MA") - see Phase
+        # model comment and delete_phase() in routers/projects.py. Only ever
+        # set true at creation time for new projects going forward; existing
+        # Phases (including the pre-existing "Master" one) are intentionally
+        # left false/unprotected by this migration.
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS is_protected BOOLEAN NOT NULL DEFAULT FALSE"))
 
         # Add AI Review columns to tasks_v2
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))

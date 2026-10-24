@@ -212,6 +212,21 @@ export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
 export const updateMyZaloName = (zalo_name: string) =>
   api.patch<{ zalo_name: string | null }>('/users/me/zalo-name', { zalo_name }).then(r => r.data);
 
+// /kpi page's own last-picked Tháng/Năm/Workspace/Leader filter, saved per
+// account - restored on the next visit instead of resetting to defaults.
+export interface KpiFilterPreference {
+  month?: string;
+  year?: string;
+  workspace?: string;
+  leaderFilter?: string;
+}
+export const getMyKpiFilterPreference = () =>
+  api.get<KpiFilterPreference>('/users/me/kpi-filter-preference').then(r => r.data);
+export const saveMyKpiFilterPreference = (pref: KpiFilterPreference) =>
+  api.put<{ ok: boolean }>('/users/me/kpi-filter-preference', pref).then(r => r.data);
+export const clearMyKpiFilterPreference = () =>
+  api.delete<{ ok: boolean }>('/users/me/kpi-filter-preference').then(r => r.data);
+
 export interface LoginHistoryItem {
   id: number;
   action: string;
@@ -1415,6 +1430,18 @@ export const getZaloSummaryConfig = () =>
   api.get<{ daily_at: string }>('/settings/zalo-summary-config').then(r => r.data);
 export const updateZaloSummaryConfig = (dailyAt: string) =>
   api.put<{ message: string; daily_at: string }>('/settings/zalo-summary-config', { daily_at: dailyAt }).then(r => r.data);
+
+// Admin-edited default Detail/Manday for a Group Task auto-created under the
+// system "MA" phase (weekly feedback) — Start Date is never part of this,
+// it's always computed (Monday of the current week) at creation time.
+export interface MaGroupTaskTemplate {
+  description: string;
+  manday_est: number;
+}
+export const getMaGroupTaskTemplate = () =>
+  api.get<MaGroupTaskTemplate>('/settings/ma-group-task-template').then(r => r.data);
+export const saveMaGroupTaskTemplate = (data: MaGroupTaskTemplate) =>
+  api.put<{ message: string }>('/settings/ma-group-task-template', data).then(r => r.data);
 export interface ZaloProjectGroupSummary {
   conversation_id: number;
   name: string;

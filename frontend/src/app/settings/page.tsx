@@ -7,6 +7,7 @@ import KPIsView from '@/components/KPIsView';
 import AIPromptsView from '@/components/AIPromptsView';
 import ProjectTemplatesView from '@/components/ProjectTemplatesView';
 import WorkloadSettingsView from '@/components/WorkloadSettingsView';
+import MaGroupTaskTemplateView from '@/components/MaGroupTaskTemplateView';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -800,7 +801,12 @@ export default function SettingsPage() {
           )}
 
           {activeTab === 'project_templates' && (
-            <ProjectTemplatesView onFlash={flash} />
+            <div className="space-y-6">
+              <ProjectTemplatesView onFlash={flash} />
+              <div className="pt-6 border-t border-slate-200">
+                <MaGroupTaskTemplateView onFlash={flash} />
+              </div>
+            </div>
           )}
         </div>
       </div>
