@@ -3748,72 +3748,48 @@ function ProjectDetailContent() {
     return Object.entries(counts).map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 8);
   })();
 
-  // KPI tổng của từng thành viên, lấy thẳng từ hệ thống KPI có sẵn (cùng
-  // endpoint/field "/members" + kpi_total mà trang /kpi dùng) - widget này
-  // CHỈ hiển thị lại, không tự tính. Luôn dùng CÙNG overviewYear/overviewMonth
-  // đang lọc Assign/Support/Hoàn thành ở trên để tránh lệch kỳ; vẫn có thể
-  // lệch "ranh giới" kỳ nếu hệ KPI dùng chu kỳ khác tháng dương lịch - xem
-  // chú thích (title) cạnh header cột KPI bên dưới.
-  const { data: overviewMemberKpiData } = useQuery({
-    queryKey: ['overview-member-kpi', overviewYear, overviewMonth],
-    queryFn: () => {
-      const kpiParams: any = {};
-      if (overviewMonth !== 'all') kpiParams.month = overviewMonth;
-      if (overviewYear !== 'all') kpiParams.year = overviewYear;
-      return getMembers(kpiParams);
-    },
-    enabled: !!id && activeMainTab === 'overview' && overviewSubTab === 'summary',
-    staleTime: 2 * 60_000,
-  });
-  const overviewMemberKpiById = useMemo(() => {
-    const map = new Map<number, number>();
-    (overviewMemberKpiData || []).forEach((m: any) => {
-      if (m?.id != null && typeof m.kpi_total === 'number') map.set(Number(m.id), m.kpi_total);
-    });
-    return map;
-  }, [overviewMemberKpiData]);
-  const overviewKpiPeriodLabel = overviewMonth !== 'all' && overviewYear !== 'all'
-    ? `Tháng ${overviewMonth}/${overviewYear}`
-    : overviewYear !== 'all'
-      ? `Năm ${overviewYear}`
-      : overviewMonth !== 'all'
-        ? `Tháng ${overviewMonth} (mọi năm)`
-        : 'Tất cả thời gian';
-
   // Khối lượng công việc theo thành viên - Assign (assigned_id) + Support
   // (support_id) tách riêng thay cho cột "Tổng" cũ (gộp 2 vai trò làm mất
   // thông tin ai là người chính/người hỗ trợ). Hoàn thành/Đang làm/Trễ hạn
   // giữ nguyên scope cũ (chỉ tính trên vai trò Assign, field thật trên task,
-  // không phải FK sang projectMembers).
+  // không phải FK sang projectMembers). KPI được cộng trực tiếp từ ĐÚNG tập
+  // kpiTasks này (kpi_assigned/kpi_support có sẵn trên từng task, chỉ > 0 khi
+  // task đã Done) - không gọi API /members riêng, nên không thể lệch kỳ/lệch
+  // phạm vi dự án với Assign/Support: task nào được đếm vào Assign/Support ở
+  // trên thì KPI của đúng task đó cũng được cộng vào đây, không hơn không kém.
   const overviewMemberWorkload = (() => {
-    const map: Record<string, { id: number | null; name: string; assign: number; support: number; done: number; inProgress: number; overdue: number }> = {};
+    const map: Record<string, { id: number | null; name: string; assign: number; support: number; done: number; inProgress: number; overdue: number; kpi: number }> = {};
     // Seed từ TOÀN BỘ member đang tham gia project (kể cả chưa có task nào
     // trong kỳ đang lọc) - khớp với "Đội ngũ phát triển dự án" bên dưới, để
     // member không có việc vẫn hiện dòng 0 thay vì biến mất hoàn toàn khỏi bảng.
     projectMembers.forEach((m: any) => {
       const name = (m.display_name || '').trim();
-      if (name && !map[name]) map[name] = { id: m.id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
+      if (name && !map[name]) map[name] = { id: m.id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0, kpi: 0 };
     });
     kpiTasks.forEach((t: any) => {
       const name = (t.assigned_name || '').trim();
       if (!name) return;
-      if (!map[name]) map[name] = { id: t.assigned_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
+      if (!map[name]) map[name] = { id: t.assigned_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0, kpi: 0 };
       map[name].assign += 1;
       const s = (t.status || '').toLowerCase();
       const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
-      if (isDone) map[name].done += 1;
+      if (isDone) {
+        map[name].done += 1;
+        map[name].kpi += Number(t.kpi_assigned) || 0;
+      }
       else if (calculateDaysLate(t) > 0) map[name].overdue += 1;
       else if (s.includes('process') || s.includes('progress') || s.includes('inprogress') || s.includes('doing') || s === 'in progress') map[name].inProgress += 1;
     });
     kpiTasks.forEach((t: any) => {
       const name = (t.support_name || '').trim();
       if (!name) return;
-      if (!map[name]) map[name] = { id: t.support_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0 };
+      if (!map[name]) map[name] = { id: t.support_id ?? null, name, assign: 0, support: 0, done: 0, inProgress: 0, overdue: 0, kpi: 0 };
       map[name].support += 1;
+      const s = (t.status || '').toLowerCase();
+      const isDone = s === 'done' || s === 'completed' || s.includes('hoàn') || s.includes('finish');
+      if (isDone) map[name].kpi += Number(t.kpi_support) || 0;
     });
-    return Object.values(map)
-      .map(row => ({ ...row, kpi: row.id != null ? overviewMemberKpiById.get(Number(row.id)) : undefined }))
-      .sort((a, b) => (b.assign + b.support) - (a.assign + a.support));
+    return Object.values(map).sort((a, b) => (b.assign + b.support) - (a.assign + a.support));
   })();
 
   // "Cần chú ý" - toàn bộ là aggregate trên data đã có, không thêm nguồn mới.
@@ -7604,7 +7580,7 @@ function ProjectDetailContent() {
                                 <th className="py-1.5 px-2 text-center">Hoàn thành</th>
                                 <th className="py-1.5 px-2 text-center">Đang làm</th>
                                 <th className="py-1.5 px-2 text-center">Trễ hạn</th>
-                                <th className="py-1.5 pl-2 text-center" title={`KPI lấy từ hệ thống KPI theo kỳ: ${overviewKpiPeriodLabel}. Chu kỳ KPI có thể không khớp hoàn toàn ranh giới với các cột Assign/Support/Hoàn thành ở bên trái.`}>
+                                <th className="py-1.5 pl-2 text-center" title="Tổng KPI cộng từ đúng các task Assign/Support đang hiển thị ở các cột bên trái (chỉ tính task đã Hoàn thành) - cùng dự án, cùng kỳ đang lọc.">
                                   KPI
                                 </th>
                               </tr>
@@ -7625,7 +7601,7 @@ function ProjectDetailContent() {
                                     <td className="py-2 px-2 text-center text-emerald-600 font-semibold">{m.done}</td>
                                     <td className="py-2 px-2 text-center text-blue-600 font-semibold">{m.inProgress}</td>
                                     <td className="py-2 px-2 text-center text-red-600 font-semibold">{m.overdue}</td>
-                                    <td className="py-2 pl-2 text-center font-bold text-[#0058be]">{typeof m.kpi === 'number' ? m.kpi.toFixed(1) : '--'}</td>
+                                    <td className="py-2 pl-2 text-center font-bold text-[#0058be]">{m.kpi.toFixed(1)}</td>
                                   </tr>
                                 );
                               })}
