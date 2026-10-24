@@ -32,6 +32,7 @@ from ..utils.audit_service import AuditService
 from ..utils.skill_validation import validate_skill_area_consistency
 from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
 from ..services.document_storage import sync_task_link_documents, delete_task_link_documents
+from .settings_router import get_setting
 # Đảm bảo có import date/datetime để tính ngày
 from datetime import date, datetime
 from decimal import Decimal
@@ -807,10 +808,31 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
     if not phase:
         raise HTTPException(404, "Phase not found.")
     name = body.get("name", "").strip()
+    manday_est = body.get("manday_est")
+    start_date_est_raw = body.get("start_date_est")
+    # Phase "MA" (weekly feedback) auto-fills Detail Task/Manday/Start Date
+    # from the admin-configured template (Settings > ma-group-task-template)
+    # when the client didn't already send them - this is what lets the
+    # create form show them pre-filled instead of blank. "Detail Task" is
+    # TaskGroup.name (see the model's own docstring - `description` is a
+    # separate, optional longer-text field not part of this template).
+    # Assigned is already forced to the creator below for EVERY phase, not
+    # just MA - nothing extra needed there. Only fills gaps: a value the
+    # client DID send (e.g. the person edited the pre-filled Manday before
+    # submitting) is kept as-is.
+    if (phase.name or "").strip() == "MA":
+        template = get_setting("ma_group_task_template", db) or {}
+        if not name:
+            name = (template.get("description") or "").strip()
+        if manday_est is None:
+            manday_est = template.get("manday_est", 7)
+        if not start_date_est_raw:
+            today = date.today()
+            start_date_est_raw = (today - timedelta(days=today.weekday())).isoformat()
+
     if not name:
         raise HTTPException(400, "Task group name is required.")
 
-    manday_est = body.get("manday_est")
     if manday_est is None:
         raise HTTPException(400, "Manday EST là bắt buộc khi tạo Task Group.")
     try:
@@ -858,7 +880,7 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
         status=body.get("status", "Waiting"),
         manday_est=manday_est,
         sort_order=0,
-        start_date_est=parse_date(body.get("start_date_est")),
+        start_date_est=parse_date(start_date_est_raw),
         assigned_ids=assigned_ids,
         support_ids=support_ids,
     )
