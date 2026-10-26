@@ -167,6 +167,24 @@ def _num(v):
         return None
 
 
+# KPI split between the assignee and the supporter of each task ("90/10"). The sender may state it for the whole request (`ratio`) and/or
+# override it per task (`tasks[].ratio`); both are {"assign": int, "support": int}. Absent = leave PM as is: new tasks get the PM default
+# 90/10, existing tasks keep whatever ratio they already have (PM users may have changed it by hand).
+DEFAULT_KPI_RATIO = (90, 10)
+
+
+def _payload_ratio(raw):
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HTTPException(400, 'ratio phải có dạng {"assign": 90, "support": 10}.')
+    for k in ("assign", "support"):
+        v = raw.get(k)
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v):
+            raise HTTPException(400, "KPI RATIO phải là số nguyên, ví dụ 90/10 hoặc 50/50.")
+    return tg_router.validate_kpi_ratio(int(raw["assign"]), int(raw["support"]))
+
+
 # ── weekly KPI ────────────────────────────────────────────────────────────────
 
 @router.post("/projects/{pid}/weekly-kpi")
@@ -199,8 +217,9 @@ def _upsert_weekly_kpi(pid: int, body: dict, db: Session, source):
     for t in tasks_in:
         if not isinstance(t, dict) or not str(t.get("externalKey") or "").startswith(prefix):
             raise HTTPException(400, f"Mỗi task cần externalKey ({prefix}…).")
+    ratio = _payload_ratio(body.get("ratio"))  # request-level KPI ratio; a malformed one rejects the whole request before anything is written
 
-    phase = _find_or_create_phase(db, pid, str(body.get("phaseName") or src["phase"]).strip()[:200] or src["phase"])
+    phase =_find_or_create_phase(db, pid, str(body.get("phaseName") or src["phase"]).strip()[:200] or src["phase"])
     tg = _find_group(db, pid, phase, group_in)
 
     # Task Group MANDAY EST is a whole number >= 1 and must cover its children: size it to the tasks of this request plus tasks already in the
@@ -268,17 +287,22 @@ def _upsert_weekly_kpi(pid: int, body: dict, db: Session, source):
                 "skill_vendor_id": t.get("skillVendorId"),
                 "ticket_id": key,
             }
+            task_ratio = _payload_ratio(t.get("ratio")) or ratio  # per-task override wins over the request-level ratio
             existing = _find_task(db, tg, t)
             if existing:
+                if task_ratio:
+                    fields = {**fields, "kpi_ratio_assign": task_ratio[0], "kpi_ratio_support": task_ratio[1]}
                 tg_router.update_task(tg.id, existing.id, fields, db, SERVICE_USER)
                 task = existing
                 action = "updated"
             else:
-                tg_router.create_task(tg.id, {**fields, "kpi_ratio_assign": 90, "kpi_ratio_support": 10}, db, SERVICE_USER)
+                r_assign, r_support = task_ratio or DEFAULT_KPI_RATIO
+                tg_router.create_task(tg.id, {**fields, "kpi_ratio_assign": r_assign, "kpi_ratio_support": r_support}, db, SERVICE_USER)
                 task = db.query(Task).filter(Task.task_group_id == tg.id, Task.ticket_id == key).order_by(Task.id.desc()).first()
                 action = "created"
             db.refresh(task)
-            results.append({"externalKey": key, "id": task.id, "code": task.task_code, "action": action})
+            results.append({"externalKey": key, "id": task.id, "code": task.task_code, "action": action,
+                            "ratio": {"assign": task.kpi_ratio_assign, "support": task.kpi_ratio_support}})
         except HTTPException as e:
             db.rollback()
             errors.append({"externalKey": key, "message": _detail(e)})
