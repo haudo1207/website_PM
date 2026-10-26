@@ -318,3 +318,87 @@ def test_manual_pm_users_are_still_capped(db, world, ratio_rule, admin):
                                 "assigned_id": world["han"].id, "support_id": world["an"].id, "kpi_ratio_assign": 90, "kpi_ratio_support": 10,
                                 "skill_solution_id": world["net"].id, "skill_vendor_id": world["cisco"].id}, db, admin)
     assert e.value.status_code == 400 and "20%" in str(e.value.detail)
+
+
+# ── KPI ratio (assignee / supporter split) ──
+
+def ratio_of(db, task_id):
+    t = db.get(Task, task_id)
+    return t.kpi_ratio_assign, t.kpi_ratio_support
+
+
+def two_tasks(w, **over):
+    return [task_in(w, **over), task_in(w, who="an", support="han", metric="thamGia", priority="Normal", manday=0.5, **over)]
+
+
+def test_no_ratio_keeps_the_pm_default_90_10(db, world):
+    out = push(db, world, two_tasks(world))
+    assert out["errors"] == []
+    assert [ratio_of(db, t["id"]) for t in out["tasks"]] == [(90, 10), (90, 10)]
+    assert out["tasks"][0]["ratio"] == {"assign": 90, "support": 10}, "result reports the ratio the task ended up with"
+
+
+def test_request_ratio_is_applied_on_create_and_splits_kpi(db, world):
+    from app.utils.kpi_engine import recalculate_task
+    out = ms.upsert_weekly_kpi(world["pid"], {**body([task_in(world)]), "ratio": {"assign": 80, "support": 20}}, db=db)
+    assert out["errors"] == [] and out["tasks"][0]["ratio"] == {"assign": 80, "support": 20}
+    assert ratio_of(db, out["tasks"][0]["id"]) == (80, 20)
+    # KPI of a Done child is only final once its Task Group is Done; then final x ratio goes to the assignee / the supporter
+    tg = db.get(TaskGroup, out["group"]["id"])
+    tg.status = "Done"
+    db.commit()
+    t = recalculate_task(db.get(Task, out["tasks"][0]["id"]), db)
+    assert t.kpi_final is not None and float(t.kpi_final) > 0, "KPI is final once the Task Group is Done"
+    assert (float(t.kpi_assigned), float(t.kpi_support)) == (pytest.approx(0.8 * float(t.kpi_final), abs=0.01), pytest.approx(0.2 * float(t.kpi_final), abs=0.01))
+    assert float(t.kpi_assigned) + float(t.kpi_support) == pytest.approx(float(t.kpi_final), abs=0.01)
+
+
+def test_resync_with_a_new_ratio_updates_existing_tasks_in_place(db, world):
+    first = ms.upsert_weekly_kpi(world["pid"], {**body(two_tasks(world)), "ratio": {"assign": 80, "support": 20}}, db=db)
+    ids = [t["id"] for t in first["tasks"]]
+    second = ms.upsert_weekly_kpi(world["pid"], {**body(two_tasks(world)), "ratio": {"assign": 70, "support": 30}}, db=db)
+    assert second["errors"] == [] and [t["action"] for t in second["tasks"]] == ["updated", "updated"]
+    assert [t["id"] for t in second["tasks"]] == ids, "same tasks, no duplicates"
+    assert [ratio_of(db, i) for i in ids] == [(70, 30), (70, 30)]
+    assert db.query(Task).filter(Task.task_group_id == first["group"]["id"]).count() == 2
+
+
+def test_resync_without_ratio_leaves_a_hand_edited_ratio_alone(db, world):
+    first = push(db, world, two_tasks(world))
+    t = db.get(Task, first["tasks"][0]["id"])
+    t.kpi_ratio_assign, t.kpi_ratio_support = 60, 40  # a PM user changed it by hand
+    db.commit()
+    again = push(db, world, [task_in(world, manday=1)])
+    assert again["errors"] == []
+    assert ratio_of(db, first["tasks"][0]["id"]) == (60, 40), "no ratio in the payload = do not touch it"
+
+
+def test_task_ratio_overrides_the_request_ratio(db, world):
+    tasks = [task_in(world, ratio={"assign": 50, "support": 50}), task_in(world, who="an", support="han", metric="thamGia", priority="Normal", manday=0.5)]
+    out = ms.upsert_weekly_kpi(world["pid"], {**body(tasks), "ratio": {"assign": 70, "support": 30}}, db=db)
+    assert out["errors"] == []
+    assert [ratio_of(db, t["id"]) for t in out["tasks"]] == [(50, 50), (70, 30)]
+
+
+def test_100_0_ratio_is_accepted(db, world):
+    out = ms.upsert_weekly_kpi(world["pid"], {**body([task_in(world)]), "ratio": {"assign": 100, "support": 0}}, db=db)
+    assert out["errors"] == [] and ratio_of(db, out["tasks"][0]["id"]) == (100, 0)
+
+
+@pytest.mark.parametrize("bad", [
+    {"assign": 60, "support": 30}, {"assign": 90}, {"assign": "90", "support": "10"}, {"assign": 85.5, "support": 14.5},
+    {"assign": -10, "support": 110}, {"assign": True, "support": 99}, "90/10", [90, 10],
+])
+def test_bad_request_ratio_rejects_the_whole_request_before_writing(db, world, bad):
+    with pytest.raises(HTTPException) as e:
+        ms.upsert_weekly_kpi(world["pid"], {**body(two_tasks(world)), "ratio": bad}, db=db)
+    assert e.value.status_code == 400
+    assert db.query(TaskGroup).count() == 0 and db.query(Task).count() == 0, "nothing written"
+
+
+def test_bad_task_ratio_only_fails_that_task(db, world):
+    tasks = [task_in(world, ratio={"assign": 60, "support": 30}), task_in(world, who="an", support="han", metric="thamGia", priority="Normal", manday=0.5)]
+    out = push(db, world, tasks)
+    assert [t["externalKey"] for t in out["tasks"]] == [f"{GKEY}:an:thamGia"], "the good task is saved"
+    assert [e["externalKey"] for e in out["errors"]] == [f"{GKEY}:han:canXemXet"]
+    assert "100" in out["errors"][0]["message"]
