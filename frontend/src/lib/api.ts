@@ -1188,6 +1188,7 @@ export interface TeamComparisonMember {
 export interface TeamComparisonProject {
   project_id: number;
   name: string;
+  customer_name?: string | null;
   status?: string | null;
   current_phase?: string | null;
   data_scope?: string | null;

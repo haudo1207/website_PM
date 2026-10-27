@@ -178,7 +178,7 @@ export default function PromptSettingsModal({ isOpen, onClose }: Props) {
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 p-4 overflow-y-auto">
       <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col my-auto">
         <div className="px-6 py-4 border-b border-[#c2c6d6]/40 flex items-center justify-between bg-[#f8f9fe] flex-shrink-0">
           <div className="flex items-center gap-2 text-[#0058be]"><Sparkles size={18} /><h2 className="text-[14px] font-bold text-[#0b1c30]">Cấu hình AI Prompt Template</h2></div>

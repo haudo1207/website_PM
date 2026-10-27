@@ -514,7 +514,7 @@ function NavbarContent() {
   return (
     <>
       {/* Mobile Header */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#0F172A] border-b border-slate-800 flex items-center justify-between px-4 z-[200]">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#0F172A] border-b border-slate-800 flex items-center justify-between px-4 z-[1100]">
         <div className="flex items-center gap-2">
           <img src={brand.logo} alt={`${brand.name} logo`} className="w-6 h-6 rounded-lg flex-shrink-0 object-cover" />
           <span className="text-sm font-bold text-white">{brand.productName}</span>
@@ -545,7 +545,7 @@ function NavbarContent() {
 
       {/* Sidebar - Hidden on mobile, visible on md+ */}
       <aside className={`
-        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-50 overflow-y-auto overflow-x-hidden transition-[width] duration-200
+        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-[1100] overflow-y-auto overflow-x-hidden transition-[width] duration-200
         hidden md:flex
       `}>
 
@@ -686,7 +686,7 @@ function NavbarContent() {
 
       {/* Mobile Menu Drawer */}
       <aside className={`
-        md:hidden fixed top-0 left-0 bottom-0 w-[260px] bg-[#0F172A] z-[200] transform transition-transform duration-300 ease-in-out
+        md:hidden fixed top-0 left-0 bottom-0 w-[260px] bg-[#0F172A] z-[1100] transform transition-transform duration-300 ease-in-out
         ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
         {/* Mobile Logo */}

@@ -1065,7 +1065,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       )}
 
       {showBulkDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
             <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {visibleSelectedIds.length} dự án</h2>
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {visibleSelectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
@@ -1113,7 +1113,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       />
 
       {deleteId !== null && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
             <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa dự án</h2>
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này?</p>

@@ -1551,7 +1551,7 @@ function MeetingsPageContent() {
 
       {/* Delete Confirm Modal */}
       {deleteConfirmId && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4">
             <div className="flex items-center gap-3 text-red-600">
               <div className="w-10 h-10 bg-red-50 rounded-full flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">delete</span></div>

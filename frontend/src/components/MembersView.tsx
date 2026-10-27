@@ -679,7 +679,7 @@ export default function MembersView({ onFlash, onAccountCreated }: Props) {
 
       {/* ═══ ACCOUNT CREATION MODAL ═══ */}
       {showAccountModal && accountPrefill && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
