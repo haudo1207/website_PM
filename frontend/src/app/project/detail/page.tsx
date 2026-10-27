@@ -419,6 +419,7 @@ function ProjectDetailContent() {
 
   const [project, setProject] = useState<any>(null);
   const [loadingProject, setLoadingProject] = useState(true);
+  const [projectLoadError, setProjectLoadError] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<number>>(new Set());
   const [addingTaskGroupId, setAddingTaskGroupId] = useState<number | null>(null);
   const [addingTaskParentCode, setAddingTaskParentCode] = useState<string | null>(null);
@@ -2015,13 +2016,15 @@ function ProjectDetailContent() {
   }, [weekOffset]);
 
   const loadProject = useCallback(async () => {
+    setProjectLoadError(null);
     try {
       const found = await getProject(Number(id));
       if (found) {
         setProject(found);
       }
-    } catch {
+    } catch (err: any) {
       flash('Không thể tải thông tin dự án', true);
+      setProjectLoadError(getApiErrorMessage(err) || 'Không thể tải thông tin dự án.');
     } finally {
       setLoadingProject(false);
     }
@@ -6873,12 +6876,30 @@ function ProjectDetailContent() {
 
     return result;
   };
-  if (loadingProject || !project) {
+  if (loadingProject) {
     return (
       <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
         <div className="flex items-center gap-2">
           <div className="w-4 h-4 border-2 border-[#0058be] border-t-transparent rounded-full animate-spin" />
           <span>Đang tải thông tin dự án...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="h-screen bg-[#f0f2f5] flex items-center justify-center text-[#565e74]" style={{ fontFamily: "'Work Sans', sans-serif" }}>
+        <div className="flex flex-col items-center gap-3 text-center max-w-sm px-4">
+          <span className="text-2xl">⚠️</span>
+          <span className="font-semibold text-[#0b1c30]">Không thể tải thông tin dự án</span>
+          <span className="text-sm">{projectLoadError || 'Đã xảy ra lỗi không xác định.'}</span>
+          <button
+            onClick={() => { setLoadingProject(true); loadProject(); }}
+            className="mt-1 px-4 py-2 rounded-lg bg-[#0058be] text-white text-sm font-medium hover:bg-[#00479a] transition-colors"
+          >
+            Thử lại
+          </button>
         </div>
       </div>
     );
