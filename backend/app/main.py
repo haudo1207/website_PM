@@ -434,15 +434,23 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE project_pins ADD COLUMN IF NOT EXISTS user_id INTEGER"
         ))
-        conn.execute(text("""
-            UPDATE project_pins pp
-            SET user_id = u.id
-            FROM users u
-            WHERE pp.user_id IS NULL AND pp.member_id = u.member_id
-        """))
-        conn.execute(text("DELETE FROM project_pins WHERE user_id IS NULL"))
+        # Not every install has the legacy member_id column (e.g. one whose
+        # project_pins table was only ever created after the model already
+        # used user_id) — only backfill/drop it when it's actually there.
+        member_id_exists = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'project_pins' AND column_name = 'member_id'"
+        )).first() is not None
+        if member_id_exists:
+            conn.execute(text("""
+                UPDATE project_pins pp
+                SET user_id = u.id
+                FROM users u
+                WHERE pp.user_id IS NULL AND pp.member_id = u.member_id
+            """))
+            conn.execute(text("DELETE FROM project_pins WHERE user_id IS NULL"))
+            conn.execute(text("ALTER TABLE project_pins DROP COLUMN IF EXISTS member_id"))
         conn.execute(text("ALTER TABLE project_pins ALTER COLUMN user_id SET NOT NULL"))
-        conn.execute(text("ALTER TABLE project_pins DROP COLUMN IF EXISTS member_id"))
         conn.execute(text("""
             DO $$
             BEGIN
