@@ -13,8 +13,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
+import re
+import time
 from typing import Optional
-from fastapi import FastAPI, Depends, Header
+from fastapi import FastAPI, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
@@ -1768,6 +1770,30 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"]
 )
+
+_project_detail_logger = logging.getLogger("projects.get_detail")
+_PROJECT_DETAIL_PATH_RE = re.compile(r"^/api/projects/\d+$")
+
+
+@app.middleware("http")
+async def log_project_detail_timing(request: Request, call_next):
+    """Status code + elapsed time for GET /api/projects/{id} — this route's
+    uvicorn access log line has no timing, which made a reported "trang
+    hangs forever" case impossible to tell apart from a 401 (expired token),
+    a 5xx, or a request that's simply slow (e.g. DB pool contention)."""
+    if request.method != "GET" or not _PROJECT_DETAIL_PATH_RE.match(request.url.path):
+        return await call_next(request)
+    t0 = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        _project_detail_logger.exception("GET %s -> EXCEPTION after %.1fms", request.url.path, elapsed_ms)
+        raise
+    elapsed_ms = (time.monotonic() - t0) * 1000
+    level = logging.WARNING if response.status_code >= 400 else logging.INFO
+    _project_detail_logger.log(level, "GET %s -> %d in %.1fms", request.url.path, response.status_code, elapsed_ms)
+    return response
 
 app.include_router(auth.router,                prefix="/api/auth")
 app.include_router(users.router,               prefix="/api/users")
