@@ -331,7 +331,7 @@ export default function ProjectFormModal({
   if (!isOpen || !mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-start justify-center responsive-modal-overlay">
+    <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-start justify-center responsive-modal-overlay">
       <div className="bg-white border border-slate-200 shadow-2xl flex flex-col animate-in fade-in zoom-in duration-200 responsive-modal-container">
 
         {/* Header with Context Pill */}

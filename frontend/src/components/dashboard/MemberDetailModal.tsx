@@ -10,6 +10,7 @@
 
 import { useMemo, useState } from 'react';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 import {
   MONTH_WEEKS_COUNT,
   checkTaskInPeriod,
@@ -326,7 +327,7 @@ export default function MemberDetailModal({
       {/* BACKDROP */}
       <div
         onClick={onClose}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-slate-900/20 transition-opacity"
       />
 
       {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
@@ -646,7 +647,7 @@ export default function MemberDetailModal({
                       className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]"
                     >
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
+                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{formatProjectCardTitle(p)}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">
                           {pOpen} task mở
                         </span>

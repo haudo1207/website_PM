@@ -10,6 +10,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 import { Copy, Check } from 'lucide-react';
 
 // ── Hover-to-copy control for KPI ranking cells (UI-only) ────────────
@@ -285,7 +286,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                   return (
                     <div key={p.id} onClick={() => { onClose(); onNavigate(p.id, memberName, member.id); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
+                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{formatProjectCardTitle(p)}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">{pOpen} task mở</span>
                       </div>
                       <div className="grid grid-cols-4 gap-2">

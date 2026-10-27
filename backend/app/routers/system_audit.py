@@ -1433,6 +1433,7 @@ def _aggregate_team_comparison(
         project_summary[pid] = {
             "project_id": pid,
             "name": pr.name if pr else f"Project #{pid}",
+            "customer_name": pr.customer_name if pr else None,
             "status": pr.status if pr else None,
             "current_phase": pr.current_phase if pr else None,
             "data_scope": pr.data_scope if pr else None,
@@ -1489,6 +1490,7 @@ def _aggregate_team_comparison(
             overdue_n = int(overdue or 0)
             ps = project_summary[pid]
             ps["name"] = p.name
+            ps["customer_name"] = p.customer_name
             ps["status"] = p.status
             ps["current_phase"] = p.current_phase
             ps["data_scope"] = p.data_scope

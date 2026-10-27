@@ -285,7 +285,7 @@ const PriorityDetailModal = ({
       {/* BACKDROP */}
       <div
         onClick={onClose}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 bg-slate-900/20 transition-opacity"
       />
 
       {/* DRAWER PANEL SLIDE OUT FROM RIGHT */}

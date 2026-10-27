@@ -866,7 +866,7 @@ export default function TaskEditDrawer({
           bg-slate-900/40 backdrop-blur-sm; only the drawer's own outer
           backdrop was asked to lose the dimming. */}
       {blockPromptOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/20 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 space-y-3">
               <div className="flex items-center gap-3 text-amber-600">
@@ -926,7 +926,7 @@ export default function TaskEditDrawer({
       {/* Skill Area "+" modal — same POST /api/skills/groups + Category
           requirement as Task Detail's own showCreateSkillGroupModal. */}
       {showCreateSkillGroupModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/20">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Area mới</h3>
@@ -992,7 +992,7 @@ export default function TaskEditDrawer({
           own showCreateSkillVendorModal, scoped to the currently selected
           Skill Area. */}
       {showCreateSkillVendorModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/20">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill mới</h3>
@@ -1044,7 +1044,7 @@ export default function TaskEditDrawer({
       {/* Xóa Task confirm — same copy/child-count warning/API as Task
           Detail's own taskToDelete modal. */}
       {deleteConfirmOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/20 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-red-600 mb-3">
