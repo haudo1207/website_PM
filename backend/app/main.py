@@ -419,6 +419,48 @@ def apply_schema_updates():
             END $$
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+
+        # project_pins.user_id — ProjectPin (models/project.py) moved from
+        # Member-keyed to User-keyed pins (an admin login with no linked
+        # Member row still needs to pin its own projects), but installs whose
+        # project_pins table predates that change only have the old
+        # `member_id` NOT NULL column. create_all() never adds/alters columns
+        # on an existing table, so every GET/POST .../projects/pins call has
+        # 500'd ("column project_pins.user_id does not exist") since the
+        # model changed — silently, since the list page's initial pins fetch
+        # has no error UI (only the pin-button click shows a toast on
+        # failure). Backfill via users.member_id for any leftover Member-era
+        # pin, then drop the now-unused member_id column.
+        conn.execute(text(
+            "ALTER TABLE project_pins ADD COLUMN IF NOT EXISTS user_id INTEGER"
+        ))
+        conn.execute(text("""
+            UPDATE project_pins pp
+            SET user_id = u.id
+            FROM users u
+            WHERE pp.user_id IS NULL AND pp.member_id = u.member_id
+        """))
+        conn.execute(text("DELETE FROM project_pins WHERE user_id IS NULL"))
+        conn.execute(text("ALTER TABLE project_pins ALTER COLUMN user_id SET NOT NULL"))
+        conn.execute(text("ALTER TABLE project_pins DROP COLUMN IF EXISTS member_id"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'project_pins_user_id_fkey'
+                      AND conrelid = 'project_pins'::regclass
+                ) THEN
+                    ALTER TABLE project_pins
+                    ADD CONSTRAINT project_pins_user_id_fkey
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                    ON DELETE CASCADE;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("ALTER TABLE project_pins DROP CONSTRAINT IF EXISTS uq_project_pin"))
+        conn.execute(text("ALTER TABLE project_pins ADD CONSTRAINT uq_project_pin UNIQUE (user_id, project_id)"))
+
         # Lunch records: an index on "date" so the monthly date-range queries
         # (and upsert lookups) do not require a full table scan.
         conn.execute(text(

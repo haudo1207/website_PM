@@ -1,6 +1,7 @@
 """
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -51,6 +52,7 @@ from ..utils.project_progress import get_progress_pct_for_phase
 from ..services.document_storage import delete_task_link_documents
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
+_pins_logger = logging.getLogger("projects.pins")
 
 
 def _task_done_expr():
@@ -570,24 +572,37 @@ def list_projects(
 
 @router.get("/projects/pins")
 def list_pinned_project_ids(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.user_id == current_user.id).all()]
+    # Pin state is a display nicety (sort order + a highlighted star), not
+    # load-bearing — degrade to "nothing pinned" on an unexpected DB error
+    # instead of taking down the whole Project list fetch, but log loudly
+    # since this endpoint had silently 500'd on every call for a while.
+    try:
+        ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.user_id == current_user.id).all()]
+    except Exception:
+        _pins_logger.exception("GET /projects/pins failed for user_id=%s", current_user.id)
+        return {"pinned_project_ids": []}
     return {"pinned_project_ids": ids}
 
 
 @router.post("/projects/{pid:int}/pin")
 def toggle_project_pin(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    existing = (
-        db.query(ProjectPin)
-        .filter(ProjectPin.user_id == current_user.id, ProjectPin.project_id == pid)
-        .first()
-    )
-    if existing:
-        db.delete(existing)
+    try:
+        existing = (
+            db.query(ProjectPin)
+            .filter(ProjectPin.user_id == current_user.id, ProjectPin.project_id == pid)
+            .first()
+        )
+        if existing:
+            db.delete(existing)
+            db.commit()
+            return {"success": True, "is_pinned": False}
+        db.add(ProjectPin(user_id=current_user.id, project_id=pid))
         db.commit()
-        return {"success": True, "is_pinned": False}
-    db.add(ProjectPin(user_id=current_user.id, project_id=pid))
-    db.commit()
-    return {"success": True, "is_pinned": True}
+        return {"success": True, "is_pinned": True}
+    except Exception:
+        db.rollback()
+        _pins_logger.exception("POST /projects/%s/pin failed for user_id=%s", pid, current_user.id)
+        raise HTTPException(500, "Không thể ghim/bỏ ghim dự án lúc này, vui lòng thử lại sau.")
 
 
 @router.patch("/projects/{pid:int}/critical")
