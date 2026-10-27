@@ -303,6 +303,10 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS notify_channels JSON"
         ))
+        # External guests, email-only (chốt 2026-10-28) — see Meeting.guest_emails.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS guest_emails JSON"
+        ))
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))

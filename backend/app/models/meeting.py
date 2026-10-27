@@ -54,6 +54,14 @@ class Meeting(Base):
     # actual dispatch (App/Zalo).
     reminder_minutes = Column(Integer, nullable=False, default=15, server_default="15")
     notify_channels  = Column(JSON, nullable=True)
+    # External guests (chốt 2026-10-28) — email-only, no system account,
+    # added to the Calendar event's attendees[] purely so they can join the
+    # Google Meet call directly (Quick Access/Trusted) without "Ask to join".
+    # Deliberately separate from ai_summary.custom_members (free-text names
+    # the AI summary pipeline extracts from a transcript, no email) and from
+    # MeetingMember (real system Members — attendance/scoring/reminders all
+    # key off that table, never this one). See _sync_meeting_calendar_attendees.
+    guest_emails     = Column(JSON, nullable=True)
     # Set once a reminder has been dispatched for this meeting — the claim
     # guard that keeps two uvicorn workers from both sending it (see
     # meeting_reminders._claim_due_meetings).

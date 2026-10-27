@@ -791,7 +791,7 @@ export const getMeetingAttendanceSummary = (params?: { project?: string; from_da
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of
 // sync with what submitting will actually do.
-export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number; host_workspace_id?: number | null }) =>
+export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number; host_workspace_id?: number | null; member_ids?: number[] }) =>
   api.post('/meetings/check-conflict', data).then(r => r.data);
 // HOST * field (chốt 2026-09-14): available Host accounts (Workspace's
 // connected Google account, devv.szone@gmail.com excluded server-side while

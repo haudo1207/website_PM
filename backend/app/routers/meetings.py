@@ -382,6 +382,7 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
         "no_action_reason": m.no_action_reason,
         "reminder_minutes": m.reminder_minutes,
         "notify_channels": m.notify_channels,
+        "guest_emails": m.guest_emails or [],
         "score_total": m.score_total,
         "score_prep": m.score_prep,
         "score_execution": m.score_execution,
@@ -409,6 +410,18 @@ def _sync_meeting_projects(db: Session, meeting_id: int, project_ids) -> None:
             db.add(MeetingProject(meeting_id=meeting_id, project_id=pid))
 
 
+def _meeting_time_range(meeting_date, start_time, end_time):
+    """A meeting's [start, end) as real datetimes, rolling end_date to the
+    next day when end_time < start_time (crosses midnight). Shared by
+    _find_organizer_time_conflict and _find_member_time_conflicts so the
+    overlap math has exactly one definition."""
+    end_date = meeting_date + datetime.timedelta(days=1) if end_time < start_time else meeting_date
+    return (
+        datetime.datetime.combine(meeting_date, start_time),
+        datetime.datetime.combine(end_date, end_time),
+    )
+
+
 def _find_organizer_time_conflict(
     db: Session,
     organizer_google_email: Optional[str],
@@ -434,9 +447,7 @@ def _find_organizer_time_conflict(
     if not organizer_google_email or not meeting_date or not start_time or not end_time:
         return None
 
-    new_end_date = meeting_date + datetime.timedelta(days=1) if end_time < start_time else meeting_date
-    new_start_dt = datetime.datetime.combine(meeting_date, start_time)
-    new_end_dt = datetime.datetime.combine(new_end_date, end_time)
+    new_start_dt, new_end_dt = _meeting_time_range(meeting_date, start_time, end_time)
 
     candidates = db.query(Meeting).filter(
         Meeting.organizer_google_email == organizer_google_email,
@@ -454,12 +465,73 @@ def _find_organizer_time_conflict(
         candidates = candidates.filter(Meeting.id != exclude_meeting_id)
 
     for other in candidates.all():
-        other_end_date = other.meeting_date + datetime.timedelta(days=1) if other.end_time < other.start_time else other.meeting_date
-        other_start_dt = datetime.datetime.combine(other.meeting_date, other.start_time)
-        other_end_dt = datetime.datetime.combine(other_end_date, other.end_time)
+        other_start_dt, other_end_dt = _meeting_time_range(other.meeting_date, other.start_time, other.end_time)
         if new_start_dt < other_end_dt and other_start_dt < new_end_dt:
             return other
     return None
+
+
+def _find_member_time_conflicts(
+    db: Session,
+    member_ids: list,
+    meeting_date,
+    start_time,
+    end_time,
+    exclude_meeting_id: Optional[int] = None,
+    current_user=None,
+) -> list:
+    """SOFT warning only — never enforced, unlike _find_organizer_time_conflict.
+    A participant double-booked across two of this system's meetings can
+    still choose which one to actually attend; there's no "1 profile = 1 Meet
+    tab" constraint for a human the way there is for the Host Bot. Callers
+    must only ever use this to inform, never to raise/block.
+
+    Returns one dict per (member, other meeting) overlap found across every
+    member in member_ids — reuses _meeting_time_range for the exact same
+    overlap math _find_organizer_time_conflict uses, just scoped by
+    MeetingMember.member_id instead of organizer_google_email.
+
+    Same privacy redaction as the Host rule's preview branch (chốt
+    2026-09-13): if current_user can't see the conflicting meeting (not its
+    creator/participant, no project access), the title is hidden — only the
+    fact that a slot is taken is shown."""
+    if not member_ids or not meeting_date or not start_time or not end_time:
+        return []
+
+    new_start_dt, new_end_dt = _meeting_time_range(meeting_date, start_time, end_time)
+
+    candidates = (
+        db.query(Meeting, MeetingMember.member_id, Member.display_name)
+        .join(MeetingMember, MeetingMember.meeting_id == Meeting.id)
+        .join(Member, Member.id == MeetingMember.member_id)
+        .filter(
+            MeetingMember.member_id.in_(member_ids),
+            Meeting.status.in_(["UPCOMING", "ONGOING"]),
+            Meeting.deleted_at.is_(None),
+            Meeting.meeting_date.isnot(None),
+            Meeting.start_time.isnot(None),
+            Meeting.end_time.isnot(None),
+            Meeting.meeting_date >= meeting_date - datetime.timedelta(days=1),
+            Meeting.meeting_date <= meeting_date + datetime.timedelta(days=1),
+        )
+    )
+    if exclude_meeting_id is not None:
+        candidates = candidates.filter(Meeting.id != exclude_meeting_id)
+
+    conflicts = []
+    for other, member_id, member_name in candidates.all():
+        other_start_dt, other_end_dt = _meeting_time_range(other.meeting_date, other.start_time, other.end_time)
+        if new_start_dt < other_end_dt and other_start_dt < new_end_dt:
+            can_see = current_user is None or _user_can_see_meeting(db, current_user, other)
+            conflicts.append({
+                "member_id": member_id,
+                "member_name": member_name or f"#{member_id}",
+                "conflicting_meeting_id": other.id if can_see else None,
+                "conflicting_meeting_title": other.title if can_see else "Cuộc họp khác",
+                "conflicting_meeting_date": str(other.meeting_date),
+                "conflicting_meeting_time": f"{other.start_time.strftime('%H:%M')}–{other.end_time.strftime('%H:%M')}",
+            })
+    return conflicts
 
 
 def _check_organizer_time_conflict(
@@ -495,6 +567,28 @@ def _get_active_meeting(db: Session, id: int) -> Meeting:
     return m
 
 
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _sanitize_guest_emails(raw) -> Optional[list]:
+    """Basic format check + de-dup for Meeting.guest_emails (chốt 2026-10-28)
+    — external, account-less people added only so they land in the Calendar
+    event's attendees[] (Quick Access/Trusted join, no "Ask to join"). Silently
+    drops anything that isn't a plausible email rather than erroring the
+    whole request over one typo; returns None (not []) when nothing valid is
+    left, so the column stays NULL instead of an empty-but-present list."""
+    if not isinstance(raw, list):
+        return None
+    seen = set()
+    cleaned = []
+    for item in raw:
+        email = str(item or "").strip().lower()
+        if email and _EMAIL_RE.match(email) and email not in seen:
+            seen.add(email)
+            cleaned.append(email)
+    return cleaned or None
+
+
 def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> bool:
     """Push the meeting's current participant list to Google Calendar as
     attendees (chốt 2026-09-14: Participant == Calendar Guest; organizer/Host
@@ -526,9 +620,15 @@ def _sync_meeting_calendar_attendees(db: Session, m: Meeting) -> bool:
             .filter(MeetingMember.meeting_id == m.id)
             .distinct().all()
         )
-        emails = list({(user_email or member_email) for member_email, user_email in rows if (member_email or user_email)})
+        emails = {(user_email or member_email) for member_email, user_email in rows if (member_email or user_email)}
+        # External guests (chốt 2026-10-28, Meeting.guest_emails) — email-only,
+        # no system account. Merged in here (not kept as their own Calendar
+        # sync path) purely so they land in attendees[] for Quick Access/
+        # Trusted join; never shown in "Thành viên tham gia", never attendance
+        # -tracked, never scored — see _sanitize_guest_emails.
+        emails.update(m.guest_emails or [])
         workspace_id = _host_workspace_id_for_meeting(db, m)
-        return sync_google_meet_attendees(db, m.google_event_id, emails, workspace_id=workspace_id)
+        return sync_google_meet_attendees(db, m.google_event_id, list(emails), workspace_id=workspace_id)
     except Exception as e:
         logger.warning(f"_sync_meeting_calendar_attendees failed for meeting {m.id} (non-fatal): {e}")
         return False
@@ -652,6 +752,39 @@ def _resolve_host_workspace_id(db: Session, body: dict, fallback_workspace_id: O
     if not host_email or host_email.strip().lower() in DISABLED_HOST_EMAILS:
         raise HTTPException(400, "Host đã chọn hiện không khả dụng, vui lòng chọn Host khác")
     return host_workspace_id_input
+
+
+def _resolve_organizer_candidate(db: Session, workspace_id: Optional[int]):
+    """Best-effort email to check/attribute the Host conflict rule against
+    for a given Workspace — used only by check_meeting_conflict and
+    retry_meeting_link's pre-check, never to decide which token actually
+    creates a Calendar event (get_workspace_google_access_token does that,
+    independently, and is unaffected by any of this).
+
+    chốt 2026-10-28: is_workspace_google_connected()'s `connected` flag
+    (refresh_token present) and its `google_email` field can disagree — some
+    Workspaces were connected before the OAuth callback started fetching
+    and storing google_email (see backfill_workspace_google_email.py for the
+    one-time fix), so a perfectly live, working connection can still have
+    google_email = NULL. Treating that as "not connected" would wrongly hard
+    -block retry-link for a Workspace that already creates meetings fine.
+
+    Returns (email, verified):
+      - (real email, True)  — WorkspaceGoogleAccount.google_email is set.
+      - (expected email, False) — no stored google_email yet, but the
+        Workspace DOES have a live refresh_token and an admin-set
+        Workspace.expected_google_email hint to use as a stand-in.
+      - (None, False) — nothing at all to check against; this is the only
+        case that should be treated as truly not connected."""
+    if not workspace_id:
+        return None, False
+    from ..services.meeting_sync import is_workspace_google_connected
+    status = is_workspace_google_connected(db, workspace_id) or {}
+    if status.get("google_email"):
+        return status["google_email"], True
+    if status.get("connected") and status.get("expected_google_email"):
+        return status["expected_google_email"], False
+    return None, False
 
 
 # ─── LIST ───────────────────────────────────────────────
@@ -845,16 +978,28 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
     organizer_google_email isn't user-chosen — it's resolved from project_id's
     workspace the exact same way create_google_meet_link will, without
     actually calling the Calendar API (no side effects, safe to call on every
-    keystroke's debounce)."""
+    keystroke's debounce).
+
+    If the resolved Workspace has no LIVE connected Google account
+    (is_workspace_google_connected returns no google_email — e.g. only
+    Workspace.expected_google_email is set, never actually re-consented),
+    there is no real account to check a schedule against. This used to
+    silently substitute a hardcoded "mkt.szone@gmail.com" — wrong on its
+    face (that's someone else's account) and actively misleading (chốt
+    2026-10-28: a user picking e.g. Infras/Sale saw a conflict message
+    attributed to an unrelated account). Now reports `host_not_connected`
+    instead of guessing, and never claims a conflict in that state.
+
+    "member_conflicts" (if body carries member_ids) is a SEPARATE, purely
+    informational check — see _find_member_time_conflicts. It never affects
+    "conflict"/the Host rule above, and create/update never enforce it; the
+    frontend is expected to show it as a non-blocking heads-up only."""
     project_id = body.get("project_id")
     proj = db.query(Project).filter(Project.id == project_id).first() if project_id else None
     workspace_id = _resolve_host_workspace_id(db, body, workspace_id_for_project(db, proj))
 
-    from ..services.meeting_sync import is_workspace_google_connected
-    organizer_google_email = None
-    if workspace_id:
-        organizer_google_email = (is_workspace_google_connected(db, workspace_id) or {}).get("google_email")
-    organizer_google_email = organizer_google_email or "mkt.szone@gmail.com"
+    organizer_google_email, _organizer_verified = _resolve_organizer_candidate(db, workspace_id)
+    host_not_connected = not organizer_google_email
 
     date_val = body.get("meeting_date") or body.get("date")
     meeting_date = parse_date(date_val) if date_val else None
@@ -874,6 +1019,16 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
     except (TypeError, ValueError):
         exclude_id = None
 
+    member_ids_input = body.get("member_ids")
+    member_ids = []
+    if isinstance(member_ids_input, list):
+        for raw in member_ids_input:
+            try:
+                member_ids.append(int(raw))
+            except (TypeError, ValueError):
+                continue
+    member_conflicts = _find_member_time_conflicts(db, member_ids, meeting_date, start_time, end_time, exclude_meeting_id=exclude_id, current_user=current_user)
+
     other = _find_organizer_time_conflict(db, organizer_google_email, meeting_date, start_time, end_time, exclude_meeting_id=exclude_id)
     if other and not _user_can_see_meeting(db, current_user, other):
         # The Host account is shared across Workspaces — say the slot is taken
@@ -888,6 +1043,8 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
                 f"từ {other.start_time.strftime('%H:%M')} đến {other.end_time.strftime('%H:%M')} "
                 f"ngày {other.meeting_date} — không thể tự động vào 2 cuộc họp cùng lúc."
             ),
+            "member_conflicts": member_conflicts,
+            "host_not_connected": False,
         }
     if other:
         return {
@@ -903,8 +1060,15 @@ def check_meeting_conflict(body: dict, db: Session = Depends(get_db), current_us
                 f"từ {other.start_time.strftime('%H:%M')} đến {other.end_time.strftime('%H:%M')} "
                 f"ngày {other.meeting_date} — không thể tự động vào 2 cuộc họp cùng lúc."
             ),
+            "member_conflicts": member_conflicts,
+            "host_not_connected": False,
         }
-    return {"conflict": False, "organizer_google_email": organizer_google_email}
+    return {
+        "conflict": False,
+        "organizer_google_email": organizer_google_email,
+        "member_conflicts": member_conflicts,
+        "host_not_connected": host_not_connected,
+    }
 
 
 # ─── MEETING INTELLIGENCE INSIGHTS (must stay above GET /{id} — no path param) ───
@@ -1392,6 +1556,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         reminder_minutes = 15
     notify_channels_input = body.get("notify_channels")
     notify_channels = [str(c) for c in notify_channels_input] if isinstance(notify_channels_input, list) else None
+    guest_emails = _sanitize_guest_emails(body.get("guest_emails"))
 
     m = Meeting(
         title=title,
@@ -1413,6 +1578,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         no_action_reason=body.get("no_action_reason"),
         reminder_minutes=reminder_minutes,
         notify_channels=notify_channels,
+        guest_emails=guest_emails,
     )
     # Auto-summarize with AI on create (using structured output)
     try:
@@ -1465,6 +1631,17 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     recalculate_meeting_score(m, db)
     db.commit()
     db.refresh(m)
+
+    # chốt 2026-10-28: the Calendar event itself is created with attendees=[]
+    # (create_google_meet_link always passes attendees_emails=[] — real
+    # member_ids aren't known until the frontend's post-create
+    # addMeetingMember loop runs, since this endpoint never accepted
+    # member_ids directly, by design — see app/meetings/page.tsx's
+    # handleSaveMeeting comment). guest_emails IS fully known right now
+    # though, and previously sat unsynced until either that loop's first add
+    # or a later edit. No-ops if google_event_id is unset (non-fatal,
+    # best-effort, same contract as every other caller of this function).
+    _sync_meeting_calendar_attendees(db, m)
 
     AuditService.record(
         db=db,
@@ -1677,6 +1854,13 @@ def update_meeting(id: int, body: dict, db: Session = Depends(get_db), current_u
         members_changed = True
     else:
         members_changed = False
+
+    # External guests (chốt 2026-10-28) — same "re-sent whole list every
+    # edit" shape as member_ids above; omitted from body leaves the existing
+    # list untouched (consistent with every other optional PUT field here).
+    if "guest_emails" in body:
+        m.guest_emails = _sanitize_guest_emails(body.get("guest_emails"))
+        members_changed = True
 
     from ..services.meeting_score_engine import recalculate_meeting_score
     recalculate_meeting_score(m, db)
@@ -2685,7 +2869,7 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
     start_datetime = f"{m.meeting_date.isoformat()}T{m.start_time.strftime('%H:%M')}:00Z"
 
     from ..services.meeting_sync import (
-        create_google_meet_link, is_workspace_google_connected,
+        create_google_meet_link,
         rename_google_meet_event_tag, cancel_google_meet_event, notify_n8n_meeting_created,
     )
     meeting_proj = db.query(Project).filter(Project.id == m.project_id).first() if m.project_id else None
@@ -2696,10 +2880,26 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
     # Calendar event first and only check the conflict afterward, orphaning
     # the freshly-created event whenever the new organizer turned out to be
     # busy. Same no-side-effect resolution /check-conflict already uses.
-    prospective_organizer = None
-    if workspace_id:
-        prospective_organizer = (is_workspace_google_connected(db, workspace_id) or {}).get("google_email")
-    prospective_organizer = prospective_organizer or "mkt.szone@gmail.com"
+    #
+    # chốt 2026-10-28: this used to fall back to a hardcoded
+    # "mkt.szone@gmail.com" whenever is_workspace_google_connected() had no
+    # stored google_email for the chosen Workspace — silently running the
+    # hard-blocking conflict check against an unrelated account's schedule.
+    # _resolve_organizer_candidate now also accepts a Workspace that has a
+    # live refresh_token (so meeting creation already works via
+    # get_workspace_google_access_token) but just never had google_email
+    # backfilled (see backfill_workspace_google_email.py) — using its
+    # expected_google_email as a best-effort stand-in rather than wrongly
+    # blocking a Workspace that's actually connected and working fine. Only
+    # block outright when there is truly nothing (no refresh_token at all).
+    prospective_organizer, _prospective_verified = _resolve_organizer_candidate(db, workspace_id)
+    if not prospective_organizer:
+        raise HTTPException(
+            400,
+            "Workspace này chưa kết nối tài khoản Google (chưa có token kết nối sống) — "
+            "không thể tạo lại link. Vào mục cài đặt AI/Prompt, bấm \"Ủy quyền lại\" cho "
+            "Workspace này trước khi thử lại.",
+        )
     _check_organizer_time_conflict(db, prospective_organizer, m.meeting_date, m.start_time, m.end_time, exclude_meeting_id=m.id)
 
     # Capture the OLD event/workspace before any field on `m` changes below —

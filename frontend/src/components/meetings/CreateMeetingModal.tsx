@@ -42,11 +42,18 @@ interface MeetingFormData {
   member_ids: number[];
   reminder_minutes: number;
   notify_channels: string[];
+  // External guests, email-only (chốt 2026-10-28) — added to the Calendar
+  // event's attendees[] purely so they can join the Meet call directly
+  // (Quick Access/Trusted), no system account. Separate from member_ids —
+  // never shown in "Thành viên tham gia", never attendance-tracked.
+  guest_emails: string[];
 }
 
 const NOTIFY_CHANNEL_OPTIONS = ['App', 'Zalo', 'Nhóm dự án'];
 // Default duration for a freshly-opened create form (chốt 2026-09-22).
 const DEFAULT_DURATION_MINUTES = '30';
+// Mirrors backend's _EMAIL_RE (meetings.py) — basic format check only.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 
 // Numbered-list UX for Mục tiêu / Agenda — Enter continues "1. / 2. / 3. ..."
 // so leaders don't have to type the numbers by hand.
@@ -444,7 +451,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     project_ids: [],
     member_ids: [],
     reminder_minutes: 15,
-    notify_channels: ['App']
+    notify_channels: ['App'],
+    guest_emails: []
   });
   const [projectsList, setProjectsList] = useState<any[]>([]);
   const [membersList, setMembersList] = useState<any[]>([]);
@@ -467,6 +475,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
   const [manualTitleEdit, setManualTitleEdit] = useState(false);
+  // Khách ngoài qua email (chốt 2026-10-28) — draft text for the tag input
+  // below, plus a basic-format error shown only for what's currently typed.
+  const [guestEmailDraft, setGuestEmailDraft] = useState('');
+  const [guestEmailError, setGuestEmailError] = useState('');
   const [checkingConflicts, setCheckingConflicts] = useState(false);
   // Overlap rule (chốt 2026-09-13): organizer is the source of truth, not
   // participants — at most ONE conflicting meeting is possible per the
@@ -474,6 +486,18 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // so this is a single nullable result, not a per-member list.
   const [organizerConflict, setOrganizerConflict] = useState<{ message: string; organizer_google_email: string } | null>(null);
   const [suggestedSlots, setSuggestedSlots] = useState<string[]>([]);
+  // chốt 2026-10-28: Workspace chosen as Host has no LIVE connected Google
+  // account (only Workspace.expected_google_email set, never re-consented) —
+  // backend can't resolve a real account to check a schedule against, so it
+  // reports this instead of guessing. Distinct from organizerConflict (which
+  // means "checked, and it's busy") — this means "couldn't check at all".
+  const [hostNotConnected, setHostNotConnected] = useState(false);
+  // Soft, non-blocking warning only — unlike organizerConflict above, this
+  // never affects whether "Tạo meeting" can be submitted (chốt: Host is
+  // hard-blocked because the Bot can only hold 1 Meet tab per Gmail profile;
+  // a human participant has no such limit, they can just choose which
+  // meeting to actually attend).
+  const [memberConflicts, setMemberConflicts] = useState<Array<{ member_id: number; member_name: string; conflicting_meeting_title: string; conflicting_meeting_time: string }>>([]);
   const [showTimePicker, setShowTimePicker] = useState(false);
   // Mirrors DateTimeTypeInput's own red-border validation state — the typed
   // day/time field only pushes a COMMITTED (valid) value into formData, so
@@ -547,7 +571,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         reminder_minutes: initialData.reminder_minutes ?? 15,
         notify_channels: Array.isArray(initialData.notify_channels) && initialData.notify_channels.length
           ? initialData.notify_channels
-          : ['App']
+          : ['App'],
+        guest_emails: Array.isArray(initialData.guest_emails) ? initialData.guest_emails : []
       });
       extraMemberInfoRef.current = {};
       (initialData.members || []).forEach((mm: any) => {
@@ -581,7 +606,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         project_ids: [],
         member_ids: [],
         reminder_minutes: 15,
-        notify_channels: ['App']
+        notify_channels: ['App'],
+        guest_emails: []
       });
       setManualTitleEdit(false);
       setHostManuallySet(false);
@@ -727,6 +753,8 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     if (!isOpen || !formData.date || !formData.time || formData.project_ids.length === 0) {
       setOrganizerConflict(null);
       setSuggestedSlots([]);
+      setMemberConflicts([]);
+      setHostNotConnected(false);
       return;
     }
     let cancelled = false;
@@ -740,9 +768,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           duration: formData.duration,
           exclude_meeting_id: initialData?.id,
           host_workspace_id: formData.host_workspace_id,
+          member_ids: formData.member_ids,
         });
         const res = await check(formData.time);
         if (cancelled) return;
+        setMemberConflicts(Array.isArray(res?.member_conflicts) ? res.member_conflicts : []);
+        setHostNotConnected(!!res?.host_not_connected);
         if (!res?.conflict) {
           setOrganizerConflict(null);
           setSuggestedSlots([]);
@@ -761,13 +792,13 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         if (cancelled) return;
         setSuggestedSlots(results.filter(r => !r.conflict).map(r => r.t).slice(0, 4));
       } catch {
-        if (!cancelled) { setOrganizerConflict(null); setSuggestedSlots([]); }
+        if (!cancelled) { setOrganizerConflict(null); setSuggestedSlots([]); setMemberConflicts([]); setHostNotConnected(false); }
       } finally {
         if (!cancelled) setCheckingConflicts(false);
       }
     }, 400);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [isOpen, formData.date, formData.time, formData.duration, formData.project_ids.join(','), formData.host_workspace_id, initialData?.id]);
+  }, [isOpen, formData.date, formData.time, formData.duration, formData.project_ids.join(','), formData.host_workspace_id, formData.member_ids.join(','), initialData?.id]);
 
   if (!isOpen) return null;
 
@@ -800,6 +831,26 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
     const union = new Set(formData.member_ids);
     membersList.forEach((m: any) => { if (m && m.id) union.add(m.id); });
     setFormData(prev => ({ ...prev, member_ids: Array.from(union) }));
+  };
+
+  // Khách ngoài qua email (chốt 2026-10-28) — Enter/dấu phẩy/blur all commit
+  // the current draft as one or more emails (supports pasting several at
+  // once, comma or whitespace separated).
+  const addGuestEmailsFromDraft = () => {
+    const raw = guestEmailDraft.split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    if (raw.length === 0) { setGuestEmailDraft(''); return; }
+    const invalid = raw.filter(e => !EMAIL_RE.test(e));
+    if (invalid.length > 0) {
+      setGuestEmailError(`Email không hợp lệ: ${invalid.join(', ')}`);
+      return;
+    }
+    setGuestEmailError('');
+    setFormData(prev => {
+      const existing = new Set(prev.guest_emails.map(e => e.toLowerCase()));
+      const toAdd = raw.map(e => e.toLowerCase()).filter(e => !existing.has(e));
+      return toAdd.length ? { ...prev, guest_emails: [...prev.guest_emails, ...toAdd] } : prev;
+    });
+    setGuestEmailDraft('');
   };
 
   const handleGenerateLink = async () => {
@@ -1228,7 +1279,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   >
                     <option value="">— Chọn tài khoản Host —</option>
                     {hostsList.map(h => (
-                      <option key={h.workspace_id} value={h.workspace_id}>{h.google_email}</option>
+                      <option key={h.workspace_id} value={h.workspace_id}>{h.workspace_name} — {h.google_email}</option>
                     ))}
                   </select>
                   {initialData && autoSuggestedWorkspaceId !== null && autoSuggestedWorkspaceId !== formData.host_workspace_id && (
@@ -1240,7 +1291,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                       }}
                       className="mt-1.5 text-[11px] font-bold text-[#0058be] hover:underline"
                     >
-                      Dự án thuộc Workspace khác — bấm để cập nhật Host theo Workspace mới ({hostsList.find(h => h.workspace_id === autoSuggestedWorkspaceId)?.google_email})
+                      Dự án thuộc Workspace khác — bấm để cập nhật Host theo Workspace mới ({(() => {
+                        const h = hostsList.find(h => h.workspace_id === autoSuggestedWorkspaceId);
+                        return h ? `${h.workspace_name} — ${h.google_email}` : '';
+                      })()})
                     </button>
                   )}
                   {initialData && (formData.host_workspace_id ?? null) !== (originalHostWorkspaceIdRef.current ?? null) && (
@@ -1249,6 +1303,47 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                 </div>
               )}
               </div>
+              </div>
+
+              {/* Khách ngoài qua email (chốt 2026-10-28) — tách biệt rõ khỏi
+                  "Thành viên tham gia": không có tài khoản trong hệ thống,
+                  chỉ để vào thẳng Google Meet (Quick Access/Trusted), không
+                  hiện trong danh sách thành viên, không điểm danh, không gửi
+                  email mời gì (sendUpdates vẫn "none" như cũ). */}
+              <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider mb-1">
+                  Thêm khách ngoài qua email (chỉ để vào Meet, không cần tài khoản)
+                </label>
+                <input
+                  type="text"
+                  value={guestEmailDraft}
+                  onChange={e => { setGuestEmailDraft(e.target.value); if (guestEmailError) setGuestEmailError(''); }}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ',') { e.preventDefault(); addGuestEmailsFromDraft(); }
+                  }}
+                  onBlur={() => { if (guestEmailDraft.trim()) addGuestEmailsFromDraft(); }}
+                  placeholder="email@vidu.com, email2@vidu.com — Enter hoặc dấu phẩy để thêm"
+                  className="w-full px-3 py-2 border border-[#c2c6d6] rounded-lg text-xs text-[#0b1c30] bg-white focus:outline-none focus:border-[#0058be] transition-colors font-medium"
+                />
+                {guestEmailError && (
+                  <p className="text-[11px] text-red-600 font-semibold mt-1">{guestEmailError}</p>
+                )}
+                {formData.guest_emails.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 mt-2">
+                    {formData.guest_emails.map(email => (
+                      <span key={email} className="inline-flex items-center gap-1 bg-white text-[#334155] text-[11px] font-semibold pl-2 pr-1.5 py-1 rounded-full border border-slate-300">
+                        {email}
+                        <button
+                          type="button"
+                          onClick={() => setFormData(prev => ({ ...prev, guest_emails: prev.guest_emails.filter(e => e !== email) }))}
+                          className="text-slate-400 hover:text-slate-700 font-bold leading-none px-0.5"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1295,7 +1390,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                   <p className="text-[11px] text-[#94a3b8] mt-2">Đang kiểm tra trùng lịch (theo tài khoản host)...</p>
                 )}
                 {!checkingConflicts && formData.project_ids.length > 0 && (
-                  organizerConflict ? (
+                  hostNotConnected ? (
+                    <div className="mt-2 p-2.5 bg-slate-100 border border-slate-300 rounded-lg text-[11px] text-slate-700">
+                      ⚠ Workspace của Host này chưa kết nối tài khoản Google (chưa có token kết nối sống) —
+                      không thể kiểm tra trùng lịch. Vào mục cài đặt AI/Prompt và bấm &quot;Ủy quyền lại&quot; cho Host này trước.
+                    </div>
+                  ) : organizerConflict ? (
                     <div className="mt-2 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-800">
                       <p className="font-bold mb-1">⚠ Trùng lịch host: {organizerConflict.message}</p>
                       {suggestedSlots.length > 0 && (
@@ -1319,6 +1419,23 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                       ✓ Tài khoản host đang rảnh trong khung giờ này
                     </div>
                   )
+                )}
+                {/* Soft, non-blocking heads-up — unlike the Host warning above,
+                    this never affects "Tạo meeting"/"Lưu thay đổi"; a member
+                    can still choose which of their overlapping meetings to
+                    actually attend. Different color/icon on purpose so it's
+                    never mistaken for the hard-blocked Host rule. */}
+                {!checkingConflicts && memberConflicts.length > 0 && (
+                  <div className="mt-2 p-2.5 bg-sky-50 border border-sky-200 rounded-lg text-[11px] text-sky-800">
+                    <p className="font-bold mb-1">👥 {memberConflicts.length} thành viên có thể trùng lịch (chỉ để tham khảo, không chặn tạo meeting):</p>
+                    <ul className="space-y-0.5 list-disc list-inside">
+                      {memberConflicts.map((c, idx) => (
+                        <li key={`${c.member_id}-${idx}`}>
+                          <b>{c.member_name}</b> đã có cuộc họp &quot;{c.conflicting_meeting_title}&quot; lúc {c.conflicting_meeting_time}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
               </div>
             </div>
