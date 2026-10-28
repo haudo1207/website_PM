@@ -239,7 +239,13 @@ function FloatingDropdown({
   return createPortal(
     <div
       ref={menuRef}
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 200, maxHeight: '70vh', overflowY: 'auto' }}
+      // z-[1050] (chốt 2026-10-28, cùng quy ước đã áp dụng cho các dropdown
+      // portal khác — RemarkMultiSelectInput, SearchableSelect): zIndex: 200
+      // trước đây để FloatingDropdown bị sidebar điều hướng (fixed, z-[1100],
+      // cùng document.body) đè lên bất cứ khi nào vị trí tính toán ra gần
+      // mép trái màn hình — đã portal + position:fixed đúng, chỉ riêng
+      // z-index là quá thấp so với sidebar.
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 1050, maxHeight: '70vh', overflowY: 'auto' }}
       className={`text-[#0b1c30] ${className}`}
     >
       {children}
