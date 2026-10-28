@@ -1,4 +1,17 @@
 import os
+
+# Google's token response adds "openid" to the granted scope list on its own
+# whenever the request includes a userinfo/profile/email scope (our
+# userinfo.email, added 2026-10-28) — oauthlib's default strict scope-match
+# then raises (not just warns) on flow.fetch_token(), 500ing the OAuth
+# callback for EVERY workspace re-consent. "openid" itself is harmless
+# (we never asked for ID-token claims, never use it) — this just tells
+# oauthlib not to treat Google volunteering it as an error. Must be set
+# before any google_auth_oauthlib.flow.Flow.fetch_token() call anywhere in
+# the app (main.py's google_callback_public, the only caller), so it's set
+# here, at import time, before those modules are even imported below.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 import logging
 
 # Without this, the root logger has no handler at all, so every
