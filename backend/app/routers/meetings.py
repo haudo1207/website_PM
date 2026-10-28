@@ -1505,6 +1505,13 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     meet_space_owned_by_app = body.get("meet_space_owned_by_app")
     if not isinstance(meet_space_owned_by_app, bool):
         meet_space_owned_by_app = None
+    # Set only when CreateMeetingModal's "Mở duyệt" toggle was actually used
+    # against the Space before this request (via PATCH /space-access-type,
+    # since no Meeting row existed yet to persist it to) — None leaves the
+    # new row at the TRUSTED default, same as never having touched it.
+    meet_access_type = body.get("meet_access_type")
+    if meet_access_type not in ("OPEN", "TRUSTED"):
+        meet_access_type = None
     # HOST * field (chốt 2026-09-14): body.host_workspace_id, when sent,
     # overrides the project-derived workspace for EVERY Google side-effect
     # below (Meet-link generation, n8n notify routing, Drive tag rename) — a
@@ -1590,6 +1597,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         notify_channels=notify_channels,
         guest_emails=guest_emails,
         meet_space_owned_by_app=meet_space_owned_by_app,
+        meet_access_type=meet_access_type,
     )
     # Auto-summarize with AI on create (using structured output)
     try:
@@ -2985,6 +2993,36 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
 
 
 # ─── GOOGLE MEET ACCESS TYPE (OPEN/TRUSTED) TOGGLE ────────────
+def _patch_meet_space_access_type(db: Session, workspace_id: Optional[int], meeting_code: str, access_type: str):
+    """Shared Google call behind both /{id}/access-type (an existing
+    Meeting) and /space-access-type (no Meeting row yet, used by
+    CreateMeetingModal's toggle right after generate-link). Raises
+    HTTPException(400, ...) on any failure — token resolution or Google's
+    own PATCH — with a message safe to show as-is, never Google's raw
+    error text."""
+    from ..services.meeting_sync import get_workspace_google_access_token
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+    except Exception as e:
+        raise HTTPException(400, f"Không lấy được token Google cho Workspace đang host cuộc họp này: {e}")
+
+    import requests
+    resp = requests.patch(
+        f"https://meet.googleapis.com/v2/spaces/{meeting_code}",
+        params={"updateMask": "config.accessType"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"config": {"accessType": access_type}},
+        timeout=15,
+    )
+    if not resp.ok:
+        logger.error(f"PATCH Meet space accessType failed (space={meeting_code}): status={resp.status_code}, body={resp.text}")
+        raise HTTPException(
+            400,
+            "Không thể đổi chế độ vào phòng cho cuộc họp này — Google từ chối yêu cầu "
+            "(có thể do quyền sở hữu Space hoặc sự cố tạm thời từ Google).",
+        )
+
+
 @router.patch("/{id}/access-type")
 def set_meeting_access_type(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Toggle a meeting's Google Meet Space between OPEN and TRUSTED entry
@@ -3017,27 +3055,7 @@ def set_meeting_access_type(id: int, body: dict, db: Session = Depends(get_db), 
         raise HTTPException(400, "Không xác định được Space từ link cuộc họp.")
 
     workspace_id = _host_workspace_id_for_meeting(db, m)
-    from ..services.meeting_sync import get_workspace_google_access_token
-    try:
-        token = get_workspace_google_access_token(db, workspace_id)
-    except Exception as e:
-        raise HTTPException(400, f"Không lấy được token Google cho Workspace đang host cuộc họp này: {e}")
-
-    import requests
-    resp = requests.patch(
-        f"https://meet.googleapis.com/v2/spaces/{meeting_code}",
-        params={"updateMask": "config.accessType"},
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"config": {"accessType": access_type}},
-        timeout=15,
-    )
-    if not resp.ok:
-        logger.error(f"PATCH Meet space accessType failed for meeting {id}: status={resp.status_code}, body={resp.text}")
-        raise HTTPException(
-            400,
-            "Không thể đổi chế độ vào phòng cho cuộc họp này — Google từ chối yêu cầu "
-            "(có thể do quyền sở hữu Space hoặc sự cố tạm thời từ Google).",
-        )
+    _patch_meet_space_access_type(db, workspace_id, meeting_code, access_type)
 
     m.meet_access_type = access_type
     db.commit()
@@ -3047,6 +3065,34 @@ def set_meeting_access_type(id: int, body: dict, db: Session = Depends(get_db), 
         description=f"Đổi chế độ vào phòng Google Meet sang {access_type}",
     )
     db.commit()
+    return {"success": True, "meet_access_type": access_type}
+
+
+@router.patch("/space-access-type")
+def set_space_access_type_direct(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Same PATCH as /{id}/access-type, for a Space that has no Meeting row
+    yet — CreateMeetingModal's "Mở duyệt" toggle calls this right after
+    /generate-link creates the Space (meet_space_owned_by_app already known
+    True from that response), before the user has clicked "Tạo meeting".
+    There is no Meeting.meet_space_owned_by_app to check here — the caller
+    is responsible for only showing/calling this when generate-link's own
+    response said meet_space_owned_by_app=true — and nothing is persisted
+    here either (no row exists to persist to): the chosen access_type is
+    carried in the eventual create_meeting() body's meet_access_type field
+    and stamped onto the new Meeting row there."""
+    access_type = str(body.get("access_type", "")).strip().upper()
+    if access_type not in ("OPEN", "TRUSTED"):
+        raise HTTPException(400, "access_type phải là 'OPEN' hoặc 'TRUSTED'.")
+    try:
+        workspace_id = int(body.get("host_workspace_id"))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "Thiếu host_workspace_id hợp lệ.")
+    meeting_url = str(body.get("meeting_url") or "")
+    meeting_code = meeting_url.rstrip("/").rsplit("/", 1)[-1]
+    if not meeting_code:
+        raise HTTPException(400, "Không xác định được Space từ link cuộc họp.")
+
+    _patch_meet_space_access_type(db, workspace_id, meeting_code, access_type)
     return {"success": True, "meet_access_type": access_type}
 
 

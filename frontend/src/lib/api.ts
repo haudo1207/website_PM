@@ -778,6 +778,12 @@ export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number
 // otherwise the backend rejects with a 400 before ever calling Google.
 export const setMeetingAccessType = (id: number, accessType: 'OPEN' | 'TRUSTED') =>
   api.patch(`/meetings/${id}/access-type`, { access_type: accessType }).then(r => r.data);
+// Same PATCH, for a Space that doesn't have a Meeting row yet — used by
+// CreateMeetingModal's "Mở duyệt" toggle, which can appear right after
+// generate-link creates the Space (meet_space_owned_by_app already known
+// true from that response) but before "Tạo meeting" is clicked.
+export const setSpaceAccessTypeDirect = (data: { host_workspace_id: number; meeting_url: string; access_type: 'OPEN' | 'TRUSTED' }) =>
+  api.patch('/meetings/space-access-type', data).then(r => r.data);
 // Manual-end fallback (chốt 2026-09-14): for when the Meeting Host Bot/VPS
 // is down and a human ended the call by hand on Google Meet — marks the
 // meeting DONE without waiting for the Bot's own POST /meeting-bot/ended.
