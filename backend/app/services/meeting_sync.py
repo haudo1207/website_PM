@@ -508,6 +508,14 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
     """
     token = get_workspace_google_access_token(db, workspace_id)
     use_v2 = settings.GOOGLE_MEET_USE_V2_SPACE_CREATION
+    # Diagnostic (chốt 2026-10-28, kept permanently — cheap, one line per
+    # meeting creation): confirms what THIS running process actually read
+    # for the flag, independent of what `docker exec env`/the .env file on
+    # disk show — pydantic Settings is read once at process startup, so a
+    # worker that never got the env var reload (or an old process a restart
+    # somehow missed) would show up here with the wrong value instead of
+    # silently producing a Space of the wrong kind.
+    logger.info(f"create_google_meet_shared: workspace_id={workspace_id}, GOOGLE_MEET_USE_V2_SPACE_CREATION={use_v2}")
 
     conference_data = {
         "createRequest": {
@@ -521,6 +529,7 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
         meeting_code = meeting_uri.rstrip("/").rsplit("/", 1)[-1] if meeting_uri else ""
         if not meeting_code:
             raise ValueError(f"Meet API v2 space creation returned no usable meetingUri: {space}")
+        logger.info(f"create_google_meet_shared: v2 space created, name={space.get('name')}, meetingUri={meeting_uri}, meeting_code={meeting_code}")
         conference_data = {
             "conferenceId": meeting_code,
             "conferenceSolution": {"key": {"type": "hangoutsMeet"}},
@@ -579,6 +588,7 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
     entry_points = data.get("conferenceData", {}).get("entryPoints", [])
     meet_link = entry_points[0].get("uri") if entry_points else ""
     meeting_code = data.get("conferenceData", {}).get("conferenceId", "")
+    logger.info(f"create_google_meet_shared: Calendar echoed back meet_link={meet_link!r}, meeting_code={meeting_code!r}, use_v2={use_v2}")
 
     return {
         "google_event_id": data.get("id"),
