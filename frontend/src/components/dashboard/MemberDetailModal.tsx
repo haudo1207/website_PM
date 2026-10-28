@@ -8,7 +8,7 @@
 // Reused by both Dashboard → Overview (KPI Member Ranking click) and
 // Dashboard → Team Load (Section 4 member click).
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import { formatProjectCardTitle } from '@/lib/projectDisplay';
 import {
@@ -88,6 +88,32 @@ export default function MemberDetailModal({
   onMonthChange,
   onWeekChange,
 }: MemberDetailModalProps) {
+  // Cross-fade on member switch (chốt 2026-10-28, rewritten) — the previous
+  // attempt used key={member.id} + the tailwindcss-animate `animate-in`
+  // class, which forces React to UNMOUNT + remount that subtree on every
+  // switch. That introduced a real regression: clicking a different member
+  // row while the panel was already open needed TWO clicks (the first was
+  // silently lost). Root cause not fully pinned down (plausible: the
+  // remount briefly detaching/reattaching the subtree lines up with
+  // *something* eating the next click, most likely totally unrelated to
+  // this component at all — but removing the remount removes the risk
+  // regardless of the exact mechanism). This version never unmounts
+  // anything: a plain opacity transition toggled by a boolean state, no
+  // `key`, no animate-in. `member`'s own content still swaps immediately
+  // (every useMemo below keys off member.id already); only the opacity
+  // dips briefly to mask the instant swap, then eases back to 1 on the
+  // SAME still-mounted DOM nodes.
+  const [contentVisible, setContentVisible] = useState(true);
+  const prevMemberIdRef = useRef(member.id);
+  useEffect(() => {
+    if (prevMemberIdRef.current === member.id) return;
+    prevMemberIdRef.current = member.id;
+    setContentVisible(false);
+    const raf = requestAnimationFrame(() => setContentVisible(true));
+    return () => cancelAnimationFrame(raf);
+  }, [member.id]);
+  const crossfadeClass = `transition-opacity duration-200 ${contentVisible ? 'opacity-100' : 'opacity-0'}`;
+
   const [taskFilter, setTaskFilter] = useState<'all' | 'group' | 'overdue' | 'critical' | 'high'>('all');
   // "Dự án đang tham gia" sort — default KPI (completed work), switchable to
   // Manday. Purely a display order; doesn't affect which projects are
@@ -333,13 +359,13 @@ export default function MemberDetailModal({
       {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
       <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
 
-        {/* HEADER — the name/avatar block is keyed by member.id so switching
-            directly from one member's panel to another's (same mounted
-            drawer, no close/reopen) cross-fades instead of hard-swapping
-            text mid-frame; onClose button lives OUTSIDE this key so it
-            never re-animates. */}
+        {/* HEADER — the name/avatar block crossfades via contentVisible
+            (plain opacity transition, no remount — see top of component)
+            when switching directly from one member's panel to another's;
+            onClose button sits outside that wrapper so it's never
+            affected. */}
         <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
-          <div key={member.id} className="flex items-center gap-4 animate-in fade-in duration-200">
+          <div className={`flex items-center gap-4 ${crossfadeClass}`}>
             <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
               {member.name ? member.name.charAt(0).toUpperCase() : 'M'}
             </div>
@@ -358,12 +384,12 @@ export default function MemberDetailModal({
           </button>
         </div>
 
-        {/* DRAWER BODY CONTENT — same key={member.id} cross-fade as the
-            header above; the OUTER drawer frame/backdrop/scroll container
-            above never remounts, so the panel itself never visually
-            closes — only this content block fades to the new member's
-            data. */}
-        <div key={member.id} className="p-6 space-y-6 flex-1 animate-in fade-in duration-200">
+        {/* DRAWER BODY CONTENT — same crossfade as the header above (plain
+            opacity transition, no key/remount — see contentVisible above).
+            The outer drawer frame/backdrop/scroll container never
+            unmounts, so the panel itself never visually closes — only
+            this content block's opacity dips then eases back in. */}
+        <div className={`p-6 space-y-6 flex-1 ${crossfadeClass}`}>
 
           {/* 1. TOP METRIC SUMMARY (6 CARDS IN A ROW) */}
           <div className="grid grid-cols-6 gap-2">
