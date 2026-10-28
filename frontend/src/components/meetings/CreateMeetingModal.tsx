@@ -481,6 +481,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
   const [accessTypeSaving, setAccessTypeSaving] = useState(false);
+  const [toggleError, setToggleError] = useState('');
   const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
@@ -946,14 +947,22 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   const handleToggleOpenApproval = async (nextOpen: boolean) => {
     const nextType: 'OPEN' | 'TRUSTED' = nextOpen ? 'OPEN' : 'TRUSTED';
     if (nextType === (formData.meet_access_type || 'TRUSTED').toUpperCase()) return;
+    // Dedicated toggleError (not the shared `error` banner, which renders at
+    // the very top of the scrollable form body — invisible from down here
+    // in the footer without scrolling up, which made a failed PATCH look
+    // like the toggle silently did nothing) — shown right next to the
+    // switch instead, where the user is actually looking.
+    setToggleError('');
     setAccessTypeSaving(true);
-    setError('');
     try {
       if (initialData?.id) {
         const res = await setMeetingAccessType(initialData.id, nextType);
         if (res?.success) setFormData(prev => ({ ...prev, meet_access_type: res.meet_access_type }));
       } else {
-        if (!formData.host_workspace_id || !formData.link) return;
+        if (!formData.host_workspace_id || !formData.link) {
+          setToggleError('Thiếu Host hoặc link cuộc họp.');
+          return;
+        }
         const res = await setSpaceAccessTypeDirect({
           host_workspace_id: formData.host_workspace_id,
           meeting_url: formData.link,
@@ -962,7 +971,10 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
         if (res?.success) setFormData(prev => ({ ...prev, meet_access_type: res.meet_access_type }));
       }
     } catch (err: any) {
-      setError(getApiErrorMessage(err, 'Không thể đổi chế độ vào phòng'));
+      const msg = getApiErrorMessage(err, 'Không thể đổi chế độ vào phòng');
+      console.error('Đổi chế độ vào phòng Google Meet thất bại:', err);
+      setToggleError(msg);
+      setTimeout(() => setToggleError(''), 5000);
     } finally {
       setAccessTypeSaving(false);
     }
@@ -1656,30 +1668,45 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-between gap-3 shrink-0">
             <div className="flex items-center gap-4 min-w-0">
               {showAccessTypeToggle && (
-                <label
-                  className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
-                  title='Mở: ai có link cũng vào thẳng, không cần duyệt. Tắt (mặc định): chỉ người được mời vào thẳng, người lạ vẫn phải xin phép.'
-                >
-                  <button
-                    type="button"
+                <div className="relative shrink-0">
+                  {/* Single click target on the OUTER element (text + pill
+                      together) — previously the handler was only on the
+                      inner pill button, so clicking the "Mở duyệt" text
+                      right next to it (which looks like part of the same
+                      control) silently did nothing. role="switch" lives
+                      here now; the pill below is purely visual. */}
+                  <div
                     role="switch"
                     aria-checked={meetAccessTypeIsOpen}
-                    disabled={accessTypeSaving}
-                    onClick={() => handleToggleOpenApproval(!meetAccessTypeIsOpen)}
-                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 shrink-0 ${
-                      meetAccessTypeIsOpen ? 'bg-[#0058be]' : 'bg-[#c2c6d6]'
-                    }`}
+                    aria-disabled={accessTypeSaving}
+                    onClick={() => { if (!accessTypeSaving) handleToggleOpenApproval(!meetAccessTypeIsOpen); }}
+                    title='Mở: ai có link cũng vào thẳng, không cần duyệt. Tắt (mặc định): chỉ người được mời vào thẳng, người lạ vẫn phải xin phép.'
+                    className={`flex items-center gap-2 cursor-pointer select-none ${accessTypeSaving ? 'opacity-60 pointer-events-none' : ''}`}
                   >
                     <span
-                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
-                        meetAccessTypeIsOpen ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors shrink-0 ${
+                        meetAccessTypeIsOpen ? 'bg-emerald-500' : 'bg-slate-300'
                       }`}
-                    />
-                  </button>
-                  <span className="text-[11px] font-bold text-[#565e74] whitespace-nowrap">
-                    Mở duyệt{accessTypeSaving ? '...' : ''}
-                  </span>
-                </label>
+                    >
+                      <span
+                        className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white shadow transition-transform ${
+                          meetAccessTypeIsOpen ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                        }`}
+                      />
+                    </span>
+                    <span className="text-[11px] font-bold text-[#565e74] whitespace-nowrap">
+                      Mở duyệt
+                    </span>
+                    {accessTypeSaving && (
+                      <span className="w-3 h-3 border-2 border-[#565e74] border-t-transparent rounded-full animate-spin shrink-0" />
+                    )}
+                  </div>
+                  {toggleError && (
+                    <div className="absolute bottom-full left-0 mb-1.5 px-2.5 py-1.5 bg-red-600 text-white text-[10px] font-semibold rounded-lg shadow-lg whitespace-nowrap z-10">
+                      {toggleError}
+                    </div>
+                  )}
+                </div>
               )}
               <div className="text-[11px] text-[#565e74] font-medium min-w-0 truncate">
                 {formData.date && formData.time && (
