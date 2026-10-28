@@ -3021,17 +3021,49 @@ def _patch_meet_space_access_type(db: Session, workspace_id: Optional[int], meet
         f"token_len={len(token) if token else 0}, token_prefix={(token or '')[:12]!r}"
     )
 
+    import time
     import requests
-    resp = requests.patch(
-        f"https://meet.googleapis.com/v2/{space_name}",
-        params={"updateMask": "config.accessType"},
-        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
-        json={"config": {"accessType": access_type}},
-        timeout=15,
-    )
-    logger.info(f"[access-type] Google response: status={resp.status_code}, body={resp.text}")
+
+    # Retry-on-eventual-consistency (chốt 2026-10-28): empirically, PATCHing
+    # a Space only ~3s after it was created (as the UI toggle does, right
+    # after generate-link) consistently 403s with this exact message, while
+    # the same PATCH issued ~5-8s later (as the diagnose_account_restriction.py
+    # probe naturally does, with several sequential network calls in between)
+    # consistently succeeds on the SAME account/Space — Google's own
+    # permission grant for a just-created Space hasn't propagated across its
+    # internal services yet. Retry ONLY this specific 403 (never a generic
+    # 403 missing-scope/wrong-account case, which retrying would never fix
+    # and would just make the user wait ~14s for nothing) — up to 3 times,
+    # waiting 2s/4s/8s between attempts (4 attempts total, ~14s worst case).
+    max_retries = 3
+    retry_delays = [2, 4, 8]
+    attempt = 0
+    resp = None
+    while True:
+        attempt += 1
+        resp = requests.patch(
+            f"https://meet.googleapis.com/v2/{space_name}",
+            params={"updateMask": "config.accessType"},
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            json={"config": {"accessType": access_type}},
+            timeout=15,
+        )
+        logger.info(f"[access-type] attempt {attempt}/{max_retries + 1}: status={resp.status_code}, body={resp.text}")
+        if resp.ok:
+            if attempt > 1:
+                logger.info(f"[access-type] succeeded on attempt {attempt} after eventual-consistency retry")
+            break
+        is_eventual_consistency_403 = resp.status_code == 403 and "Permission denied on resource Space" in resp.text
+        if not is_eventual_consistency_403 or attempt > max_retries:
+            break
+        delay = retry_delays[attempt - 1]
+        logger.info(f"[access-type] attempt {attempt} got 403 'Permission denied on resource Space' — "
+                    f"treating as eventual-consistency lag, retrying in {delay}s ({attempt}/{max_retries})")
+        time.sleep(delay)
+
     if not resp.ok:
-        logger.error(f"PATCH Meet space accessType failed (space={meeting_code}): status={resp.status_code}, body={resp.text}")
+        logger.error(f"PATCH Meet space accessType failed after {attempt} attempt(s) (space={meeting_code}): "
+                      f"status={resp.status_code}, body={resp.text}")
         raise HTTPException(
             400,
             "Không thể đổi chế độ vào phòng cho cuộc họp này — Google từ chối yêu cầu "
