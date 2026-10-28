@@ -1,5 +1,6 @@
 'use client';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 
 export interface FilterSelectOption {
   value: string;
@@ -29,19 +30,14 @@ export default function FilterSelect({
   const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e: MouseEvent) => { if (!rootRef.current?.contains(e.target as Node)) setOpen(false); };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    // Bring the current choice into view in long lists.
+    // Bring the current choice into view in long lists. Outside-click/
+    // Escape closing is handled by FloatingDropdown itself now (see render
+    // below) — this effect only does the scroll-into-view side effect.
     listRef.current?.querySelector('[data-selected="true"]')?.scrollIntoView({ block: 'nearest' });
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
   }, [open]);
 
   useEffect(() => { if (!open) setQuery(''); }, [open]);
@@ -59,6 +55,7 @@ export default function FilterSelect({
     <div ref={rootRef} className="relative w-full">
       <button
         type="button"
+        ref={setAnchorEl}
         disabled={disabled}
         title={title}
         onClick={() => setOpen(o => !o)}
@@ -75,49 +72,62 @@ export default function FilterSelect({
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute left-0 top-full mt-1.5 z-50 w-full min-w-[180px] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden">
-          {showSearch && (
-            <div className="p-2 border-b border-slate-100">
-              <input
-                autoFocus
-                value={query}
-                onChange={e => setQuery(e.target.value)}
-                placeholder={searchPlaceholder}
-                className="w-full h-8 px-2.5 text-sm border border-slate-200 rounded-md outline-none focus:border-blue-400"
-              />
-            </div>
-          )}
-          <div ref={listRef} className="max-h-64 overflow-y-auto p-1">
-            {shown.length === 0 ? (
-              <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy</div>
-            ) : shown.map(o => {
-              const active = o.value === value;
-              return (
-                <button
-                  key={o.value}
-                  type="button"
-                  data-selected={active}
-                  onClick={() => pick(o.value)}
-                  className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm text-left transition-colors ${
-                    active ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 font-medium hover:bg-slate-50'
-                  }`}
-                >
-                  <span className="truncate">
-                    {o.label}
-                    {o.hint && <span className={`ml-1 ${active ? 'text-blue-500' : 'text-slate-400'} font-medium`}>{o.hint}</span>}
-                  </span>
-                  {active && (
-                    <svg className="w-4 h-4 shrink-0 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                    </svg>
-                  )}
-                </button>
-              );
-            })}
+      {/* Portaled via FloatingDropdown (chốt 2026-10-28, was a local
+          `absolute ... z-50` div) — that z-50 sat far below the nav
+          sidebar's fixed z-[1100], so this filter's dropdown could render
+          hidden behind the sidebar whenever the trigger sat close to the
+          left edge (this is a generic, widely-reused component, so every
+          caller inherited the risk). FloatingDropdown portals to
+          document.body at z-1150 (above the sidebar) and matches the
+          trigger's width via `style`. */}
+      <FloatingDropdown
+        anchorEl={anchorEl}
+        open={open}
+        onClose={() => setOpen(false)}
+        align="left"
+        className="w-full min-w-[180px] bg-white border border-slate-200 rounded-xl shadow-xl overflow-hidden"
+        style={{ width: anchorEl?.offsetWidth }}
+      >
+        {showSearch && (
+          <div className="p-2 border-b border-slate-100">
+            <input
+              autoFocus
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={searchPlaceholder}
+              className="w-full h-8 px-2.5 text-sm border border-slate-200 rounded-md outline-none focus:border-blue-400"
+            />
           </div>
+        )}
+        <div ref={listRef} className="max-h-64 overflow-y-auto p-1">
+          {shown.length === 0 ? (
+            <div className="px-3 py-3 text-sm text-slate-400 text-center">Không tìm thấy</div>
+          ) : shown.map(o => {
+            const active = o.value === value;
+            return (
+              <button
+                key={o.value}
+                type="button"
+                data-selected={active}
+                onClick={() => pick(o.value)}
+                className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg text-sm text-left transition-colors ${
+                  active ? 'bg-blue-50 text-blue-700 font-bold' : 'text-slate-700 font-medium hover:bg-slate-50'
+                }`}
+              >
+                <span className="truncate">
+                  {o.label}
+                  {o.hint && <span className={`ml-1 ${active ? 'text-blue-500' : 'text-slate-400'} font-medium`}>{o.hint}</span>}
+                </span>
+                {active && (
+                  <svg className="w-4 h-4 shrink-0 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                  </svg>
+                )}
+              </button>
+            );
+          })}
         </div>
-      )}
+      </FloatingDropdown>
     </div>
   );
 }

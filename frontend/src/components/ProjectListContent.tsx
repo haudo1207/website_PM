@@ -9,6 +9,7 @@ import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
 import SearchableSelect from './common/SearchableSelect';
 import ProjectFormModal from './ProjectFormModal';
+import FloatingDropdown from './common/FloatingDropdown';
 
 const PROJECT_PHASES = [
   '1. Tư vấn', '2. Báo giá', '3. Làm specs', '4. Duyệt HSMT',
@@ -136,6 +137,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<number | null>(null);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
@@ -159,15 +161,6 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
   useEffect(() => {
     try { localStorage.setItem('pm_project_list_columns', JSON.stringify(visibleColumns)); } catch {}
   }, [visibleColumns]);
-
-  // Close the per-card "..." menu on any click outside it — the button/dropdown
-  // themselves stop propagation, so only genuine outside clicks reach here.
-  useEffect(() => {
-    if (menuOpenId === null) return;
-    const handler = () => setMenuOpenId(null);
-    document.addEventListener('click', handler);
-    return () => document.removeEventListener('click', handler);
-  }, [menuOpenId]);
 
   const { data: customersData } = useQuery({
     queryKey: ['customers'],
@@ -764,7 +757,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                         {canManage && (
                           <div className="relative" onClick={(e) => e.stopPropagation()}>
                             <button
-                              onClick={() => setMenuOpenId(prev => prev === p.id ? null : p.id)}
+                              onClick={(e) => { setMenuAnchorEl(e.currentTarget); setMenuOpenId(prev => prev === p.id ? null : p.id); }}
                               className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
                               title="Tuỳ chọn dự án"
                             >
@@ -772,30 +765,40 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                                 <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
                               </svg>
                             </button>
-                            {menuOpenId === p.id && (
-                              <div className="absolute right-0 mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                            {/* Portaled (chốt 2026-10-28, was a local `absolute
+                                ... z-20` div) — that z-20 could render hidden
+                                behind the nav sidebar (z-[1100]) whenever a
+                                card near the left edge of the grid pushed its
+                                "right-0" menu back under it. FloatingDropdown
+                                portals to document.body at z-1150. */}
+                            <FloatingDropdown
+                              anchorEl={menuAnchorEl}
+                              open={menuOpenId === p.id}
+                              onClose={() => setMenuOpenId(null)}
+                              align="right"
+                              className="w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden py-1"
+                            >
+                              <button
+                                onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
+                                className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                              >
+                                ✏️ Chỉnh sửa
+                              </button>
+                              {canManageCritical && (
                                 <button
-                                  onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
-                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                >
-                                  ✏️ Chỉnh sửa
-                                </button>
-                                {canManageCritical && (
-                                  <button
-                                    onClick={() => handleSetCritical(p)}
-                                    className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
-                                  >
-                                    {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
-                                  </button>
-                                )}
-                                <button
-                                  onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                  onClick={() => handleSetCritical(p)}
                                   className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
                                 >
-                                  🗑 Xóa dự án
+                                  {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
                                 </button>
-                              </div>
-                            )}
+                              )}
+                              <button
+                                onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                              >
+                                🗑 Xóa dự án
+                              </button>
+                            </FloatingDropdown>
                           </div>
                         )}
                       </div>
@@ -926,7 +929,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                           {canManage && (
                             <div className="relative">
                               <button
-                                onClick={() => setMenuOpenId(prev => prev === p.id ? null : p.id)}
+                                onClick={(e) => { setMenuAnchorEl(e.currentTarget); setMenuOpenId(prev => prev === p.id ? null : p.id); }}
                                 className="w-6 h-6 flex items-center justify-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-700 transition-colors shrink-0 cursor-pointer"
                                 title="Tuỳ chọn dự án"
                               >
@@ -934,30 +937,34 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
                                   <path d="M10 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4zm0 6a2 2 0 110-4 2 2 0 010 4z" />
                                 </svg>
                               </button>
-                              {menuOpenId === p.id && (
-                                <div className="absolute right-0 mt-1 w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden z-20 py-1">
+                              <FloatingDropdown
+                                anchorEl={menuAnchorEl}
+                                open={menuOpenId === p.id}
+                                onClose={() => setMenuOpenId(null)}
+                                align="right"
+                                className="w-52 bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden py-1"
+                              >
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
+                                >
+                                  ✏️ Chỉnh sửa
+                                </button>
+                                {canManageCritical && (
                                   <button
-                                    onClick={() => { setMenuOpenId(null); setProjectFormMode('edit'); setEditingProject(p); setShowProjectFormModal(true); }}
-                                    className="w-full text-left px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 cursor-pointer"
-                                  >
-                                    ✏️ Chỉnh sửa
-                                  </button>
-                                  {canManageCritical && (
-                                    <button
-                                      onClick={() => handleSetCritical(p)}
-                                      className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
-                                    >
-                                      {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                    onClick={() => handleSetCritical(p)}
                                     className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
                                   >
-                                    🗑 Xóa dự án
+                                    {p.is_critical ? '✓ Bỏ Critical' : '🚩 Đánh dấu Critical'}
                                   </button>
-                                </div>
-                              )}
+                                )}
+                                <button
+                                  onClick={() => { setMenuOpenId(null); setDeleteId(p.id); }}
+                                  className="w-full text-left px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 cursor-pointer border-t border-slate-100"
+                                >
+                                  🗑 Xóa dự án
+                                </button>
+                              </FloatingDropdown>
                             </div>
                           )}
                         </td>
