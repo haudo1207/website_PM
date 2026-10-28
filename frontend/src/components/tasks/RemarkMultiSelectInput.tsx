@@ -120,7 +120,7 @@ export function RemarkMultiSelectInput({ value, performanceSettings, onChange, p
       </div>
 
       {isOpen && (
-        <div className="absolute left-0 mt-1 w-[400px] max-h-[300px] bg-white border border-slate-200 rounded-lg shadow-2xl z-[9999] p-3 flex flex-col gap-2 transition-all animate-fadeIn">
+        <div className="absolute left-0 mt-1 w-[400px] max-h-[300px] bg-white border border-slate-200 rounded-lg shadow-2xl z-[1050] p-3 flex flex-col gap-2 transition-all animate-fadeIn">
           <input
             type="text"
             value={searchTerm}

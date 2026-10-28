@@ -327,7 +327,7 @@ export default function MemberDetailModal({
       {/* BACKDROP */}
       <div
         onClick={onClose}
-        className="fixed inset-0 bg-slate-900/20 transition-opacity"
+        className="fixed inset-0 transition-opacity"
       />
 
       {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}

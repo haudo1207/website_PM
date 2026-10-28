@@ -1972,6 +1972,12 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
             "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/meetings.space.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
+            # Added 2026-10-28: write scope for Meet moderation/accessType
+            # control, and an identity scope so the userinfo call (used to
+            # resolve/backfill WorkspaceGoogleAccount.google_email) actually
+            # works — both were missing before, see backfill_workspace_google_email.py.
+            "https://www.googleapis.com/auth/meetings.space.created",
+            "https://www.googleapis.com/auth/userinfo.email",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )

@@ -813,7 +813,7 @@ export default function SettingsPage() {
 
       {/* Edit User Skills Modal */}
       {skillsModalUser && (
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
               <div>

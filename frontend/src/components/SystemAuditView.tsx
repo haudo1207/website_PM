@@ -1028,7 +1028,7 @@ export default function SystemAuditView() {
 
       {/* 5. SLIDE-OUT DRAWER DETAIL VIEW */}
       {selectedLog && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex justify-end">
+        <div className="fixed inset-0 z-[999] flex justify-end">
           <div
             className="fixed inset-0"
             onClick={() => setSelectedLog(null)}

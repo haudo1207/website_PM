@@ -495,7 +495,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
       {open && (usePortal && portalPos ? createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, right: portalPos.right, width: portalPos.width, zIndex: 9999 }}
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, right: portalPos.right, width: portalPos.width, zIndex: 1050 }}
           className="bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
         >
           {/* Search Bar Input (if threshold met) */}

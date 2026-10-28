@@ -430,7 +430,7 @@ export default function ZaloConversationPane({ conversationId }: { conversationI
       </div>
 
       {taskFormOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
           onClick={() => !creatingTask && setTaskFormOpen(false)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900 mb-4">Tạo task mới</h3>
@@ -494,7 +494,7 @@ export default function ZaloConversationPane({ conversationId }: { conversationI
       )}
 
       {tasksModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
           onClick={() => setTasksModalOpen(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
@@ -583,7 +583,7 @@ export default function ZaloConversationPane({ conversationId }: { conversationI
       )}
 
       {summaryModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        <div className="fixed inset-0 flex items-center justify-center z-50 p-4"
           onClick={() => setSummaryModalOpen(false)}>
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
@@ -624,7 +624,7 @@ export default function ZaloConversationPane({ conversationId }: { conversationI
       )}
 
       {demoTask && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"
+        <div className="fixed inset-0 flex items-center justify-center z-[60] p-4"
           onClick={() => !requestingDemo && setDemoTask(null)}>
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900 mb-1">

@@ -8975,7 +8975,7 @@ function ProjectDetailContent() {
                   {leaderReviewOpen && (
                     <>
                       <div
-                        className="fixed inset-0 bg-slate-900/30 z-40 xl:hidden"
+                        className="fixed inset-0 z-40 xl:hidden"
                         onClick={closeLeaderReviewPanel}
                       />
                       <div
@@ -9405,7 +9405,7 @@ function ProjectDetailContent() {
 
                   {/* Delete Confirm Modal */}
                   {deleteConfirmId && (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20">
+                    <div className="fixed inset-0 z-50 flex items-center justify-center ">
                       <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl">
                         <div className="flex items-center gap-3 mb-3 text-red-600">
                           <div className="w-10 h-10 bg-red-50 rounded-full flex items-center justify-center"><span className="material-symbols-outlined text-[20px]">delete</span></div>
@@ -9636,7 +9636,7 @@ function ProjectDetailContent() {
 
       {/* Project Template Modal */}
       {showTemplateModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
             <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3 text-[#0058be]">
@@ -9746,7 +9746,7 @@ function ProjectDetailContent() {
           0
         );
         return (
-          <div className="fixed inset-0 bg-slate-900/20 z-[1000] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="p-6">
                 <div className="flex items-center gap-3 text-amber-600 mb-3">
@@ -9821,7 +9821,7 @@ function ProjectDetailContent() {
 
       {/* Modal Xác Nhận Xóa Dự Án */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[1000] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-rose-600 mb-3">
@@ -9927,7 +9927,7 @@ function ProjectDetailContent() {
 
         return (
           <div className="fixed inset-0 z-50 flex justify-end">
-            <div onClick={() => setLeaderReviewDetailTask(null)} className="absolute inset-0 bg-slate-900/20 transition-opacity duration-300" />
+            <div onClick={() => setLeaderReviewDetailTask(null)} className="absolute inset-0 transition-opacity duration-300" />
             <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
               {/* Header */}
               <div className="px-6 py-5 border-b border-slate-200 flex justify-between items-center bg-gradient-to-r from-[#fffbeb] to-white">
@@ -10320,11 +10320,11 @@ function ProjectDetailContent() {
       {selectedTask && (
         <div className="fixed inset-0 z-50 flex justify-end">
           {/* Click-outside-to-close catcher — intentionally no dimming/blur
-              (bg-slate-900/40 backdrop-blur-sm removed) so the Tasks table
+              (bg-slate-900/40 removed) so the Tasks table
               stays fully visible/legible behind the drawer, per spec. */}
           <div onClick={() => setSelectedTask(null)} className="absolute inset-0" />
           <div className="relative w-full max-w-[560px] bg-white h-full border-l border-slate-200 shadow-2xl flex flex-col z-10 transition-transform duration-300 animate-slide-in">
-            <div className="sticky top-0 z-20 shrink-0 px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-white/95 backdrop-blur-sm">
+            <div className="sticky top-0 z-20 shrink-0 px-5 py-3.5 border-b border-slate-200 flex justify-between items-center bg-white/95">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg bg-[#e8f0fe] text-[#0058be] ring-1 ring-[#c2d6f0] shrink-0">
                   <span className="material-symbols-outlined text-[18px]">task_alt</span>
@@ -10710,7 +10710,7 @@ function ProjectDetailContent() {
               </section>
             </div>
             {/* Task actions retain their existing handlers; only the footer presentation changes. */}
-            <div className="sticky bottom-0 z-20 shrink-0 min-h-16 px-5 py-3 border-t border-slate-200 bg-white/95 backdrop-blur-sm flex items-center justify-between gap-3">
+            <div className="sticky bottom-0 z-20 shrink-0 min-h-16 px-5 py-3 border-t border-slate-200 bg-white/95 flex items-center justify-between gap-3">
               {selectedTask.is_blocked ? (
                 <button
                   onClick={() => handleUnblockTask(selectedTask)}
@@ -10930,7 +10930,7 @@ function ProjectDetailContent() {
         const totalCount = reviewChecklist.length;
         return (
           <div className="fixed inset-0 z-[55] flex justify-end" onClick={() => setReviewDrawerTask(null)}>
-            <div className="absolute inset-0 bg-slate-900/20" />
+            <div className="absolute inset-0 " />
             <div
               className="relative w-full max-w-lg bg-white shadow-2xl flex flex-col animate-slide-in h-full"
               onClick={e => e.stopPropagation()}
@@ -11124,7 +11124,7 @@ function ProjectDetailContent() {
           Group under an explicitly chosen Category. Reuses POST
           /api/skills/groups and the existing `categories` tree. */}
       {showCreateSkillGroupModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/20">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 ">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Area mới</h3>
@@ -11202,7 +11202,7 @@ function ProjectDetailContent() {
           the currently selected SKILL AREA (Group). Reuses POST
           /api/skills/skills. Auto-selects the new Skill on success. */}
       {showCreateSkillVendorModal && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/20">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 ">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill mới</h3>
@@ -11274,7 +11274,7 @@ function ProjectDetailContent() {
 
       {/* Modal xác nhận xóa */}
       {showDeleteModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -11310,7 +11310,7 @@ function ProjectDetailContent() {
         const bpTask = items.find((it: any) => it.id === blockPrompt.taskId);
         if (!bpTask) return null;
         return (
-          <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="p-6 space-y-3">
                 <div className="flex items-center gap-3 text-amber-600">
@@ -11374,7 +11374,7 @@ function ProjectDetailContent() {
           ? items.filter(t => t.task_code && t.task_code.startsWith(`${taskBeingDeleted.task_code}.`)).length
           : 0;
         return (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-red-600 mb-3">
@@ -11411,7 +11411,7 @@ function ProjectDetailContent() {
 
       {/* Modal Di chuyển Task — theo cấp Phase → Task Group → Vị trí */}
       {movingTask !== null && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
               <div>
@@ -11502,7 +11502,7 @@ function ProjectDetailContent() {
           + anchor Group riêng, khác với Task (1 dropdown gộp) vì Group thường
           có ít sibling hơn nên tách 2 bước sẽ rõ ràng hơn. */}
       {movingGroup !== null && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
               <div>
@@ -11621,7 +11621,7 @@ function ProjectDetailContent() {
       )}
 
       {movingPhase !== null && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-6 pt-5 pb-4 border-b border-slate-100 flex items-start justify-between gap-3">
               <div>
@@ -11733,7 +11733,7 @@ function ProjectDetailContent() {
         const groupCount = phaseGroupIds.length;
         const taskCount = items.filter((t: any) => phaseGroupIds.includes(t.task_group_id)).length;
         return (
-          <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="p-6">
                 <div className="flex items-center gap-3 mb-3 text-rose-600">
@@ -11782,7 +11782,7 @@ function ProjectDetailContent() {
       {groupToDelete !== null && (() => {
         const taskCount = items.filter((t: any) => t.task_group_id === groupToDelete.id).length;
         return (
-          <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+          <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
             <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
               <div className="p-6">
                 <div className="flex items-center gap-3 mb-3 text-rose-600">
@@ -11827,7 +11827,7 @@ function ProjectDetailContent() {
 
       {/* Modal Tạo Phase */}
       {showPhaseModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-[#0058be] mb-4">
@@ -11872,7 +11872,7 @@ function ProjectDetailContent() {
 
       {/* Modal Đổi Tên Phase */}
       {showRenameModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-amber-500 mb-4">
@@ -11917,7 +11917,7 @@ function ProjectDetailContent() {
 
       {/* Modal Tạo/Sửa Task Group */}
       {showTaskGroupModal && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Modal Header */}
             <div className="p-6 border-b border-slate-100 flex items-center justify-between">
@@ -12199,7 +12199,7 @@ function MemberSearchCell({ col, task, editValue, projectMembers, onSaveWithActi
         {isOpen && portalPos && createPortal(
           <div
             ref={menuRef}
-            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), maxHeight: portalPos.maxHeight, zIndex: 9999 }}
+            style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 200), maxHeight: portalPos.maxHeight, zIndex: 1050 }}
             className="overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-2xl py-1"
           >
             <div
@@ -12460,7 +12460,7 @@ function CategorySearchCell({ col, kind, items, editValue, placeholder, onSaveWi
         {isOpen && portalPos && createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), maxHeight: Math.min(portalPos.maxHeight, 416), zIndex: 9999 }}
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, width: Math.max(portalPos.width, 320), maxHeight: Math.min(portalPos.maxHeight, 416), zIndex: 1050 }}
           className="bg-white border border-slate-200 rounded-xl shadow-2xl flex flex-col overflow-hidden"
         >
           {!catalogMode ? (
