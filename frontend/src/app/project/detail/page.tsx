@@ -12,6 +12,7 @@ import ProjectDocumentsTab from '@/components/ProjectDocumentsTab';
 import ProjectPrototypeTab from '@/components/ProjectPrototypeTab';
 import ProjectZaloSummaryTab from '@/components/ProjectZaloSummaryTab';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 import { LinkChipsEditor, appendLinkValue } from '@/components/LinkChipsEditor';
 import { RemarkMultiSelectInput } from '@/components/tasks/RemarkMultiSelectInput';
 import ProjectFormModal from '@/components/ProjectFormModal';
@@ -118,141 +119,14 @@ const TAB_TO_SLUG: Record<TabKey, string> = {
   prototype: 'prototype',
 };
 
-// Dropdown/popover được portal thẳng ra document.body và định vị bằng
-// getBoundingClientRect() của trigger, để không bao giờ bị clip/tạo scrollbar
-// bởi các container overflow-auto/overflow-x-auto (phase strip, table wrapper...).
-// Đóng khi: click ra ngoài, Escape, scroll (bất kỳ ancestor nào, kể cả nested
-// scroll container - dùng capture:true), hoặc resize window.
-function FloatingDropdown({
-  anchorEl,
-  open,
-  onClose,
-  align = 'left',
-  className = '',
-  children,
-}: {
-  anchorEl: HTMLElement | null;
-  open: boolean;
-  onClose: () => void;
-  align?: 'left' | 'right';
-  className?: string;
-  children: React.ReactNode;
-}) {
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open || !anchorEl) {
-      setPos(null);
-      return;
-    }
-    const rect = anchorEl.getBoundingClientRect();
-    setPos(align === 'right'
-      ? { top: rect.bottom + 4, right: Math.max(8, window.innerWidth - rect.right) }
-      : { top: rect.bottom + 4, left: rect.left });
-
-    // 'scroll' không bubble nên phải nghe ở capture phase để bắt được scroll
-    // của bất kỳ ancestor/scroll-container nào (phase strip, table wrapper...).
-    // Nhưng capture phase cũng bắt luôn scroll NỘI BỘ của chính menu (vd. danh
-    // sách cột dài) - phải loại trừ trường hợp đó, nếu không menu sẽ tự đóng
-    // ngay khi user vừa mới lăn chuột để cuộn nó.
-    const closeOnOutsideScroll = (e: Event) => {
-      if (menuRef.current && e.target instanceof Node && menuRef.current.contains(e.target)) return;
-      onClose();
-    };
-    window.addEventListener('scroll', closeOnOutsideScroll, true);
-    window.addEventListener('resize', onClose);
-    return () => {
-      window.removeEventListener('scroll', closeOnOutsideScroll, true);
-      window.removeEventListener('resize', onClose);
-    };
-  }, [open, anchorEl, align, onClose]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (anchorEl?.contains(target)) return;
-      onClose();
-    };
-    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('mousedown', handleClick);
-    document.addEventListener('keydown', handleEsc);
-    return () => {
-      document.removeEventListener('mousedown', handleClick);
-      document.removeEventListener('keydown', handleEsc);
-    };
-  }, [open, onClose, anchorEl]);
-
-  // Flip the menu to open ABOVE the trigger when opening below would push it
-  // past the bottom of the viewport (e.g. the "⋮" row menu on a Group Task/
-  // Task near the bottom of the table) — without this it renders off-screen,
-  // looking like it's missing or covered by something.
-  //
-  // Also flip LEFT↔RIGHT so a menu anchored to the very edge of the viewport
-  // (Task `...` next to the left side of a narrow window, or near the right
-  // side) stays fully visible: the default `align="right"` opens the menu to
-  // the LEFT of the button; if there isn't enough horizontal room there we
-  // switch to opening to the RIGHT (`left: rect.right`), and vice-versa for
-  // `align="left"`. The flip is symmetric and re-runs whenever the user
-  // scrolls/resizes so a fresh re-position is always picked up.
-  useLayoutEffect(() => {
-    if (!open || !anchorEl || !pos || !menuRef.current) return;
-    const menuRect = menuRef.current.getBoundingClientRect();
-    const anchorRect = anchorEl.getBoundingClientRect();
-    const VIEWPORT_GAP = 8;
-    let nextTop = pos.top;
-    let nextLeft = pos.left;
-    let nextRight = pos.right;
-
-    // Vertical flip: bottom-overflow → above the anchor.
-    if (menuRect.bottom > window.innerHeight - VIEWPORT_GAP) {
-      const flippedTop = anchorRect.top - menuRect.height - 4;
-      if (flippedTop >= 0) {
-        nextTop = flippedTop;
-      }
-    }
-
-    // Horizontal flip: when `align="right"` (menu extends LEFT from the
-    // anchor's right edge) and the menu would clip past the left viewport
-    // edge, switch to extending RIGHT from the anchor's right edge. When
-    // `align="left"` and it would clip past the right edge, mirror-image.
-    const overflowsLeft = menuRect.left < VIEWPORT_GAP;
-    const overflowsRight = menuRect.right > window.innerWidth - VIEWPORT_GAP;
-    if (align === 'right' && overflowsLeft) {
-      // Menu opens to the right of the anchor (instead of left of it).
-      nextLeft = anchorRect.right;
-      nextRight = undefined;
-    } else if (align === 'left' && overflowsRight) {
-      // Menu opens to the left of the anchor (instead of right of it).
-      nextRight = Math.max(VIEWPORT_GAP, window.innerWidth - anchorRect.left);
-      nextLeft = undefined;
-    }
-
-    if (nextTop !== pos.top || nextLeft !== pos.left || nextRight !== pos.right) {
-      setPos({ top: nextTop, left: nextLeft, right: nextRight });
-    }
-  }, [open, anchorEl, pos, align]);
-
-  if (!open || !pos || typeof document === 'undefined') return null;
-  return createPortal(
-    <div
-      ref={menuRef}
-      // z-[1050] (chốt 2026-10-28, cùng quy ước đã áp dụng cho các dropdown
-      // portal khác — RemarkMultiSelectInput, SearchableSelect): zIndex: 200
-      // trước đây để FloatingDropdown bị sidebar điều hướng (fixed, z-[1100],
-      // cùng document.body) đè lên bất cứ khi nào vị trí tính toán ra gần
-      // mép trái màn hình — đã portal + position:fixed đúng, chỉ riêng
-      // z-index là quá thấp so với sidebar.
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 1050, maxHeight: '70vh', overflowY: 'auto' }}
-      className={`text-[#0b1c30] ${className}`}
-    >
-      {children}
-    </div>,
-    document.body
-  );
-}
+// FloatingDropdown đã chuyển thành component dùng chung thật sự (chốt
+// 2026-10-28, xem components/common/FloatingDropdown.tsx) — lý do: nó vốn
+// chỉ là hàm cục bộ của riêng file này, nên khi file KHÁC (MeetingCard,
+// MeetingDetailModal, TaskEditDrawer...) cần 1 dropdown "..." tương tự,
+// không import được, phải tự viết lại bằng tay kiểu `position: relative` +
+// `absolute` cũ — đúng kiểu lỗi "bị sidebar đè" đã sửa ở đây lại tái diễn ở
+// nơi khác. Import từ file dùng chung để mọi nơi cùng đi qua đúng 1
+// implementation portal + z-[1050].
 
 // Donut chart cho Overview > Tổng quan: có tổng số ở tâm + legend kèm số liệu
 // từng phần (PieChartCard dùng chung cho /dashboard chỉ có Legend tên+màu,
@@ -1901,7 +1775,7 @@ function ProjectDetailContent() {
   const skillVendorFilterRef = useRef<HTMLDivElement>(null);
   const [addMemberDropdownOpen, setAddMemberDropdownOpen] = useState(false);
   const [addMemberSearch, setAddMemberSearch] = useState('');
-  const addMemberRef = useRef<HTMLDivElement>(null);
+  const [addMemberAnchorEl, setAddMemberAnchorEl] = useState<HTMLElement | null>(null);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
 
@@ -2374,22 +2248,12 @@ function ProjectDetailContent() {
   }, []);
 
   // Lưu ý: columnMenuOpen / addTaskMenuOpen / filterPopoverOpen / openRowMenu /
-  // openHeaderMenu / 6 per-column filter dropdown KHÔNG xử lý outside-click/Escape
-  // ở đây nữa - dropdown của chúng được portal ra document.body qua
-  // <FloatingDropdown>, tự đóng khi click ngoài/Escape/scroll/resize (xem component
-  // FloatingDropdown ở đầu file). Giữ chúng ở effect này sẽ sai vì target bên trong
-  // portal không còn nằm trong subtree DOM gốc để `.contains()`/`closest()` nhận ra.
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      if (addMemberDropdownOpen && addMemberRef.current && !addMemberRef.current.contains(target)) {
-        setAddMemberDropdownOpen(false);
-        setAddMemberSearch('');
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [addMemberDropdownOpen]);
+  // openHeaderMenu / addMemberDropdownOpen / 6 per-column filter dropdown KHÔNG
+  // xử lý outside-click/Escape ở đây nữa - dropdown của chúng được portal ra
+  // document.body qua <FloatingDropdown> (components/common/FloatingDropdown.tsx),
+  // tự đóng khi click ngoài/Escape/scroll/resize. Giữ chúng ở 1 effect
+  // document-level riêng sẽ sai vì target bên trong portal không còn nằm
+  // trong subtree DOM gốc để `.contains()`/`closest()` nhận ra.
 
   // Escape thoát Task Focus Mode (các menu/popover portal tự xử lý Escape riêng)
   useEffect(() => {
@@ -9448,9 +9312,10 @@ function ProjectDetailContent() {
                       Thêm thành viên mới
                     </h3>
                     <form onSubmit={handleAddMember} className="flex gap-2">
-                      <div ref={addMemberRef} className="relative flex-1">
+                      <div className="flex-1">
                         <div
-                          onClick={() => {
+                          onClick={(e) => {
+                            setAddMemberAnchorEl(e.currentTarget);
                             setAddMemberDropdownOpen(!addMemberDropdownOpen);
                             setAddMemberSearch('');
                           }}
@@ -9463,11 +9328,14 @@ function ProjectDetailContent() {
                           </span>
                           <span className="material-symbols-outlined text-[#727785] text-[18px]">expand_more</span>
                         </div>
-                        {addMemberDropdownOpen && (
-                          <div
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute left-0 right-0 mt-1 bg-white border border-[#c2c6d6] rounded-lg shadow-xl z-50 p-2 space-y-2 max-h-[200px] flex flex-col"
-                          >
+                        <FloatingDropdown
+                          anchorEl={addMemberAnchorEl}
+                          open={addMemberDropdownOpen}
+                          onClose={() => { setAddMemberDropdownOpen(false); setAddMemberSearch(''); }}
+                          align="left"
+                          className="bg-white border border-[#c2c6d6] rounded-lg shadow-xl p-2 space-y-2 flex flex-col"
+                          style={{ width: addMemberAnchorEl?.offsetWidth }}
+                        >
                             <input
                               type="text"
                               value={addMemberSearch}
@@ -9499,8 +9367,7 @@ function ProjectDetailContent() {
                                   </button>
                                 ))}
                             </div>
-                          </div>
-                        )}
+                        </FloatingDropdown>
                       </div>
                       <button
                         type="submit"
@@ -10342,19 +10209,26 @@ function ProjectDetailContent() {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setOpenHeaderMenu(openHeaderMenu === 'task-drawer' ? null : 'task-drawer')}
+                  onClick={(e) => {
+                    setHeaderMenuAnchorEl(e.currentTarget);
+                    setOpenHeaderMenu(openHeaderMenu === 'task-drawer' ? null : 'task-drawer');
+                  }}
                   className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-blue-50 hover:text-[#0058be] transition-colors ${openHeaderMenu === 'task-drawer' ? 'bg-blue-50 text-[#0058be]' : ''}`}
                   title="Thao tác Task"
                 >
                   <MoreHorizontal size={18} />
                 </button>
-                {openHeaderMenu === 'task-drawer' && (
-                  <div className="absolute right-14 top-12 z-30 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                    <button onClick={() => { setOpenHeaderMenu(null); handleOpenAIReviewDrawer('TASK', selectedTask.id, selectedTask.detail); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Sparkles size={14} /> AI Check</button>
-                    {canEditTask(project) && <button onClick={() => { setOpenHeaderMenu(null); handleDuplicateTask(selectedTask.task_group_id, selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Copy size={14} /> Nhân bản Task</button>}
-                    {canDeleteTask(project) && <><div className="my-1 border-t border-slate-100" /><button onClick={() => { setOpenHeaderMenu(null); setSelectedTask(null); setTaskToDelete(selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Xóa Task</button></>}
-                  </div>
-                )}
+                <FloatingDropdown
+                  anchorEl={headerMenuAnchorEl}
+                  open={openHeaderMenu === 'task-drawer'}
+                  onClose={() => setOpenHeaderMenu(null)}
+                  align="right"
+                  className="bg-white border border-slate-200 rounded-xl p-1.5 w-44 shadow-xl"
+                >
+                  <button onClick={() => { setOpenHeaderMenu(null); handleOpenAIReviewDrawer('TASK', selectedTask.id, selectedTask.detail); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Sparkles size={14} /> AI Check</button>
+                  {canEditTask(project) && <button onClick={() => { setOpenHeaderMenu(null); handleDuplicateTask(selectedTask.task_group_id, selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-slate-700 hover:bg-blue-50 hover:text-[#0058be]"><Copy size={14} /> Nhân bản Task</button>}
+                  {canDeleteTask(project) && <><div className="my-1 border-t border-slate-100" /><button onClick={() => { setOpenHeaderMenu(null); setSelectedTask(null); setTaskToDelete(selectedTask.id); }} className="w-full flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12px] font-medium text-rose-600 hover:bg-rose-50"><Trash2 size={14} /> Xóa Task</button></>}
+                </FloatingDropdown>
                 <button onClick={() => setSelectedTask(null)} className="w-8 h-8 rounded-lg hover:bg-slate-100 flex items-center justify-center text-slate-500 transition-colors">
                   <X size={18} />
                 </button>

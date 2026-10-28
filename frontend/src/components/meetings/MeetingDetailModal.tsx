@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
 import { useQueryClient } from '@tanstack/react-query';
@@ -65,6 +66,7 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   // Manual-end fallback (chốt 2026-09-14): local override so the status
   // badge/isDone flip immediately after marking DONE by hand, without
   // waiting for the parent to refetch and pass a fresh `meeting` prop —
@@ -856,18 +858,23 @@ export default function MeetingDetailModal({
 
             {/* Action Buttons Top Right */}
             <div className="flex items-center gap-2.5 shrink-0">
-              <div className="relative">
+              <div>
                 <button
                   type="button"
-                  onClick={() => setShowMenu(!showMenu)}
+                  onClick={(e) => { setMenuAnchorEl(e.currentTarget); setShowMenu(!showMenu); }}
                   className="p-2.5 text-[#64748b] hover:text-[#0b1c30] rounded-xl hover:bg-slate-100 transition-colors border border-[#cbd5e1]"
                   title="Tùy chọn khác"
                 >
                   <MoreHorizontal size={18} />
                 </button>
 
-                {showMenu && (
-                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs font-medium space-y-0.5">
+                <FloatingDropdown
+                  anchorEl={menuAnchorEl}
+                  open={showMenu}
+                  onClose={() => setShowMenu(false)}
+                  align="right"
+                  className="w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 text-xs font-medium space-y-0.5"
+                >
                     {onEdit && (
                       <button
                         onClick={() => { setShowMenu(false); onEdit(meeting); }}
@@ -899,8 +906,7 @@ export default function MeetingDetailModal({
                         <span>🗑️ Xóa cuộc họp</span>
                       </button>
                     )}
-                  </div>
-                )}
+                </FloatingDropdown>
               </div>
 
               <a
