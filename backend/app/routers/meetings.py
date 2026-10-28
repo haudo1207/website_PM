@@ -3004,16 +3004,32 @@ def _patch_meet_space_access_type(db: Session, workspace_id: Optional[int], meet
     try:
         token = get_workspace_google_access_token(db, workspace_id)
     except Exception as e:
+        logger.info(f"[access-type] token resolution FAILED for workspace_id={workspace_id}: {e!r}")
         raise HTTPException(400, f"Không lấy được token Google cho Workspace đang host cuộc họp này: {e}")
+
+    space_name = f"spaces/{meeting_code}"
+    # Diagnostic (chốt 2026-10-28, temporary — comparing a real UI click
+    # against diagnose_account_restriction.py's own direct-script PATCH,
+    # which succeeded seconds apart on the same account): confirms exactly
+    # what THIS code path derived/received, with no guessing from the UI
+    # error message alone. Token is never logged in full — only its length
+    # and first 12 chars, enough to confirm it's non-empty and plausible
+    # without leaking it.
+    logger.info(
+        f"[access-type] PATCHing workspace_id={workspace_id}, meeting_code={meeting_code!r}, "
+        f"space_name={space_name!r}, access_type={access_type!r}, "
+        f"token_len={len(token) if token else 0}, token_prefix={(token or '')[:12]!r}"
+    )
 
     import requests
     resp = requests.patch(
-        f"https://meet.googleapis.com/v2/spaces/{meeting_code}",
+        f"https://meet.googleapis.com/v2/{space_name}",
         params={"updateMask": "config.accessType"},
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         json={"config": {"accessType": access_type}},
         timeout=15,
     )
+    logger.info(f"[access-type] Google response: status={resp.status_code}, body={resp.text}")
     if not resp.ok:
         logger.error(f"PATCH Meet space accessType failed (space={meeting_code}): status={resp.status_code}, body={resp.text}")
         raise HTTPException(
@@ -3055,6 +3071,10 @@ def set_meeting_access_type(id: int, body: dict, db: Session = Depends(get_db), 
         raise HTTPException(400, "Không xác định được Space từ link cuộc họp.")
 
     workspace_id = _host_workspace_id_for_meeting(db, m)
+    logger.info(
+        f"[access-type] /{id}/access-type request: meeting_id={id}, host_workspace_id={workspace_id!r}, "
+        f"meeting_url={m.meeting_url!r} -> meeting_code={meeting_code!r}, access_type={access_type!r}"
+    )
     _patch_meet_space_access_type(db, workspace_id, meeting_code, access_type)
 
     m.meet_access_type = access_type
@@ -3091,6 +3111,17 @@ def set_space_access_type_direct(body: dict, db: Session = Depends(get_db), curr
     meeting_code = meeting_url.rstrip("/").rsplit("/", 1)[-1]
     if not meeting_code:
         raise HTTPException(400, "Không xác định được Space từ link cuộc họp.")
+
+    # Diagnostic (chốt 2026-10-28, temporary) — exactly what the REQUEST
+    # BODY from CreateMeetingModal's toggle contained, before any derivation.
+    # Compares directly against diagnose_account_restriction.py's own
+    # space_name (taken straight from the v2 create response, never derived
+    # from a URL) to rule out a URL-parsing mismatch (query string, missing
+    # "spaces/" prefix, wrong segment picked, etc.) as the actual cause.
+    logger.info(
+        f"[space-access-type] request body: host_workspace_id={workspace_id!r}, "
+        f"meeting_url={meeting_url!r} -> meeting_code={meeting_code!r}, access_type={access_type!r}"
+    )
 
     _patch_meet_space_access_type(db, workspace_id, meeting_code, access_type)
     return {"success": True, "meet_access_type": access_type}
