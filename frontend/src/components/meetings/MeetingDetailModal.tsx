@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
-import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance, getApiErrorMessage, retryMeetingLink, setMeetingAccessType } from '@/lib/api';
+import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
@@ -150,15 +150,6 @@ export default function MeetingDetailModal({
   const [localProjectName, setLocalProjectName] = useState('');
   const [localProjectId, setLocalProjectId] = useState<number | null>(null);
   const [localMembers, setLocalMembers] = useState<any[]>([]);
-  // Google Meet accessType toggle (chốt 2026-10-28) — null means "use
-  // whatever the meeting prop says"; set once this modal itself changes it
-  // (toggle) or regenerates the link (retry-link, which always creates a
-  // brand-new Space with its own fresh ownership/accessType state).
-  const [localMeetAccessType, setLocalMeetAccessType] = useState<string | null>(null);
-  const [localMeetSpaceOwnedByApp, setLocalMeetSpaceOwnedByApp] = useState<boolean | null>(null);
-  const [localMeetingUrl, setLocalMeetingUrl] = useState<string | null>(null);
-  const [accessTypeSaving, setAccessTypeSaving] = useState(false);
-  const [retryingLink, setRetryingLink] = useState(false);
 
   // host_google_email is resolved server-side per the meeting's own workspace
   // (its connected WorkspaceGoogleAccount, or that workspace's expected-email
@@ -290,50 +281,6 @@ export default function MeetingDetailModal({
     }
   };
 
-  // Google Meet accessType toggle (chốt 2026-10-28) — backend already
-  // rejects with a clear 400 when meet_space_owned_by_app isn't true, so
-  // this never needs its own pre-check; it just surfaces whatever message
-  // comes back.
-  const handleToggleAccessType = async (nextType: 'OPEN' | 'TRUSTED') => {
-    if (!meeting?.id || nextType === meetAccessType) return;
-    setAccessTypeSaving(true);
-    try {
-      const res = await setMeetingAccessType(meeting.id, nextType);
-      if (res?.success) {
-        setLocalMeetAccessType(res.meet_access_type);
-        queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, meet_access_type: res.meet_access_type } : m));
-      }
-    } catch (e) {
-      triggerToast(getApiErrorMessage(e, 'Không thể đổi chế độ vào phòng'), 'warning');
-    } finally {
-      setAccessTypeSaving(false);
-    }
-  };
-
-  // "Tạo lại link" from inside the detail view — same retry-link path
-  // CreateMeetingModal's edit form uses. Regenerating always creates a
-  // brand-new Space via create_google_meet_shared, which (under the
-  // GOOGLE_MEET_USE_V2_SPACE_CREATION flag) is now owned by the app, so the
-  // accessType toggle becomes available right after this succeeds.
-  const handleRetryLinkForAccessType = async () => {
-    if (!meeting?.id) return;
-    setRetryingLink(true);
-    try {
-      const res = await retryMeetingLink(meeting.id);
-      if (res?.success && res.data) {
-        setLocalMeetingUrl(res.data.meeting_url || res.data.meet_link || null);
-        setLocalMeetSpaceOwnedByApp(Boolean(res.data.meet_space_owned_by_app));
-        setLocalMeetAccessType(res.data.meet_access_type || null);
-        queryClient.setQueryData(['meetings'], (prev: any[] = []) => prev.map(m => m.id === meeting.id ? { ...m, ...res.data } : m));
-        triggerToast('✓ Đã tạo lại link Google Meet!');
-      }
-    } catch (e) {
-      triggerToast(getApiErrorMessage(e, 'Không thể tạo lại link Google Meet'), 'warning');
-    } finally {
-      setRetryingLink(false);
-    }
-  };
-
   const handleSubmitFeedback = async (helpful: boolean) => {
     if (!meeting?.id) return;
     setFeedbackSubmitting(true);
@@ -370,10 +317,7 @@ export default function MeetingDetailModal({
   // must never carry authuser=). Some older meetings (created/edited before
   // that guarantee existed) still have authuser baked directly into the
   // stored value, so strip it defensively here rather than trust the DB.
-  const rawLink = localMeetingUrl || meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
-  const isGoogleMeetPlatform = /google/i.test(meeting.platform || 'Google Meet');
-  const meetSpaceOwnedByApp = localMeetSpaceOwnedByApp ?? Boolean(meeting?.meet_space_owned_by_app);
-  const meetAccessType = (localMeetAccessType ?? meeting?.meet_access_type ?? 'TRUSTED').toUpperCase();
+  const rawLink = meeting.meet_link || meeting.link || meeting.meeting_url || meeting.join_url || '';
   const rawLinkWithProtocol = rawLink ? (rawLink.startsWith('http') ? rawLink : `https://${rawLink}`) : 'https://meet.google.com/new';
   const baseLink = (() => {
     try {
@@ -1094,61 +1038,6 @@ export default function MeetingDetailModal({
                         {isDone ? 'Completed' : 'Scheduled'}
                       </span>
                     </div>
-
-                    {isGoogleMeetPlatform && rawLink && (
-                      <div className="sm:col-span-2">
-                        <span className="text-[#64748b] block mb-1">Chế độ vào phòng</span>
-                        {meetSpaceOwnedByApp ? (
-                          meeting?.can_manage ? (
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                disabled={accessTypeSaving}
-                                onClick={() => handleToggleAccessType('TRUSTED')}
-                                className={`px-3 py-1.5 text-[11px] font-bold rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                                  meetAccessType === 'TRUSTED'
-                                    ? 'bg-[#6366f1] text-white border-[#6366f1]'
-                                    : 'bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#6366f1]'
-                                }`}
-                              >
-                                🔒 Đáng tin cậy
-                              </button>
-                              <button
-                                type="button"
-                                disabled={accessTypeSaving}
-                                onClick={() => handleToggleAccessType('OPEN')}
-                                className={`px-3 py-1.5 text-[11px] font-bold rounded-lg border transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
-                                  meetAccessType === 'OPEN'
-                                    ? 'bg-[#6366f1] text-white border-[#6366f1]'
-                                    : 'bg-white text-[#64748b] border-[#e2e8f0] hover:border-[#6366f1]'
-                                }`}
-                              >
-                                🌐 Mở
-                              </button>
-                              {accessTypeSaving && <span className="text-[10px] text-[#64748b]">Đang lưu...</span>}
-                            </div>
-                          ) : (
-                            <span className="font-bold text-[#0b1c30]">
-                              {meetAccessType === 'OPEN' ? '🌐 Mở' : '🔒 Đáng tin cậy'}
-                            </span>
-                          )
-                        ) : (
-                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-[#92400e]">
-                            <span>Cuộc họp này chưa hỗ trợ đổi chế độ vào phòng tự động.</span>
-                            {meeting?.can_manage && (
-                              <button
-                                type="button"
-                                onClick={handleRetryLinkForAccessType}
-                                disabled={retryingLink}
-                                className="px-2.5 py-1 font-bold text-[#6366f1] bg-[#f5f3ff] hover:bg-[#6366f1] hover:text-white border border-[#c7d2fe] hover:border-[#6366f1] rounded-lg transition-all disabled:opacity-50"
-                              >
-                                {retryingLink ? 'Đang tạo lại...' : 'Tạo lại link'}
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
                   </div>
 
                   {/* Sync Notification Box if n8n source */}
