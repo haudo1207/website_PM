@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
-import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembersForProjects, getMeetingHosts, getApiErrorMessage } from '@/lib/api';
+import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembersForProjects, getMeetingHosts, getApiErrorMessage, setMeetingAccessType, setSpaceAccessTypeDirect } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
 
 interface CreateMeetingModalProps {
@@ -28,6 +28,15 @@ interface MeetingFormData {
   // being non-empty by then makes create_meeting skip its own creation path).
   google_event_id?: string;
   organizer_google_email?: string;
+  // Space ownership + accessType toggle (chốt 2026-10-28) — meet_space_owned_by_app
+  // comes back from generateMeetingLink/retryMeetingLink (create) or straight
+  // off initialData (edit, via meeting_to_dict); gates the "Mở duyệt" toggle
+  // in the footer. meet_access_type is set locally the moment the toggle
+  // actually succeeds against Google — carried into the create payload so
+  // the new Meeting row is stamped with whatever was really set on the
+  // Space, not silently left at the TRUSTED default.
+  meet_space_owned_by_app?: boolean;
+  meet_access_type?: string;
   // HOST * field (chốt 2026-09-14): which Workspace's Google account
   // organizes this meeting — independent of the project's own Workspace,
   // so a broken/unavailable account can be worked around at creation time.
@@ -471,6 +480,7 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // stale-closured across those clicks since React hasn't re-rendered yet).
   const isSubmittingRef = useRef(false);
   const [isGeneratingLink, setIsGeneratingLink] = useState(false);
+  const [accessTypeSaving, setAccessTypeSaving] = useState(false);
   const [isGeneratingAiContent, setIsGeneratingAiContent] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [error, setError] = useState('');
@@ -821,6 +831,14 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
   // only — the backend 400s regardless of what this modal lets through.
   const isLocked = !!initialData && initialData.status !== 'SẮP TỚI';
 
+  // "Mở duyệt" toggle visibility (chốt 2026-10-28) — only once there IS a
+  // real Google Meet link AND this app actually owns that Space (flag OFF
+  // at creation time, or a meeting from before this feature existed, both
+  // show meet_space_owned_by_app falsy — PATCH would 403 either way).
+  const meetSpaceOwnedByApp = Boolean(formData.meet_space_owned_by_app);
+  const meetAccessTypeIsOpen = (formData.meet_access_type || 'TRUSTED').toUpperCase() === 'OPEN';
+  const showAccessTypeToggle = !isLocked && formData.platform === 'Google Meet' && !!formData.link && meetSpaceOwnedByApp;
+
   // "Cả team" phải dùng chính membersList đang hiển thị trong dropdown (đã
   // scope theo project_ids qua effect ở trên, chốt feature 010) — không tự
   // fetch riêng, để không thể lệch khỏi danh sách người dùng đang thấy.
@@ -868,7 +886,15 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       if (initialData?.id) {
         const data = await retryMeetingLink(initialData.id);
         if (data.success && data.data?.link) {
-          setFormData(prev => ({ ...prev, link: data.data.link }));
+          // Brand-new Space — its own ownership/accessType state, nothing
+          // to do with whatever the OLD link had (mirrors retry_meeting_link's
+          // own m.meet_access_type = None reset server-side).
+          setFormData(prev => ({
+            ...prev,
+            link: data.data.link,
+            meet_space_owned_by_app: Boolean(data.data.meet_space_owned_by_app),
+            meet_access_type: data.data.meet_access_type,
+          }));
         } else {
           setError('Không thể tạo lại link meeting tự động');
         }
@@ -894,6 +920,9 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
           link: fullUrl,
           google_event_id: data.google_event_id,
           organizer_google_email: data.organizer_google_email,
+          meet_space_owned_by_app: Boolean(data.meet_space_owned_by_app),
+          // Fresh Space, no accessType has been set on it yet.
+          meet_access_type: undefined,
         }));
       } else {
         setError('Không thể tạo link meeting tự động');
@@ -902,6 +931,40 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
       setError(getApiErrorMessage(err, 'Lỗi khi tạo link meeting'));
     } finally {
       setIsGeneratingLink(false);
+    }
+  };
+
+  // "Mở duyệt" toggle (chốt 2026-10-28) — ON = OPEN (ai có link vào thẳng,
+  // không cần duyệt), OFF/mặc định = TRUSTED (chỉ người được mời vào thẳng,
+  // người lạ vẫn phải xin phép). Applies immediately against Google, not
+  // deferred to "Tạo meeting": editing an existing meeting goes through the
+  // same /{id}/access-type endpoint MeetingDetailModal uses (persists right
+  // away); creating a new one has no Meeting row yet, so it goes through
+  // the no-id /space-access-type variant instead — its result is only kept
+  // in formData.meet_access_type here, persisted for real once "Tạo meeting"
+  // actually creates the row.
+  const handleToggleOpenApproval = async (nextOpen: boolean) => {
+    const nextType: 'OPEN' | 'TRUSTED' = nextOpen ? 'OPEN' : 'TRUSTED';
+    if (nextType === (formData.meet_access_type || 'TRUSTED').toUpperCase()) return;
+    setAccessTypeSaving(true);
+    setError('');
+    try {
+      if (initialData?.id) {
+        const res = await setMeetingAccessType(initialData.id, nextType);
+        if (res?.success) setFormData(prev => ({ ...prev, meet_access_type: res.meet_access_type }));
+      } else {
+        if (!formData.host_workspace_id || !formData.link) return;
+        const res = await setSpaceAccessTypeDirect({
+          host_workspace_id: formData.host_workspace_id,
+          meeting_url: formData.link,
+          access_type: nextType,
+        });
+        if (res?.success) setFormData(prev => ({ ...prev, meet_access_type: res.meet_access_type }));
+      }
+    } catch (err: any) {
+      setError(getApiErrorMessage(err, 'Không thể đổi chế độ vào phòng'));
+    } finally {
+      setAccessTypeSaving(false);
     }
   };
 
@@ -1591,15 +1654,43 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
 
           {/* Footer */}
           <div className="px-6 py-4 bg-[#f8f9fe] border-t border-[#c2c6d6]/40 flex items-center justify-between gap-3 shrink-0">
-            <div className="text-[11px] text-[#565e74] font-medium min-w-0 truncate">
-              {formData.date && formData.time && (
-                <>
-                  <b className="text-[#0b1c30]">{formatSummaryDate(formData.date)}</b>
-                  {' · '}{formData.time}–{addMinutes(formData.time, formData.duration)}
-                  {' · '}{formData.member_ids.length} người
-                  {' · '}{formData.platform}
-                </>
+            <div className="flex items-center gap-4 min-w-0">
+              {showAccessTypeToggle && (
+                <label
+                  className="flex items-center gap-2 shrink-0 cursor-pointer select-none"
+                  title='Mở: ai có link cũng vào thẳng, không cần duyệt. Tắt (mặc định): chỉ người được mời vào thẳng, người lạ vẫn phải xin phép.'
+                >
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={meetAccessTypeIsOpen}
+                    disabled={accessTypeSaving}
+                    onClick={() => handleToggleOpenApproval(!meetAccessTypeIsOpen)}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 shrink-0 ${
+                      meetAccessTypeIsOpen ? 'bg-[#0058be]' : 'bg-[#c2c6d6]'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${
+                        meetAccessTypeIsOpen ? 'translate-x-[18px]' : 'translate-x-[3px]'
+                      }`}
+                    />
+                  </button>
+                  <span className="text-[11px] font-bold text-[#565e74] whitespace-nowrap">
+                    Mở duyệt{accessTypeSaving ? '...' : ''}
+                  </span>
+                </label>
               )}
+              <div className="text-[11px] text-[#565e74] font-medium min-w-0 truncate">
+                {formData.date && formData.time && (
+                  <>
+                    <b className="text-[#0b1c30]">{formatSummaryDate(formData.date)}</b>
+                    {' · '}{formData.time}–{addMinutes(formData.time, formData.duration)}
+                    {' · '}{formData.member_ids.length} người
+                    {' · '}{formData.platform}
+                  </>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-3 shrink-0">
             <button
