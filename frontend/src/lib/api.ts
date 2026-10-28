@@ -773,6 +773,11 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
 // meeting_url/google_event_id/organizer_google_email server-side in one request.
 // Plain PUT /meetings/{id} no longer accepts organizer_google_email at all.
 export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number | null }) => api.post(`/meetings/${id}/retry-link`, data).then(r => r.data);
+// Google Meet accessType toggle (chốt 2026-10-28) — only works when the
+// meeting's meet_space_owned_by_app is true (Space created via Meet API v2);
+// otherwise the backend rejects with a 400 before ever calling Google.
+export const setMeetingAccessType = (id: number, accessType: 'OPEN' | 'TRUSTED') =>
+  api.patch(`/meetings/${id}/access-type`, { access_type: accessType }).then(r => r.data);
 // Manual-end fallback (chốt 2026-09-14): for when the Meeting Host Bot/VPS
 // is down and a human ended the call by hand on Google Meet — marks the
 // meeting DONE without waiting for the Bot's own POST /meeting-bot/ended.

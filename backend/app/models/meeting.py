@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, Date, Time, ForeignKey, DateTime, JSON, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Text, Date, Time, ForeignKey, DateTime, JSON, Boolean, UniqueConstraint, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -62,6 +62,23 @@ class Meeting(Base):
     # MeetingMember (real system Members — attendance/scoring/reminders all
     # key off that table, never this one). See _sync_meeting_calendar_attendees.
     guest_emails     = Column(JSON, nullable=True)
+    # Space ownership + accessType toggle (chốt 2026-10-28, Giai đoạn 2 của
+    # migration create_google_meet_shared -> Meet API v2, see
+    # services/meeting_sync.py's GOOGLE_MEET_USE_V2_SPACE_CREATION branch).
+    # meet_space_owned_by_app: True only when this meeting's Space was
+    # created directly via Meet API v2 (the app is its owner/creator) — NULL
+    # or False for every meeting created before this feature existed, or
+    # while the flag was off. PATCH config.accessType only works when this
+    # is True (Google: only the Space's creator may write its config); the
+    # PATCH /{id}/access-type endpoint checks this BEFORE calling Google, to
+    # avoid a request known in advance to fail with 403.
+    # meet_access_type: the last accessType ("OPEN"/"TRUSTED") this app
+    # successfully PATCHed, cached here purely so the UI can show the
+    # current toggle state without re-fetching the Space from Google on
+    # every page load. NULL until the first successful toggle (the UI
+    # treats NULL as the "TRUSTED" default).
+    meet_space_owned_by_app = Column(Boolean, nullable=True)
+    meet_access_type        = Column(String(20), nullable=True)
     # Set once a reminder has been dispatched for this meeting — the claim
     # guard that keeps two uvicorn workers from both sending it (see
     # meeting_reminders._claim_due_meetings).

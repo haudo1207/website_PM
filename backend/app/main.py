@@ -320,6 +320,14 @@ def apply_schema_updates():
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS guest_emails JSON"
         ))
+        # Space ownership + accessType toggle (chốt 2026-10-28) — see
+        # Meeting.meet_space_owned_by_app / meet_access_type.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meet_space_owned_by_app BOOLEAN"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meet_access_type VARCHAR(20)"
+        ))
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
         ))

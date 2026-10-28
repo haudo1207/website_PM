@@ -594,6 +594,11 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
         # created (e.g. workspace connected later) — see meeting_to_dict's
         # host_google_email, which must prefer this frozen value once stored.
         "organizer_google_email": data.get("organizer", {}).get("email"),
+        # True only when the v2 branch above ran — i.e. this app itself
+        # created the Space, not Calendar implicitly. Gates PATCH
+        # /{id}/access-type (routers/meetings.py): only a Space the app
+        # actually owns can have its config written.
+        "meet_space_owned_by_app": use_v2,
     }
 
 
@@ -777,6 +782,7 @@ def create_google_meet_link(db, user_id: int, topic: str, start_time: str, durat
                 "id": res.get("google_event_id"),
                 "mk_tag": res.get("mk_tag"),
                 "organizer_google_email": res.get("organizer_google_email"),
+                "meet_space_owned_by_app": res.get("meet_space_owned_by_app"),
             }
         else:
             raise ValueError("Google Calendar không trả về meet_link hợp lệ")

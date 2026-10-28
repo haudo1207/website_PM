@@ -383,6 +383,8 @@ def meeting_to_dict(m: Meeting, db=None, current_user=None) -> dict:
         "reminder_minutes": m.reminder_minutes,
         "notify_channels": m.notify_channels,
         "guest_emails": m.guest_emails or [],
+        "meet_space_owned_by_app": bool(m.meet_space_owned_by_app),
+        "meet_access_type": m.meet_access_type or "TRUSTED",
         "score_total": m.score_total,
         "score_prep": m.score_prep,
         "score_execution": m.score_execution,
@@ -959,6 +961,7 @@ def generate_meeting_link(body: dict, db: Session = Depends(get_db), current_use
                 # already non-empty by then) and leaving both fields NULL.
                 "google_event_id": result.get("id"),
                 "organizer_google_email": result.get("organizer_google_email"),
+                "meet_space_owned_by_app": result.get("meet_space_owned_by_app"),
             }
         except Exception as e:
             logger.error(f"Generate Google Meet link failed: {e}")
@@ -1496,6 +1499,12 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
     # instead of silently leaving both NULL for every meeting created this way.
     google_event_id = body.get("google_event_id")
     organizer_google_email = body.get("organizer_google_email")
+    # Carried through the same round-trip as google_event_id/organizer_google_email
+    # above (POST /generate-link's response -> this body) — see
+    # Meeting.meet_space_owned_by_app's docstring for what it gates.
+    meet_space_owned_by_app = body.get("meet_space_owned_by_app")
+    if not isinstance(meet_space_owned_by_app, bool):
+        meet_space_owned_by_app = None
     # HOST * field (chốt 2026-09-14): body.host_workspace_id, when sent,
     # overrides the project-derived workspace for EVERY Google side-effect
     # below (Meet-link generation, n8n notify routing, Drive tag rename) — a
@@ -1533,6 +1542,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
                 meeting_url = result["join_url"]
                 google_event_id = result.get("id")
                 organizer_google_email = result.get("organizer_google_email")
+                meet_space_owned_by_app = result.get("meet_space_owned_by_app")
                 # NOT notifying n8n here on purpose (confirmed live 2026-09-13):
                 # result["mk_tag"] is a throwaway placeholder timestamp, not
                 # this row's real id — notified once below, after db.flush(),
@@ -1579,6 +1589,7 @@ def create_meeting(body: dict, db: Session = Depends(get_db), current_user = Dep
         reminder_minutes=reminder_minutes,
         notify_channels=notify_channels,
         guest_emails=guest_emails,
+        meet_space_owned_by_app=meet_space_owned_by_app,
     )
     # Auto-summarize with AI on create (using structured output)
     try:
@@ -2930,6 +2941,13 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
     m.meeting_url = link_data["join_url"]
     m.google_event_id = link_data.get("id") or m.google_event_id
     m.organizer_google_email = new_organizer or m.organizer_google_email
+    # Brand-new Space (always, even under the OLD creation branch — retry
+    # always calls create_google_meet_link fresh) — reflects whichever
+    # branch create_google_meet_shared actually ran under, and resets any
+    # previously-PATCHed accessType since that applied to the OLD Space,
+    # not this new one.
+    m.meet_space_owned_by_app = link_data.get("meet_space_owned_by_app")
+    m.meet_access_type = None
     # n8n only knows about meetings via notify_n8n_meeting_created — a new
     # event means a new join link/Drive tag it has never seen, so re-arm the
     # notify pipeline instead of leaving it at whatever terminal state the
@@ -2964,6 +2982,72 @@ def retry_meeting_link(id: int, body: Optional[dict] = None, db: Session = Depen
     notify_n8n_meeting_created(db, m, workspace_id)
 
     return {"success": True, "data": meeting_to_dict(m, db=db, current_user=current_user)}
+
+
+# ─── GOOGLE MEET ACCESS TYPE (OPEN/TRUSTED) TOGGLE ────────────
+@router.patch("/{id}/access-type")
+def set_meeting_access_type(id: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+    """Toggle a meeting's Google Meet Space between OPEN and TRUSTED entry
+    (config.accessType). Only works for a Space this app itself created
+    directly via Meet API v2 (meet_space_owned_by_app == True) — Google only
+    lets a Space's actual creator/owner write its config, confirmed
+    empirically (test_space_v2_architecture.py, 2026-10-28) against a real
+    Space created the OLD way (via Calendar's conferenceData.createRequest,
+    which Calendar — not this app — ends up owning): PATCH always 403s
+    there, scope/permissions notwithstanding. Rejected with a clear 400
+    BEFORE calling Google for any meeting where that flag isn't True, so a
+    known-to-fail request is never actually sent."""
+    m = _get_active_meeting(db, id)
+
+    access_type = str(body.get("access_type", "")).strip().upper()
+    if access_type not in ("OPEN", "TRUSTED"):
+        raise HTTPException(400, "access_type phải là 'OPEN' hoặc 'TRUSTED'.")
+    if (m.platform or "").strip().lower() not in ("google meet", "google"):
+        raise HTTPException(400, f"Không áp dụng chế độ vào phòng cho nền tảng '{m.platform}'.")
+    if not m.meet_space_owned_by_app:
+        raise HTTPException(
+            400,
+            "Cuộc họp này được tạo trước khi tính năng này khả dụng — cần tạo lại link "
+            "Google Meet (\"Tạo lại link\") để dùng được chế độ này.",
+        )
+    if not m.meeting_url:
+        raise HTTPException(400, "Cuộc họp chưa có link Google Meet.")
+    meeting_code = (m.meeting_url or "").rstrip("/").rsplit("/", 1)[-1]
+    if not meeting_code:
+        raise HTTPException(400, "Không xác định được Space từ link cuộc họp.")
+
+    workspace_id = _host_workspace_id_for_meeting(db, m)
+    from ..services.meeting_sync import get_workspace_google_access_token
+    try:
+        token = get_workspace_google_access_token(db, workspace_id)
+    except Exception as e:
+        raise HTTPException(400, f"Không lấy được token Google cho Workspace đang host cuộc họp này: {e}")
+
+    import requests
+    resp = requests.patch(
+        f"https://meet.googleapis.com/v2/spaces/{meeting_code}",
+        params={"updateMask": "config.accessType"},
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={"config": {"accessType": access_type}},
+        timeout=15,
+    )
+    if not resp.ok:
+        logger.error(f"PATCH Meet space accessType failed for meeting {id}: status={resp.status_code}, body={resp.text}")
+        raise HTTPException(
+            400,
+            "Không thể đổi chế độ vào phòng cho cuộc họp này — Google từ chối yêu cầu "
+            "(có thể do quyền sở hữu Space hoặc sự cố tạm thời từ Google).",
+        )
+
+    m.meet_access_type = access_type
+    db.commit()
+    AuditService.record(
+        db=db, user_id=getattr(current_user, "id", None), module="Meeting", entity_type="Meeting",
+        entity_id=id, action="UPDATE", project_id=m.project_id, resource_name=m.title,
+        description=f"Đổi chế độ vào phòng Google Meet sang {access_type}",
+    )
+    db.commit()
+    return {"success": True, "meet_access_type": access_type}
 
 
 # ─── N8N INTEGRATION WEBHOOK SCHEMAS & ENDPOINT ───────────────
