@@ -318,7 +318,7 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
 
       {demoNotif && (
         <div
-          className="fixed inset-0 bg-black/50 flex items-center justify-center z-[400] p-4"
+          className="fixed inset-0 flex items-center justify-center z-[400] p-4"
           onClick={() => !sendingDemo && setDemoNotifId(null)}
         >
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
@@ -540,7 +540,7 @@ function NavbarContent() {
 
       {/* Mobile Menu Overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-[190] bg-black/50" onClick={() => setMobileMenuOpen(false)} />
+        <div className="md:hidden fixed inset-0 z-[190]" onClick={() => setMobileMenuOpen(false)} />
       )}
 
       {/* Sidebar - Hidden on mobile, visible on md+ */}

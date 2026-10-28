@@ -271,7 +271,7 @@ export default function MembersView({ onFlash, onAccountCreated }: Props) {
   // ─── Render ───────────────────────────────────────────────────────
   return (
     <div className="space-y-6">
-      <div className="sticky top-[168px] md:top-[112px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
+      <div className="sticky top-[168px] md:top-[112px] z-[50] bg-[#f8fafc]/95">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-6 space-y-6">
           {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -484,7 +484,7 @@ export default function MembersView({ onFlash, onAccountCreated }: Props) {
 
       {/* Modal Add / Edit */}
       {showModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-start justify-center overflow-y-auto py-10">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto py-10">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-4 overflow-hidden">
             {/* Modal Header */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
@@ -679,7 +679,7 @@ export default function MembersView({ onFlash, onAccountCreated }: Props) {
 
       {/* ═══ ACCOUNT CREATION MODAL ═══ */}
       {showAccountModal && accountPrefill && (
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             {/* Modal Header */}
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">

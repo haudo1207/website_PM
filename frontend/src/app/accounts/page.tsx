@@ -489,7 +489,7 @@ export default function AccountsPage() {
               <div className="text-2xl font-bold text-red-500 mt-1">{filteredAccounts.filter(a => !a.is_active).length}</div>
             </div>
           </div>
-              <div className="sticky top-[160px] md:top-[104px] z-[50] bg-[#f8fafc]/95 backdrop-blur-sm">
+              <div className="sticky top-[160px] md:top-[104px] z-[50] bg-[#f8fafc]/95">
               {/* Search & Filters */}
               <div className="bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm flex flex-wrap items-center gap-3 relative z-[100]">
                 <div className="relative flex-1 min-w-[200px]">
@@ -680,7 +680,7 @@ export default function AccountsPage() {
 
       {/* ═══ CREATE MODAL ═══ */}
       {showCreate && (
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Tạo tài khoản mới</h3>
@@ -875,7 +875,7 @@ export default function AccountsPage() {
 
       {/* ═══ EDIT MODAL ═══ */}
       {editAccount && (
-        <div className="fixed inset-0 bg-slate-900/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-lg rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
               <h3 className="text-sm font-bold text-[#0f172a] uppercase tracking-wider">Chỉnh sửa tài khoản</h3>

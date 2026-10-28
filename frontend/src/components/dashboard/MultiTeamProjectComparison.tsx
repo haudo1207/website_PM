@@ -1068,7 +1068,7 @@ export default function MultiTeamProjectComparison() {
 
       {/* Section 2 detail drawer */}
       {(detailTeam || detailLoading) && (
-        <div className="fixed inset-0 bg-slate-900/20 z-[999] flex justify-end">
+        <div className="fixed inset-0 z-[999] flex justify-end">
           <div className="fixed inset-0" onClick={closeTeamDetail} />
           <div className="relative w-full max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col z-10 animate-in slide-in-from-right duration-250">
             <div className="p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">

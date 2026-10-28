@@ -500,7 +500,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       <div className={`flex-1 min-w-0 pl-0 ${sidebarCollapsed ? SIDEBAR_PAD_COLLAPSED : SIDEBAR_PAD_EXPANDED} pt-14 md:pt-0 flex flex-col min-h-screen transition-[padding] duration-200`}>
         <div className="p-4 md:p-8 space-y-6 max-w-[1400px] w-full mx-auto">
           {msg && (
-            <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border backdrop-blur-sm transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
+            <div className={`fixed top-6 right-6 z-50 rounded-xl px-5 py-3 text-sm font-semibold shadow-xl border transition-all duration-300 transform translate-y-0 ${msg.e ? 'bg-red-50/90 text-red-700 border-red-200' : 'bg-emerald-50/90 text-emerald-700 border-emerald-200'}`}>
               {msg.t}
             </div>
           )}
@@ -1065,7 +1065,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       )}
 
       {showBulkDeleteConfirm && (
-        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
             <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa {visibleSelectedIds.length} dự án</h2>
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa {visibleSelectedIds.length} dự án đã chọn? Hành động này không thể hoàn tác.</p>
@@ -1113,7 +1113,7 @@ export default function ProjectListContent({ lockedWorkspace, renderTabs }: Proj
       />
 
       {deleteId !== null && (
-        <div className="fixed inset-0 bg-black/20 z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-[#c2c6d6] rounded-xl shadow-2xl p-6 max-w-sm w-full">
             <h2 className="text-base font-bold text-[#0b1c30] mb-2">⚠️ Xóa dự án</h2>
             <p className="text-sm text-[#565e74] mb-6">Bạn có chắc muốn xóa dự án này?</p>

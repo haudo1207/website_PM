@@ -1908,7 +1908,7 @@ export default function LeaveRequestPage() {
         )}
 
         {selectedMember && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
             <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start justify-between">
                 <div>
@@ -1956,7 +1956,7 @@ export default function LeaveRequestPage() {
         )}
 
         {viewingRequest && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
             <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start justify-between">
                 <div>

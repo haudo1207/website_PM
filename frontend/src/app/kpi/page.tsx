@@ -889,7 +889,7 @@ export default function KPIPage() {
                     {/* Table */}
                     <div className="bg-white border border-slate-200 rounded-xl shadow-sm relative">
                         {isLoading && (
-                            <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
+                            <div className="absolute inset-0 z-50 bg-white/60 flex items-center justify-center rounded-xl">
                                 <div className="flex flex-col items-center gap-3">
                                     <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                                     <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu...</p>

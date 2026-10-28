@@ -700,7 +700,7 @@ export default function MeetingDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 animate-in fade-in duration-200 p-2 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-in fade-in duration-200 p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 animate-in zoom-in-95 duration-200 max-h-[92vh] my-auto">
         
         {/* Top Header Bar with Back Link */}
@@ -1893,7 +1893,7 @@ export default function MeetingDetailModal({
 
       {/* Gán Dự Án Modal */}
       {isAssignProjectOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
@@ -1947,7 +1947,7 @@ export default function MeetingDetailModal({
 
       {/* Manual-end fallback confirm (chốt 2026-09-14) */}
       {showEndConfirm && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <h3 className="text-sm font-extrabold text-[#0b1c30]">Bạn có chắc cuộc họp đã kết thúc?</h3>
             <p className="text-xs text-[#64748b] leading-relaxed">
@@ -1975,7 +1975,7 @@ export default function MeetingDetailModal({
 
       {/* Ghi nhận tham gia (Manual Attendance Phase 1, chốt 2026-09-15) */}
       {showAttendanceModal && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
               <h3 className="text-sm font-extrabold text-[#0b1c30]">Ghi nhận tham gia</h3>
@@ -2037,7 +2037,7 @@ export default function MeetingDetailModal({
 
       {/* Thêm Thành Viên Modal (Multi-Select Supported) */}
       {isAddMemberOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/20 p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>
