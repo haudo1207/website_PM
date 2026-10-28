@@ -333,9 +333,13 @@ export default function MemberDetailModal({
       {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
       <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
 
-        {/* HEADER */}
+        {/* HEADER — the name/avatar block is keyed by member.id so switching
+            directly from one member's panel to another's (same mounted
+            drawer, no close/reopen) cross-fades instead of hard-swapping
+            text mid-frame; onClose button lives OUTSIDE this key so it
+            never re-animates. */}
         <div className="sticky top-0 z-20 bg-white px-6 py-4 border-b border-slate-100 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-4">
+          <div key={member.id} className="flex items-center gap-4 animate-in fade-in duration-200">
             <div className="w-12 h-12 rounded-full bg-[#0058be] text-white flex items-center justify-center font-black text-lg shadow-sm shrink-0">
               {member.name ? member.name.charAt(0).toUpperCase() : 'M'}
             </div>
@@ -354,8 +358,12 @@ export default function MemberDetailModal({
           </button>
         </div>
 
-        {/* DRAWER BODY CONTENT */}
-        <div className="p-6 space-y-6 flex-1">
+        {/* DRAWER BODY CONTENT — same key={member.id} cross-fade as the
+            header above; the OUTER drawer frame/backdrop/scroll container
+            above never remounts, so the panel itself never visually
+            closes — only this content block fades to the new member's
+            data. */}
+        <div key={member.id} className="p-6 space-y-6 flex-1 animate-in fade-in duration-200">
 
           {/* 1. TOP METRIC SUMMARY (6 CARDS IN A ROW) */}
           <div className="grid grid-cols-6 gap-2">
