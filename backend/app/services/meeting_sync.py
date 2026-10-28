@@ -472,14 +472,60 @@ def is_workspace_google_connected(db, workspace_id: int) -> dict:
     }
 
 
+def _create_meet_space_v2(token: str) -> dict:
+    """POST meet.googleapis.com/v2/spaces — creates a Space the app itself
+    owns (unlike one implicitly created by Calendar's conferenceData.
+    createRequest, which Calendar — not this app — ends up owning; only the
+    owner/creator of a Space may later PATCH its config, e.g. accessType).
+    Verified empirically (test_space_v2_architecture.py, 2026-10-28):
+    identical artifactConfig defaults (transcription/smart notes/recording)
+    to a Space created the old way. Raises ValueError on failure, same
+    contract as the Calendar insert call below."""
+    resp = requests.post(
+        "https://meet.googleapis.com/v2/spaces",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+        json={},
+        timeout=15,
+    )
+    if not resp.ok:
+        logger.error(f"Meet API v2 space creation failed: status={resp.status_code}, body={resp.text}")
+        raise ValueError(f"Meet API v2 space creation failed: {resp.text}")
+    return resp.json()
+
+
 def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, creator_email: str, start_iso: str, end_iso: str, attendees_emails: list, db=None, workspace_id: int = None) -> dict:
     """
     Create Google Meet event using shared operational account (mkt.szone@gmail.com).
     Calls Google Calendar API events.insert with conferenceDataVersion=1. sendUpdates=none:
     the event still shows on each attendee's own Google Calendar (attendees[] controls that,
     independently of sendUpdates), but Google won't email them an invite notice.
+
+    Behind settings.GOOGLE_MEET_USE_V2_SPACE_CREATION (default OFF): instead
+    of letting Calendar create the Space implicitly (createRequest), creates
+    it directly via Meet API v2 first and attaches it to the event with a
+    hand-built conferenceData — the only way to end up owning the Space well
+    enough to later PATCH its config. See _create_meet_space_v2's docstring.
     """
     token = get_workspace_google_access_token(db, workspace_id)
+    use_v2 = settings.GOOGLE_MEET_USE_V2_SPACE_CREATION
+
+    conference_data = {
+        "createRequest": {
+            "requestId": f"mk-{meeting_id}-{os.urandom(3).hex()}",
+            "conferenceSolutionKey": {"type": "hangoutsMeet"}
+        }
+    }
+    if use_v2:
+        space = _create_meet_space_v2(token)
+        meeting_uri = space.get("meetingUri") or ""
+        meeting_code = meeting_uri.rstrip("/").rsplit("/", 1)[-1] if meeting_uri else ""
+        if not meeting_code:
+            raise ValueError(f"Meet API v2 space creation returned no usable meetingUri: {space}")
+        conference_data = {
+            "conferenceId": meeting_code,
+            "conferenceSolution": {"key": {"type": "hangoutsMeet"}},
+            "entryPoints": [{"entryPointType": "video", "uri": meeting_uri, "label": meeting_code}],
+        }
 
     body = {
         "summary": f"[MK-{meeting_id}] {title}",
@@ -487,12 +533,7 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
         "start": {"dateTime": start_iso, "timeZone": "Asia/Ho_Chi_Minh"},
         "end": {"dateTime": end_iso, "timeZone": "Asia/Ho_Chi_Minh"},
         "attendees": [{"email": e} for e in attendees_emails if e],
-        "conferenceData": {
-            "createRequest": {
-                "requestId": f"mk-{meeting_id}-{os.urandom(3).hex()}",
-                "conferenceSolutionKey": {"type": "hangoutsMeet"}
-            }
-        },
+        "conferenceData": conference_data,
         "extendedProperties": {
             "private": {
                 "markee_meeting_id": str(meeting_id)
@@ -516,21 +557,24 @@ def create_google_meet_shared(meeting_id: int, title: str, creator_name: str, cr
         raise ValueError(f"Google Calendar insert failed: {resp.text}")
 
     data = resp.json()
-    
-    # Handle pending statusCode per Spec Chapter 07
-    create_req_status = data.get("conferenceData", {}).get("createRequest", {}).get("status", {}).get("statusCode")
-    if create_req_status != "success":
-        import time
-        time.sleep(2)
-        event_id = data.get("id")
-        if event_id:
-            get_resp = requests.get(
-                f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}",
-                headers={"Authorization": f"Bearer {token}"},
-                timeout=10
-            )
-            if get_resp.ok:
-                data = get_resp.json()
+
+    # Handle pending statusCode per Spec Chapter 07 — only applies to the OLD
+    # createRequest path; a v2-created Space is already active, there is no
+    # "pending" status to poll for.
+    if not use_v2:
+        create_req_status = data.get("conferenceData", {}).get("createRequest", {}).get("status", {}).get("statusCode")
+        if create_req_status != "success":
+            import time
+            time.sleep(2)
+            event_id = data.get("id")
+            if event_id:
+                get_resp = requests.get(
+                    f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    timeout=10
+                )
+                if get_resp.ok:
+                    data = get_resp.json()
 
     entry_points = data.get("conferenceData", {}).get("entryPoints", [])
     meet_link = entry_points[0].get("uri") if entry_points else ""

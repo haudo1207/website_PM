@@ -105,6 +105,18 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_EMAIL: str = ""
     GOOGLE_PRIVATE_KEY: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/meetings/google/callback"
+    # Feature flag (chốt 2026-10-28): switches create_google_meet_shared()
+    # from the OLD mechanism (Calendar's own conferenceData.createRequest,
+    # which implicitly creates the Space) to creating the Space directly via
+    # Meet API v2 first (POST /v2/spaces) and attaching it to the Calendar
+    # event with a hand-built conferenceData — see
+    # test_space_v2_architecture.py for the empirical verification this was
+    # based on (identical artifactConfig defaults, identical Calendar
+    # Join-button rendering, and — the actual reason for migrating —
+    # PATCH config.accessType only works on a Space the app itself created).
+    # Default OFF: flip per-environment via .env, no redeploy needed to
+    # roll back if something unexpected turns up in production.
+    GOOGLE_MEET_USE_V2_SPACE_CREATION: bool = False
 
     # Frontend URL for OAuth redirects
     FRONTEND_URL: str = "http://localhost:3000"
