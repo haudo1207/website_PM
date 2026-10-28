@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, MoreHorizontal, Copy, Trash2, Plus, X } from 'lucide-react';
 import Portal from '@/components/Portal';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 import {
   CalendarTask, getProjectMembers, getCategories, getPriorities, getStatuses, updateTask, getApiErrorMessage,
   blockTask, unblockTask, getAllProjectTasks, getPerformanceSettings, getMe, createGroup, createSkill,
@@ -108,6 +109,7 @@ export default function TaskEditDrawer({
   // into any Calendar surface today — that's a real feature integration, not
   // a field-parity item, so it's left out of this pass (flagged separately).
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [headerMenuAnchorEl, setHeaderMenuAnchorEl] = useState<HTMLElement | null>(null);
   const [duplicating, setDuplicating] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -517,16 +519,21 @@ export default function TaskEditDrawer({
                 Detail's canEditTask/canDeleteTask (narrowed — see its own
                 comment above). */}
             {canManageThisTask && (
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setHeaderMenuOpen(o => !o)}
+                  onClick={(e) => { setHeaderMenuAnchorEl(e.currentTarget); setHeaderMenuOpen(o => !o); }}
                   className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-blue-50 hover:text-[#0058be] transition-colors ${headerMenuOpen ? 'bg-blue-50 text-[#0058be]' : ''}`}
                   title="Thao tác Task"
                 >
                   <MoreHorizontal size={18} />
                 </button>
-                {headerMenuOpen && (
-                  <div className="absolute right-0 top-9 z-30 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                <FloatingDropdown
+                  anchorEl={headerMenuAnchorEl}
+                  open={headerMenuOpen}
+                  onClose={() => setHeaderMenuOpen(false)}
+                  align="right"
+                  className="w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                >
                     <button
                       onClick={() => { setHeaderMenuOpen(false); handleDuplicate(); }}
                       disabled={duplicating}
@@ -541,8 +548,7 @@ export default function TaskEditDrawer({
                     >
                       <Trash2 size={14} /> Xóa Task
                     </button>
-                  </div>
-                )}
+                </FloatingDropdown>
               </div>
             )}
             <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors shrink-0">
