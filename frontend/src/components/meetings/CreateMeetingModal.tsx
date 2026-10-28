@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X, Calendar as CalendarIcon, Sparkles, RefreshCw, Copy, Check, Clipboard } from 'lucide-react';
 import { generateMeetingLink, retryMeetingLink, checkMeetingConflict, generateAiMeetingContent, getProjects, getMembersForProjects, getMeetingHosts, getApiErrorMessage, setMeetingAccessType, setSpaceAccessTypeDirect } from '@/lib/api';
 import SearchableSelect, { SearchableSelectHandle } from '@/components/common/SearchableSelect';
+import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 
 interface CreateMeetingModalProps {
   isOpen: boolean;
@@ -1266,7 +1267,12 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia *</label>
+                  <span className="flex items-center gap-1">
+                    <label className="block text-[10px] font-bold text-[#565e74] uppercase tracking-wider">Thành viên tham gia *</label>
+                    <FormulaTooltip>
+                      <p className="text-white/90">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên đang hiển thị (theo dự án đã chọn, hoặc theo Workspace nếu chưa chọn dự án).</p>
+                    </FormulaTooltip>
+                  </span>
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
@@ -1324,7 +1330,6 @@ export default function CreateMeetingModal({ isOpen, onClose, onSave, initialDat
                     })}
                   </div>
                 )}
-                <p className="text-[11px] text-[#94a3b8] mt-1.5 leading-relaxed">Bắt buộc chọn ít nhất 1 thành viên tham gia cuộc họp. Bấm <b>“+ Cả team”</b> để thêm nhanh toàn bộ thành viên đang hiển thị (theo dự án đã chọn, hoặc theo Workspace nếu chưa chọn dự án).</p>
               </div>
 
               {/* HOST * (chốt 2026-09-14): auto-selected by project's Workspace on
