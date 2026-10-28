@@ -15,9 +15,21 @@ import { createPortal } from 'react-dom';
 // copies were never touched by the first fix (commit 1113178) because
 // they were never the same component to begin with.
 //
-// Renders into a Portal so it sits above every other UI layer (z-[1050]:
-// below the nav sidebar's fixed z-[1100], above every other modal/overlay —
-// see RemarkMultiSelectInput/SearchableSelect for the same convention).
+// Renders into a Portal so it sits above every other UI layer. z-[1150]
+// (chốt 2026-10-28, raised from 1050 — see below) — above every modal/
+// overlay AND above the nav sidebar's fixed z-[1100]. The earlier z-1050
+// convention assumed the portaled menu would never actually share screen
+// pixels with the sidebar, because its trigger always lives in the main
+// content area (to the right of the 230px sidebar). That assumption broke
+// for any trigger near the left edge on a narrower layout, or an
+// align="right" menu whose flip-on-overflow logic (below) only kicks in
+// once it clips past the VIEWPORT edge, not merely past the sidebar's own
+// edge — so a menu landing anywhere between x=8 and x=230 still counted as
+// "on-screen" by that check, yet rendered UNDER the sidebar (1050 < 1100).
+// Rendering above the sidebar instead removes the need to reason about
+// exact pixel thresholds at all: the dropdown is never hidden by it,
+// regardless of where the trigger sits. See SearchableSelect.tsx for the
+// same change applied there.
 // Stays ANCHORED to its trigger button even as the page scrolls/resizes,
 // flips above/below and left/right to avoid viewport overflow, and closes
 // on outside click, Escape, or scroll (ignoring scroll events that
@@ -144,10 +156,10 @@ export default function FloatingDropdown({
   return createPortal(
     <div
       ref={menuRef}
-      // z-[1050]: below the nav sidebar's fixed z-[1100], above every other
-      // modal/overlay — see RemarkMultiSelectInput/SearchableSelect for the
-      // same convention.
-      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 1050, maxHeight: '70vh', overflowY: 'auto', ...style }}
+      // z-[1150]: above the nav sidebar's fixed z-[1100] and every modal/
+      // overlay — see the file header comment above for why this was
+      // raised from 1050.
+      style={{ position: 'fixed', top: pos.top, left: pos.left, right: pos.right, zIndex: 1150, maxHeight: '70vh', overflowY: 'auto', ...style }}
       className={`text-[#0b1c30] ${className}`}
     >
       {children}

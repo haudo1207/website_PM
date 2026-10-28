@@ -114,6 +114,26 @@ export default function MemberDetailModal({
   }, [member.id]);
   const crossfadeClass = `transition-opacity duration-200 ${contentVisible ? 'opacity-100' : 'opacity-0'}`;
 
+  // Close on Escape (chốt 2026-10-28) — replaces the old full-viewport
+  // "backdrop" div's onClick={onClose}. That backdrop was a `fixed inset-0`
+  // element with NO background class (invisible — the bg dim was stripped
+  // in an earlier backdrop-blur removal pass) that still intercepted every
+  // click across the ENTIRE page, including every OTHER row of the ranking
+  // table. Because it rendered after the table in the same stacking
+  // context, the browser's hit-test always gave it the click instead of the
+  // row underneath: clicking a different member while the panel was open
+  // actually closed the panel (hit the backdrop) instead of switching to
+  // that member — the real 2-click bug (click 1 closes, click 2 — now that
+  // nothing covers the table — finally reaches the row). Removing that
+  // click-catching div entirely (see JSX below) removes the only thing
+  // that could ever swallow that first click; Escape + the existing ✕
+  // button are the only close affordances now.
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
   const [taskFilter, setTaskFilter] = useState<'all' | 'group' | 'overdue' | 'critical' | 'high'>('all');
   // "Dự án đang tham gia" sort — default KPI (completed work), switchable to
   // Manday. Purely a display order; doesn't affect which projects are
@@ -349,15 +369,12 @@ export default function MemberDetailModal({
   }, [memberTasks]);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden">
-      {/* BACKDROP */}
-      <div
-        onClick={onClose}
-        className="fixed inset-0 transition-opacity"
-      />
-
-      {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) */}
-      <div className="fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+    <div className="fixed inset-0 z-50 overflow-hidden pointer-events-none">
+      {/* RIGHT SIDE DRAWER PANEL (FLUSH TOP TO BOTTOM) — pointer-events-auto
+          re-enables interaction on just this panel; the outer wrapper above
+          is pointer-events-none so it never intercepts clicks on the
+          ranking table (or anything else) behind/beside it. */}
+      <div className="pointer-events-auto fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
 
         {/* HEADER — the name/avatar block crossfades via contentVisible
             (plain opacity transition, no remount — see top of component)
