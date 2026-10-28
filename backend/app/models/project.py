@@ -2,10 +2,10 @@
 Project, Platform, ProjectLink, ProjectMember models.
 Implements the new 4-level hierarchy: Project → Phase → TaskGroup → Task
 """
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, UniqueConstraint, func
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, Table, UniqueConstraint, func, select
 from sqlalchemy.orm import relationship
 from ..database import Base
-from .system_category import Customer
+from .system_category import Customer, Workspace
 
 
 
@@ -141,5 +141,33 @@ from sqlalchemy import event
 @event.listens_for(Project, 'before_insert')
 @event.listens_for(Project, 'before_update')
 def sync_project_data_scope(mapper, connection, target):
-    if target.business:
-        target.data_scope = str(target.business).strip().lower()
+    """Keep data_scope in lockstep with business — but resolved through
+    Workspace.code, NOT a naive lower(business). Confirmed live (chốt
+    2026-10-29): Workspace "Infras" has code='infra' but name='Infras' (its
+    own display name differs from its code by one letter) — the old
+    `target.data_scope = str(target.business).strip().lower()` silently
+    produced data_scope='infras' for every project whose business was set to
+    that display name, instead of 'infras' == the ACTUAL workspace code
+    'infra'. Every Workspace-scope permission check (user_allowed_scopes() +
+    `project.data_scope in scopes` in access.py, e.g. can_apply_project_template)
+    compares against Workspace.code, so those 70 affected projects silently
+    rejected every Infra Leader's workspace-level access, even though their
+    role/Workspace assignment was entirely correct — only the project's own
+    stamped data_scope was wrong. Resolve by code first (exact, cheap), then
+    by display name (handles business being set to the display label instead
+    of the code, as happened here) — falls back to the old lower(business)
+    only if business matches no known Workspace at all, so an unrecognized
+    label still gets SOME value instead of silently staying None.
+    """
+    if not target.business:
+        return
+    business = str(target.business).strip()
+    ws_table = Workspace.__table__
+    row = connection.execute(
+        select(ws_table.c.code).where(func.lower(ws_table.c.code) == business.lower())
+    ).first()
+    if row is None:
+        row = connection.execute(
+            select(ws_table.c.code).where(func.lower(ws_table.c.name) == business.lower())
+        ).first()
+    target.data_scope = (row[0].strip().lower() if row and row[0] else business.lower())
