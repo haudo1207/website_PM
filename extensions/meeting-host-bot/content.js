@@ -129,9 +129,32 @@ function clickIfFound(regex) {
 // button kept re-triggering the confirmation instead of ever confirming it.
 // Searching inside an open dialog first ensures we click the confirm
 // button, not the thing that opened it.
+//
+// Confirmed live 2026-10-29: a [role="dialog"] on screen does NOT always mean
+// an admit-confirmation dialog — Meet's own "Your meeting's ready / Add
+// others / Copy link" share-link popup (shown right after starting an
+// instant meeting) is ALSO role="dialog", and has zero relation to admitting
+// anyone. The old code took document.querySelector's FIRST dialog match
+// unconditionally as the search scope and never fell back, so whenever that
+// unrelated popup (or any other incidental dialog — captions language
+// picker, a connection warning, etc.) happened to be open at the same time
+// as a real waiting-room guest, the scope search inside it obviously never
+// found an Admit button, returned null, and silently gave up — reproduced
+// live: a real guest sat in "waiting to be admitted" indefinitely while this
+// unrelated dialog was still on screen. Now tries the dialog scope FIRST
+// (preserving the original confirm-dialog-priority behavior above), but
+// falls back to the whole document when that scope has no match, instead of
+// giving up outright.
 function findActionButton(regex) {
   const dialog = document.querySelector('[role="dialog"], [role="alertdialog"]');
-  const scope = dialog || document;
+  if (dialog) {
+    const found = findActionButtonInScope(regex, dialog);
+    if (found) return found;
+  }
+  return findActionButtonInScope(regex, document);
+}
+
+function findActionButtonInScope(regex, scope) {
   for (const el of scope.querySelectorAll("button")) {
     if (el.hasAttribute("aria-haspopup") || el.hasAttribute("aria-expanded")) continue;
     const label = el.getAttribute("aria-label") || visibleText(el);
@@ -442,10 +465,23 @@ function admitWaitingParticipants() {
   // just revealing the panel, not admitting anyone — only fires once per
   // appearance (guarded by aria-expanded="false", so it won't re-fire once
   // the panel is already open).
+  //
+  // Confirmed live 2026-10-29: this badge's real label/text is "N guest(s)
+  // waiting" — it never contains the word "admit" at all, so the old
+  // `/admit/i.test(label)` check here never matched it, and the panel never
+  // opened. admitWaitingParticipants() then had nothing to find on every
+  // single tick (findActionButton(ADMIT_ALL_RE/ADMIT_ONE_RE) both come up
+  // empty since those buttons only exist once the panel is open), silently
+  // failing for 100% of real waiting-room guests with zero console output —
+  // reproduced live against a real multi-participant call, where a guest sat
+  // in "waiting to be admitted" for 3+ minutes with no bot action at all.
+  // DEBUG_CANDIDATE_RE already covers "waiting" (added for the debug scan
+  // below, but never wired into this actual click path) — reusing it here
+  // instead of the narrower /admit/i catches the badge's real wording.
   for (const el of allButtons()) {
     if (el.getAttribute("aria-expanded") !== "false") continue;
     const label = el.getAttribute("aria-label") || visibleText(el);
-    if (label && /admit/i.test(label)) {
+    if (label && DEBUG_CANDIDATE_RE.test(label)) {
       fireClick(el);
       break;
     }
