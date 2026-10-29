@@ -47,7 +47,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user, require_super_admin, require_manager
+from ..utils.auth import get_current_user, get_current_user_or_support_key, require_super_admin, require_manager
 from ..utils.project_progress import get_progress_pct_for_phase
 from ..services.document_storage import delete_task_link_documents
 
@@ -384,7 +384,13 @@ def list_projects(
     member_ids: Optional[str] = None,
     sort: Optional[str] = "activity_desc",
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    # get_current_user_or_support_key (không phải get_current_user thuần) — cho phép
+    # Tech_Support gọi bằng SUPPORT_INTEGRATION_API_KEY để vẽ dropdown chọn Project ở
+    # Settings > KPI & Skill > Đồng bộ KPI (Việc 2), thay vì phải gõ tay Project ID.
+    # KHÔNG mở rộng quyền: vẫn đúng user thật (SUPPORT_INTEGRATION_SERVICE_EMAIL) với
+    # role/data_scope thật của tài khoản đó đi qua project_query_for_user() bên dưới y
+    # hệt 1 user JWT bình thường — chỉ thay bước xác thực, không bypass lọc quyền.
+    current_user=Depends(get_current_user_or_support_key)
 ):
     # Issue 2 — Customer filter:
     # The Project list always uses `project_query_for_user` (strict) so the
