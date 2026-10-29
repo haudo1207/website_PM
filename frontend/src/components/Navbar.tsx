@@ -676,7 +676,7 @@ function NavbarContent() {
             {!collapsed && <span>Tải KPI Prototype</span>}
           </a>
 
-          <button onClick={logout} title={collapsed ? 'Sign out' : undefined}
+          <button onClick={() => logout()} title={collapsed ? 'Sign out' : undefined}
             className="w-full text-center py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/40 text-xs font-semibold text-slate-300 hover:text-red-400 transition-colors border border-slate-700/60">
             {collapsed ? '⏻' : 'Sign out'}
           </button>
@@ -786,7 +786,7 @@ function NavbarContent() {
             <span>Tải KPI Prototype</span>
           </a>
 
-          <button onClick={logout}
+          <button onClick={() => logout()}
             className="w-full text-center py-1.5 rounded-lg bg-slate-800 hover:bg-red-950/40 text-xs font-semibold text-slate-300 hover:text-red-400 transition-colors border border-slate-700/60">
             Sign out
           </button>

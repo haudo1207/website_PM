@@ -59,8 +59,10 @@ export async function refreshAccessToken(): Promise<string | null> {
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
-        // Session failure (expired/revoked/disabled) → clean logout.
-        logout();
+        // Session failure (expired/revoked/disabled) → clean logout, carrying
+        // the current URL through /login?redirect= so a re-login lands back
+        // here instead of the dashboard (chốt 2026-10-29).
+        logout({ attachRedirect: true });
         return null;
       }
       // Temporary network/server failure: keep session state, do NOT logout.
@@ -156,8 +158,9 @@ api.interceptors.response.use(
         return Promise.reject(err);
       }
       // Any other authentication failure (invalid/tampered token, disabled
-      // user...) → do NOT refresh → clean logout.
-      logout();
+      // user...) → do NOT refresh → clean logout, same redirect-back
+      // treatment as the refresh-failure path above.
+      logout({ attachRedirect: true });
     }
     return Promise.reject(err);
   }
