@@ -34,7 +34,7 @@ import {
   duplicateTask, moveTask, moveTaskGroup, reorderTaskGroups, reorderTasks,
   approveTask, requestTaskChanges, requestTaskReview, blockTask, unblockTask,
   getReviewChecklist, createReviewChecklistItem, toggleReviewChecklistItem, deleteReviewChecklistItem, notifyReviewToLeader,
-  getMeetings, createMeeting, updateMeeting, deleteMeeting,
+  getMeetings, createMeeting, updateMeeting, deleteMeeting, addMeetingMember,
   remindLeader, remindTaskGroup,
   getMe,
   getProjectAuditLogs,
@@ -3171,6 +3171,26 @@ function ProjectDetailContent() {
       } else {
         const data = await createMeeting(payload);
         if (data.success) {
+          // create_meeting không nhận member_ids trực tiếp (chốt 2026-10-28,
+          // meetings.py) — Calendar event tạo ra với attendees=[], thành viên
+          // thật phải thêm bằng API riêng /meetings/{id}/members sau khi có
+          // id thật. Thiếu bước này (như code cũ ở đây) khiến meeting tạo từ
+          // Project Detail luôn chỉ có mỗi Host, bỏ sót toàn bộ thành viên đã
+          // chọn trong modal — mirrors app/meetings/page.tsx's handleSaveMeeting.
+          const memberIds: number[] = Array.isArray(meetingData.member_ids) ? meetingData.member_ids : [];
+          if (memberIds.length > 0 && data.data?.id) {
+            const failedIds: number[] = [];
+            for (const mid of memberIds) {
+              try {
+                await addMeetingMember(data.data.id, mid);
+              } catch {
+                failedIds.push(mid);
+              }
+            }
+            if (failedIds.length > 0) {
+              flash(`Cuộc họp đã tạo, nhưng không thể thêm ${failedIds.length} thành viên (ID: ${failedIds.join(', ')}).`, true);
+            }
+          }
           flash('Tạo cuộc họp mới thành công!');
           loadMeetings();
         }
