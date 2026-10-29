@@ -4,7 +4,7 @@ from sqlalchemy import text
 from ..database import get_db
 from ..models.skill_master import Category, Group, Skill, user_skills
 from ..models.task import Task
-from ..utils.auth import require_admin, require_skill_creator, get_current_user
+from ..utils.auth import require_admin, require_skill_creator, get_current_user, get_current_user_or_support_key
 from ..utils.audit_service import AuditService
 
 router = APIRouter()
@@ -52,7 +52,7 @@ def is_category_used_by_member(db: Session, category_id: int) -> bool:
 # --- CATEGORIES ---
 
 @router.get("/categories")
-def list_categories(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def list_categories(db: Session = Depends(get_db), current_user=Depends(get_current_user_or_support_key)):
     categories = (
         db.query(Category)
         .options(selectinload(Category.groups).selectinload(Group.skills))
