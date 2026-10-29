@@ -658,7 +658,7 @@ export default function AuditLogsTab({
 
       {/* DETAIL MODAL */}
       {selectedLog && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[999] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[999] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             {/* Header */}
             <div className="p-5 border-b border-slate-100 flex items-center justify-between">

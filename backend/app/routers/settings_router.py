@@ -104,6 +104,26 @@ def set_zalo_summary_cfg(body: dict, db=Depends(get_db), admin=Depends(require_a
     return {"message": "Updated", "daily_at": daily_at}
 
 
+@router.get("/ma-group-task-template")
+def get_ma_group_task_template(db=Depends(get_db), _=Depends(get_current_user)):
+    """Admin-edited default Detail/Manday for a Group Task created under the
+    system "MA" phase (weekly feedback) - see create_task_group() in
+    routers/task_groups.py, which reads this same key. Start Date is never
+    part of the template - it's always computed (Monday of the current
+    week) at creation time, not admin-configurable."""
+    return get_setting("ma_group_task_template", db) or {"description": "", "manday_est": 7}
+
+@router.put("/ma-group-task-template")
+def set_ma_group_task_template(body: dict, db=Depends(get_db), admin=Depends(require_admin)):
+    description = (body.get("description") or "").strip()
+    manday_est = body.get("manday_est", 7)
+    try:
+        manday_est = float(manday_est)
+    except (ValueError, TypeError):
+        raise HTTPException(400, "Manday phải là số.")
+    save_setting("ma_group_task_template", {"description": description, "manday_est": manday_est}, db, user_id=admin.id)
+    return {"message": "Updated"}
+
 @router.get("/ai-models")
 def get_models(db=Depends(get_db), _=Depends(require_admin)):
     cfg = get_setting("ai_config", db) or {}

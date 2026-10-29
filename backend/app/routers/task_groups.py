@@ -12,6 +12,7 @@ Business Rules:
 """
 from fastapi import APIRouter, Depends, HTTPException
 import math
+from contextvars import ContextVar
 from datetime import timedelta
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func, delete
@@ -225,6 +226,117 @@ def validate_manday_budget(gid: int, task_code: str, manday_est, db: Session, ex
         )
 
 
+# ── Priority share of a parent's MANDAY EST ──
+# Inside one parent (parent Task, or the Task Group for top-level tasks) the
+# direct children's MANDAY EST may be at most 30% High and 20% Critical;
+# Normal / Interrupt use the rest (still capped by validate_manday_budget).
+# Only parents created on/after the rollout moment are checked — that moment
+# is stamped once into settings[PRIORITY_RATIO_SINCE_KEY] by init_db_defaults
+# on the first startup with this code, so pre-existing parents keep working
+# exactly as before.
+# Task do hệ thống ngoài đồng bộ sang (MSC / MarkeeAI, routers/msc_sync.py) KHÔNG bị luật High ≤30% / Critical ≤20% và giới hạn 10 manday của Task Group:
+# msc_sync bật cờ này quanh các lệnh gọi route. Người dùng PM tạo tay vẫn bị luật như cũ.
+SYNC_SOURCE_BYPASS: ContextVar[bool] = ContextVar("sync_source_bypass", default=False)
+
+PRIORITY_MANDAY_CAPS = {"high": (Decimal("0.30"), "High", "30%"), "critical": (Decimal("0.20"), "Critical", "20%")}
+PRIORITY_RATIO_SINCE_KEY = "priority_manday_ratio_since"
+
+
+def _priority_ratio_since(db: Session):
+    from ..models.setting import Setting
+    row = db.query(Setting).filter(Setting.key == PRIORITY_RATIO_SINCE_KEY).first()
+    if not row:
+        return None
+    try:
+        return datetime.fromisoformat(row.value)
+    except ValueError:
+        return None
+
+
+def _resolve_parent(gid: int, parent_code: str, db: Session):
+    """(label, manday, created_at) of the direct parent — the Task whose code
+    is parent_code, else the Task Group (same fallback as validate_manday_budget)."""
+    parent_task = db.query(Task).filter(Task.task_group_id == gid, Task.task_code == parent_code).first()
+    if parent_task:
+        return f"task cha {parent_code}", decimal_or_zero(parent_task.manday_est), parent_task.created_at
+    tg = db.query(TaskGroup).filter(TaskGroup.id == gid).first()
+    if not tg:
+        return None
+    return f"Task Group {tg.name}", decimal_or_zero(tg.manday_est), tg.created_at
+
+
+def _ratio_applies(created_at, db: Session) -> bool:
+    since = _priority_ratio_since(db)
+    return since is not None and created_at is not None and created_at >= since
+
+
+def validate_priority_manday_ratio(gid: int, task_code: str, priority, manday_est, db: Session, exclude_task_id: int = None):
+    """Block a child task that would push its parent's High (>30%) or
+    Critical (>20%) MANDAY EST share over the cap."""
+    if SYNC_SOURCE_BYPASS.get():
+        return
+    cap = PRIORITY_MANDAY_CAPS.get(str(priority or "").strip().lower())
+    if not cap or manday_est is None or not task_code:
+        return
+    new_manday = decimal_or_zero(manday_est)
+    parent_code = get_parent_code(task_code)
+    if new_manday <= 0 or not parent_code:
+        return
+    parent = _resolve_parent(gid, parent_code, db)
+    if not parent:
+        return
+    parent_label, parent_manday, parent_created = parent
+    if parent_manday <= 0 or not _ratio_applies(parent_created, db):
+        return
+
+    ratio, name, pct = cap
+    used = Decimal("0")
+    for sib in db.query(Task).filter(Task.task_group_id == gid).all():
+        if sib.id == exclude_task_id or get_parent_code(sib.task_code) != parent_code:
+            continue
+        if str(sib.priority or "").strip().lower() == name.lower():
+            used += decimal_or_zero(sib.manday_est)
+
+    limit = parent_manday * ratio
+    if used + new_manday > limit:
+        remaining = max(limit - used, Decimal("0"))
+        raise HTTPException(
+            400,
+            f"Tổng MANDAY EST task {name} ({format_decimal(used + new_manday)}) vượt {pct} MANDAY EST của "
+            f"{parent_label} (tối đa {format_decimal(limit)}). Còn lại {format_decimal(remaining)} manday cho task {name}."
+        )
+
+
+def validate_parent_manday_reduction(gid: int, parent_code, new_manday, created_at, label: str, db: Session):
+    """Lowering a parent's own MANDAY EST must not leave its existing High /
+    Critical children over their share. parent_code=None = the Task Group
+    level (its top-level tasks)."""
+    if SYNC_SOURCE_BYPASS.get():
+        return
+    new_manday = decimal_or_zero(new_manday)
+    if new_manday <= 0 or not _ratio_applies(created_at, db):
+        return
+    group_tasks = db.query(Task).filter(Task.task_group_id == gid).all()
+    codes = {t.task_code for t in group_tasks}
+    # Group level = tasks whose parent code isn't another Task (e.g. "1.1"
+    # under group "1") — the same rule _resolve_parent falls back on.
+    children = [
+        t for t in group_tasks
+        if (get_parent_code(t.task_code) == parent_code if parent_code
+            else get_parent_code(t.task_code) not in codes)
+    ]
+    for ratio, name, pct in PRIORITY_MANDAY_CAPS.values():
+        used = sum((decimal_or_zero(t.manday_est) for t in children
+                    if str(t.priority or "").strip().lower() == name.lower()), Decimal("0"))
+        limit = new_manday * ratio
+        if used > limit:
+            raise HTTPException(
+                400,
+                f"Không thể giảm MANDAY EST của {label} xuống {format_decimal(new_manday)}: task {name} hiện có "
+                f"{format_decimal(used)} manday, vượt {pct} (tối đa {format_decimal(limit)}). Hãy giảm task {name} trước."
+            )
+
+
 def validate_child_start_date(gid: int, task_code: str, start_date, db: Session):
     """A subtask's Start Date must not fall after its direct parent's
     End Date EST — End Date EST = Start Date + CEIL(Manday EST) - 1 (see
@@ -291,7 +403,7 @@ def validate_group_manday(manday_est) -> None:
     manday_int = int(manday_est)
     if manday_int < 1:
         raise HTTPException(400, "Manday EST của Task Group phải là số nguyên dương, không được là 0 hoặc số âm.")
-    if manday_int > MAX_GROUP_MANDAY:
+    if manday_int > MAX_GROUP_MANDAY and not SYNC_SOURCE_BYPASS.get():
         raise HTTPException(400, f"Manday EST của Task Group không được vượt quá {MAX_GROUP_MANDAY}.")
 
 
@@ -853,6 +965,8 @@ def update_task_group(phid: int, gid: int, body: dict, db: Session = Depends(get
             except (ValueError, TypeError):
                 raise HTTPException(400, "Manday EST must be a number.")
         validate_group_manday(val)
+        if val is not None:
+            validate_parent_manday_reduction(gid, None, val, tg.created_at, f"Task Group {tg.name}", db)
         tg.manday_est = val
     if "start_date_est" in body:
         tg.start_date_est = parse_date(body["start_date_est"])
@@ -1580,6 +1694,7 @@ def create_task(gid: int, body: dict, db: Session = Depends(get_db), current_use
     # of sync with the actual position it was inserted at.
     task_code = next_code
     validate_manday_budget(gid, task_code, manday_est, db)
+    validate_priority_manday_ratio(gid, task_code, body.get("priority", "Normal"), manday_est, db)
     start_date_parsed = parse_date(body.get("start_date"))
     validate_child_start_date(gid, task_code, start_date_parsed, db)
     ratio_assign, ratio_support = validate_kpi_ratio(
@@ -2018,6 +2133,12 @@ def update_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), c
 
     if "manday_est" in body or "task_code" in body:
         validate_manday_budget(gid, task.task_code, task.manday_est, db, exclude_task_id=task.id)
+    if "manday_est" in body or "task_code" in body or "priority" in body:
+        validate_priority_manday_ratio(gid, task.task_code, task.priority, task.manday_est, db, exclude_task_id=task.id)
+    if "manday_est" in body:
+        # This task may itself be a parent — its children's High/Critical
+        # share is measured against its (new) MANDAY EST.
+        validate_parent_manday_reduction(gid, task.task_code, task.manday_est, task.created_at, f"task {task.task_code}", db)
 
     # Recalculate KPI
     task = recalculate_task(task, db)
@@ -2683,6 +2804,7 @@ def duplicate_task(gid: int, tid: int, db: Session = Depends(get_db)):
     ).first() else f"{group_index}."
     new_code = get_next_code_for_level(level_prefix, gid, db)
     validate_manday_budget(gid, new_code, original.manday_est, db)
+    validate_priority_manday_ratio(gid, new_code, original.priority, original.manday_est, db)
 
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == gid).scalar() or 0
     new_task = Task(
@@ -2781,6 +2903,7 @@ def move_task(gid: int, tid: int, body: dict, db: Session = Depends(get_db), cur
     else:
         new_task_code = get_next_code_for_level(level_prefix, new_group_id, db, exclude_task_id=task.id)
     validate_manday_budget(new_group_id, new_task_code, task.manday_est, db, exclude_task_id=task.id)
+    validate_priority_manday_ratio(new_group_id, new_task_code, task.priority, task.manday_est, db, exclude_task_id=task.id)
 
     max_order = db.query(sql_func.max(Task.sort_order)).filter(Task.task_group_id == new_group_id).scalar() or 0
     task.task_group_id = new_group_id

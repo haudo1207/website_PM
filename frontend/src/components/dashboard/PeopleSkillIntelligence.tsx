@@ -112,7 +112,7 @@ export default function PeopleSkillIntelligence() {
   const [kpiMap, setKpiMap] = useState<Map<number, number>>(new Map());
   const [workloadSettings, setWorkloadSettings] = useState<WorkloadSetting[]>([]);
   const [allTasks, setAllTasks] = useState<any[]>([]);
-  const [allProjects, setAllProjects] = useState<{ id: any; name: string }[]>([]);
+  const [allProjects, setAllProjects] = useState<{ id: any; name: string; customer_name?: string }[]>([]);
   const [selectedMemberModal, setSelectedMemberModal] = useState<any | null>(null);
 
   // ── Bộ lọc thời gian — cùng semantics/UI với Overview/Team Load, mặc
@@ -264,11 +264,11 @@ export default function PeopleSkillIntelligence() {
       setMembers(Array.isArray(mem) ? mem.filter((m: any) => (m.employment_status || 'ON') === 'ON') : []);
       const taskList = Array.isArray(tasks) ? tasks : [];
       setAllTasks(taskList);
-      const projMap = new Map<string, { id: any; name: string }>();
+      const projMap = new Map<string, { id: any; name: string; customer_name?: string }>();
       for (const t of taskList) {
         if (t.project_id == null) continue;
         const key = String(t.project_id);
-        if (!projMap.has(key)) projMap.set(key, { id: t.project_id, name: t.projectName || `Project #${t.project_id}` });
+        if (!projMap.has(key)) projMap.set(key, { id: t.project_id, name: t.projectName || `Project #${t.project_id}`, customer_name: t.customerName || undefined });
       }
       setAllProjects(Array.from(projMap.values()));
     }).finally(() => setMembersLoading(false));

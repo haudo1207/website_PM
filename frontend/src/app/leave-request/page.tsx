@@ -1636,9 +1636,18 @@ export default function LeaveRequestPage() {
                             width: dropdownPos.width,
                             maxHeight: dropdownPos.height ?? 240,
                             overflowY: 'auto',
+                            zIndex: 1150,
                           }}
-                          className="rounded border bg-white shadow-lg z-50"
+                          className="rounded border bg-white shadow-lg"
                         >
+                          {/* zIndex 1150 (chốt 2026-10-28, was z-50 via the
+                              className) — this IS already portaled, but its
+                              computed `left` clamps down to as low as 8px on
+                              narrow viewports (see the clamp above), which
+                              can land it physically under the nav sidebar
+                              (fixed, z-[1100], ~230px wide); z-50 lost to
+                              that every time. 1150 is above the sidebar —
+                              same convention as FloatingDropdown.tsx. */}
                           {(() => {
                             const act = requests.find((r) => r.id === openActionId);
                             if (!act) return null;
@@ -1908,7 +1917,7 @@ export default function LeaveRequestPage() {
         )}
 
         {selectedMember && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
             <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start justify-between">
                 <div>
@@ -1956,7 +1965,7 @@ export default function LeaveRequestPage() {
         )}
 
         {viewingRequest && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
             <div className="w-full max-w-xl rounded-2xl bg-white p-6 shadow-xl">
               <div className="mb-4 flex items-start justify-between">
                 <div>

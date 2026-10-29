@@ -59,8 +59,10 @@ export async function refreshAccessToken(): Promise<string | null> {
     } catch (err: any) {
       const status = err?.response?.status;
       if (status === 401 || status === 403) {
-        // Session failure (expired/revoked/disabled) → clean logout.
-        logout();
+        // Session failure (expired/revoked/disabled) → clean logout, carrying
+        // the current URL through /login?redirect= so a re-login lands back
+        // here instead of the dashboard (chốt 2026-10-29).
+        logout({ attachRedirect: true });
         return null;
       }
       // Temporary network/server failure: keep session state, do NOT logout.
@@ -156,8 +158,9 @@ api.interceptors.response.use(
         return Promise.reject(err);
       }
       // Any other authentication failure (invalid/tampered token, disabled
-      // user...) → do NOT refresh → clean logout.
-      logout();
+      // user...) → do NOT refresh → clean logout, same redirect-back
+      // treatment as the refresh-failure path above.
+      logout({ attachRedirect: true });
     }
     return Promise.reject(err);
   }
@@ -211,6 +214,21 @@ export interface MeProfile {
 export const getMe = () => api.get<MeProfile>('/users/me').then(r => r.data);
 export const updateMyZaloName = (zalo_name: string) =>
   api.patch<{ zalo_name: string | null }>('/users/me/zalo-name', { zalo_name }).then(r => r.data);
+
+// /kpi page's own last-picked Tháng/Năm/Workspace/Leader filter, saved per
+// account - restored on the next visit instead of resetting to defaults.
+export interface KpiFilterPreference {
+  month?: string;
+  year?: string;
+  workspace?: string;
+  leaderFilter?: string;
+}
+export const getMyKpiFilterPreference = () =>
+  api.get<KpiFilterPreference>('/users/me/kpi-filter-preference').then(r => r.data);
+export const saveMyKpiFilterPreference = (pref: KpiFilterPreference) =>
+  api.put<{ ok: boolean }>('/users/me/kpi-filter-preference', pref).then(r => r.data);
+export const clearMyKpiFilterPreference = () =>
+  api.delete<{ ok: boolean }>('/users/me/kpi-filter-preference').then(r => r.data);
 
 export interface LoginHistoryItem {
   id: number;
@@ -758,6 +776,17 @@ export const generateMeetingLink = (data: { platform: string; title: string; dat
 // meeting_url/google_event_id/organizer_google_email server-side in one request.
 // Plain PUT /meetings/{id} no longer accepts organizer_google_email at all.
 export const retryMeetingLink = (id: number, data?: { host_workspace_id?: number | null }) => api.post(`/meetings/${id}/retry-link`, data).then(r => r.data);
+// Google Meet accessType toggle (chốt 2026-10-28) — only works when the
+// meeting's meet_space_owned_by_app is true (Space created via Meet API v2);
+// otherwise the backend rejects with a 400 before ever calling Google.
+export const setMeetingAccessType = (id: number, accessType: 'OPEN' | 'TRUSTED') =>
+  api.patch(`/meetings/${id}/access-type`, { access_type: accessType }).then(r => r.data);
+// Same PATCH, for a Space that doesn't have a Meeting row yet — used by
+// CreateMeetingModal's "Mở duyệt" toggle, which can appear right after
+// generate-link creates the Space (meet_space_owned_by_app already known
+// true from that response) but before "Tạo meeting" is clicked.
+export const setSpaceAccessTypeDirect = (data: { host_workspace_id: number; meeting_url: string; access_type: 'OPEN' | 'TRUSTED' }) =>
+  api.patch('/meetings/space-access-type', data).then(r => r.data);
 // Manual-end fallback (chốt 2026-09-14): for when the Meeting Host Bot/VPS
 // is down and a human ended the call by hand on Google Meet — marks the
 // meeting DONE without waiting for the Bot's own POST /meeting-bot/ended.
@@ -776,7 +805,7 @@ export const getMeetingAttendanceSummary = (params?: { project?: string; from_da
 // participants — this calls the EXACT SAME check create/update/retry-link
 // enforce server-side, so the frontend never shows "rảnh"/"trùng" out of
 // sync with what submitting will actually do.
-export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number; host_workspace_id?: number | null }) =>
+export const checkMeetingConflict = (data: { project_id?: number; meeting_date?: string; date?: string; start_time?: string; time?: string; end_time?: string; duration?: string | number; exclude_meeting_id?: number; host_workspace_id?: number | null; member_ids?: number[] }) =>
   api.post('/meetings/check-conflict', data).then(r => r.data);
 // HOST * field (chốt 2026-09-14): available Host accounts (Workspace's
 // connected Google account, devv.szone@gmail.com excluded server-side while
@@ -1173,6 +1202,7 @@ export interface TeamComparisonMember {
 export interface TeamComparisonProject {
   project_id: number;
   name: string;
+  customer_name?: string | null;
   status?: string | null;
   current_phase?: string | null;
   data_scope?: string | null;
@@ -1415,6 +1445,18 @@ export const getZaloSummaryConfig = () =>
   api.get<{ daily_at: string }>('/settings/zalo-summary-config').then(r => r.data);
 export const updateZaloSummaryConfig = (dailyAt: string) =>
   api.put<{ message: string; daily_at: string }>('/settings/zalo-summary-config', { daily_at: dailyAt }).then(r => r.data);
+
+// Admin-edited default Detail/Manday for a Group Task auto-created under the
+// system "MA" phase (weekly feedback) — Start Date is never part of this,
+// it's always computed (Monday of the current week) at creation time.
+export interface MaGroupTaskTemplate {
+  description: string;
+  manday_est: number;
+}
+export const getMaGroupTaskTemplate = () =>
+  api.get<MaGroupTaskTemplate>('/settings/ma-group-task-template').then(r => r.data);
+export const saveMaGroupTaskTemplate = (data: MaGroupTaskTemplate) =>
+  api.put<{ message: string }>('/settings/ma-group-task-template', data).then(r => r.data);
 export interface ZaloProjectGroupSummary {
   conversation_id: number;
   name: string;

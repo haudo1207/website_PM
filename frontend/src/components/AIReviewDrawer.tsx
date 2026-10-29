@@ -40,7 +40,7 @@ export default function AIReviewDrawer({
       {/* Backdrop */}
       <div
         onClick={onClose}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity duration-300"
+        className="absolute inset-0 transition-opacity duration-300"
       />
 
       {/* Drawer Body */}

@@ -4,9 +4,11 @@ import React, { useState, useEffect } from 'react';
 import { ArrowLeft, Video, ExternalLink, Calendar, Clock, User, Sparkles, Check, Plus, MoreHorizontal, Info, FileText, Copy, ListTodo, Search, FolderPlus, Users, Gauge, ThumbsUp, ThumbsDown, X } from 'lucide-react';
 import { pushMeetingTasks, getProjects, getAccounts, getMembers, addMeetingMember, updateMeeting, recalculateMeetingScore, submitMeetingFeedback, getCategories, manualEndMeeting, getMeetingAttendance, saveMeetingAttendance, getApiErrorMessage } from '@/lib/api';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import { PhaseSelectCell, TaskGroupSelectCell, PickedRef } from '@/components/common/PhaseTaskGroupSelect';
 import { useQueryClient } from '@tanstack/react-query';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 
 // Mirrors backend's recalculate_task_group_dates() formula so the table can
 // preview the computed End Date before push, without needing a round trip.
@@ -64,6 +66,7 @@ export default function MeetingDetailModal({
   const [copiedTranscript, setCopiedTranscript] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   // Manual-end fallback (chốt 2026-09-14): local override so the status
   // badge/isDone flip immediately after marking DONE by hand, without
   // waiting for the parent to refetch and pass a fresh `meeting` prop —
@@ -699,7 +702,7 @@ export default function MeetingDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs animate-in fade-in duration-200 p-2 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center animate-in fade-in duration-200 p-2 sm:p-4 overflow-y-auto">
       <div className="bg-white rounded-3xl w-full max-w-6xl shadow-2xl overflow-hidden flex flex-col border border-slate-200 animate-in zoom-in-95 duration-200 max-h-[92vh] my-auto">
         
         {/* Top Header Bar with Back Link */}
@@ -855,18 +858,23 @@ export default function MeetingDetailModal({
 
             {/* Action Buttons Top Right */}
             <div className="flex items-center gap-2.5 shrink-0">
-              <div className="relative">
+              <div>
                 <button
                   type="button"
-                  onClick={() => setShowMenu(!showMenu)}
+                  onClick={(e) => { setMenuAnchorEl(e.currentTarget); setShowMenu(!showMenu); }}
                   className="p-2.5 text-[#64748b] hover:text-[#0b1c30] rounded-xl hover:bg-slate-100 transition-colors border border-[#cbd5e1]"
                   title="Tùy chọn khác"
                 >
                   <MoreHorizontal size={18} />
                 </button>
 
-                {showMenu && (
-                  <div className="absolute right-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 z-50 text-xs font-medium space-y-0.5">
+                <FloatingDropdown
+                  anchorEl={menuAnchorEl}
+                  open={showMenu}
+                  onClose={() => setShowMenu(false)}
+                  align="right"
+                  className="w-48 bg-white rounded-xl shadow-xl border border-slate-200 py-1.5 text-xs font-medium space-y-0.5"
+                >
                     {onEdit && (
                       <button
                         onClick={() => { setShowMenu(false); onEdit(meeting); }}
@@ -898,8 +906,7 @@ export default function MeetingDetailModal({
                         <span>🗑️ Xóa cuộc họp</span>
                       </button>
                     )}
-                  </div>
-                )}
+                </FloatingDropdown>
               </div>
 
               <a
@@ -1892,7 +1899,7 @@ export default function MeetingDetailModal({
 
       {/* Gán Dự Án Modal */}
       {isAssignProjectOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <h3 className="text-sm font-extrabold text-[#0b1c30] flex items-center gap-2">
@@ -1926,7 +1933,7 @@ export default function MeetingDetailModal({
                       className="w-full text-left px-3.5 py-2.5 rounded-xl hover:bg-[#f5f3ff] transition-all flex items-center justify-between border border-transparent hover:border-[#e0e7ff] text-xs"
                     >
                       <div>
-                        <p className="font-bold text-[#0b1c30]">{proj.name}</p>
+                        <p className="font-bold text-[#0b1c30]">{formatProjectCardTitle(proj)}</p>
                         <p className="text-[10px] text-[#64748b]">{proj.code || proj.customer_name || 'Dự án hệ thống'}</p>
                       </div>
                       <span className="text-xs font-bold text-[#6366f1]">Chọn →</span>
@@ -1946,7 +1953,7 @@ export default function MeetingDetailModal({
 
       {/* Manual-end fallback confirm (chốt 2026-09-14) */}
       {showEndConfirm && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <h3 className="text-sm font-extrabold text-[#0b1c30]">Bạn có chắc cuộc họp đã kết thúc?</h3>
             <p className="text-xs text-[#64748b] leading-relaxed">
@@ -1974,7 +1981,7 @@ export default function MeetingDetailModal({
 
       {/* Ghi nhận tham gia (Manual Attendance Phase 1, chốt 2026-09-15) */}
       {showAttendanceModal && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 shrink-0">
               <h3 className="text-sm font-extrabold text-[#0b1c30]">Ghi nhận tham gia</h3>
@@ -2036,7 +2043,7 @@ export default function MeetingDetailModal({
 
       {/* Thêm Thành Viên Modal (Multi-Select Supported) */}
       {isAddMemberOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-[80] flex items-center justify-center p-4 animate-in fade-in duration-150">
           <div className="bg-white rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 border border-slate-200 animate-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
               <div>

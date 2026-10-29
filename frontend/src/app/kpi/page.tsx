@@ -1,15 +1,16 @@
 'use client';
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Navbar from '@/components/Navbar';
 import { useRouter } from 'next/navigation';
 import { isAdmin, getToken } from '@/lib/auth';
-import { getMembers, getMemberLeaders, getWorkspaces, getMe, getProjects } from '@/lib/api';
+import { getMembers, getMemberLeaders, getWorkspaces, getMe, getProjects, getMyKpiFilterPreference, saveMyKpiFilterPreference, clearMyKpiFilterPreference } from '@/lib/api';
 import FilterSelect from '@/components/common/FilterSelect';
 import { useWorkspaceFilter } from '@/lib/workspaceFilter';
 import { CYCLE_TEMPLATE, checkTaskInPeriod, calculateDaysLate } from '@/app/dashboard/constants';
 import axios from 'axios';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 import { Copy, Check } from 'lucide-react';
 
 // ── Hover-to-copy control for KPI ranking cells (UI-only) ────────────
@@ -285,7 +286,7 @@ const KpiMemberDetailModal = ({ member, tasks, projects, onClose, onNavigate, in
                   return (
                     <div key={p.id} onClick={() => { onClose(); onNavigate(p.id, memberName, member.id); }} className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]">
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{p.name}</h4>
+                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{formatProjectCardTitle(p)}</h4>
                         <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">{pOpen} task mở</span>
                       </div>
                       <div className="grid grid-cols-4 gap-2">
@@ -530,33 +531,68 @@ export default function KPIPage() {
         setWorkspaceCode(code);
     };
 
-    // Restore KPI state (filters + tab + the member drawer that was open)
-    // after a KPI → Project → "Quay lại KPI" round trip. Scoped to exactly
-    // that round trip, not a persistent/global memory: the snapshot is
-    // written only when navigating away to /project (see
-    // handleNavigateToProject below) and is consumed (read + deleted) here
-    // on mount, so a normal sidebar click into /kpi — which explicitly
-    // clears this key first, see Navbar.tsx — always lands on the default
-    // (current year) view instead of silently reusing a stale snapshot.
+    // Guards the autosave effect below: stays true while the mount-time
+    // restore (session snapshot OR server preference) is still applying its
+    // own setState calls, so that restore doesn't immediately get written
+    // right back to the server as if the user had just picked it.
+    const kpiFilterPrefLoadedRef = useRef(false);
+
+    // Restore KPI state on mount, highest-priority source first:
+    // 1) A KPI → Project → "Quay lại KPI" round trip. Scoped to exactly that
+    //    round trip, not a persistent/global memory: the snapshot is written
+    //    only when navigating away to /project (see handleNavigateToProject
+    //    below) and is consumed (read + deleted) here.
+    // 2) Otherwise, this account's saved Tháng/Năm/Workspace/Leader filter
+    //    (server-side, /me/kpi-filter-preference) - so a normal visit/reload
+    //    reapplies whatever this account last picked, instead of resetting.
+    //    A normal sidebar click into /kpi still clears the session snapshot
+    //    first (see Navbar.tsx), so case 2 is exactly "no active round trip".
     useEffect(() => {
-        try {
-            const raw = sessionStorage.getItem('kpiNavSnapshot');
-            if (!raw) return;
-            sessionStorage.removeItem('kpiNavSnapshot');
-            const snap = JSON.parse(raw);
-            if (snap.activeTab === 'KPItotal' || snap.activeTab === 'KPIweek') setActiveTab(snap.activeTab);
-            if (typeof snap.search === 'string') setSearch(snap.search);
-            if (typeof snap.month === 'string') setMonth(snap.month);
-            if (typeof snap.year === 'string') setYear(snap.year);
-            if (typeof snap.leaderFilter === 'string') setLeaderFilter(snap.leaderFilter);
-            if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
-            if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
-            if (snap.selectedMember) setSelectedMemberModal(snap.selectedMember);
-        } catch { /* corrupt/old snapshot shape — ignore, fall back to defaults */ }
-        // Runs once on mount only — this is a one-time consume, not a
-        // continuous sync with sessionStorage.
+        let cancelled = false;
+        (async () => {
+            try {
+                const raw = sessionStorage.getItem('kpiNavSnapshot');
+                if (raw) {
+                    sessionStorage.removeItem('kpiNavSnapshot');
+                    const snap = JSON.parse(raw);
+                    if (snap.activeTab === 'KPItotal' || snap.activeTab === 'KPIweek') setActiveTab(snap.activeTab);
+                    if (typeof snap.search === 'string') setSearch(snap.search);
+                    if (typeof snap.month === 'string') setMonth(snap.month);
+                    if (typeof snap.year === 'string') setYear(snap.year);
+                    if (typeof snap.leaderFilter === 'string') setLeaderFilter(snap.leaderFilter);
+                    if (typeof snap.startDate === 'string') setStartDate(snap.startDate);
+                    if (typeof snap.endDate === 'string') setEndDate(snap.endDate);
+                    if (snap.selectedMember) setSelectedMemberModal(snap.selectedMember);
+                    return;
+                }
+            } catch { /* corrupt/old snapshot shape — ignore, fall through to server preference */ }
+            try {
+                const pref = await getMyKpiFilterPreference();
+                if (cancelled || !pref) return;
+                if (typeof pref.month === 'string') setMonth(pref.month);
+                if (typeof pref.year === 'string' && pref.year) setYear(pref.year);
+                if (typeof pref.workspace === 'string' && pref.workspace) handleWorkspaceChange(pref.workspace);
+                if (typeof pref.leaderFilter === 'string') setLeaderFilter(pref.leaderFilter);
+            } catch { /* not logged in yet, or nothing saved — keep defaults */ }
+        })().finally(() => { if (!cancelled) kpiFilterPrefLoadedRef.current = true; });
+        return () => { cancelled = true; };
+        // Runs once on mount only — this is a one-time restore, not a
+        // continuous sync with sessionStorage/the server.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // Auto-save this account's KPI filter preference whenever Tháng/Năm/
+    // Workspace/Leader change — debounced so picking isn't 1 request per
+    // click. Skipped while the mount-time restore above is still applying
+    // its own values (kpiFilterPrefLoadedRef still false), so that restore
+    // doesn't immediately write itself back to the server as a "change".
+    useEffect(() => {
+        if (!kpiFilterPrefLoadedRef.current) return;
+        const timer = setTimeout(() => {
+            saveMyKpiFilterPreference({ month, year, workspace, leaderFilter }).catch(() => { /* best-effort — a failed save just means next visit falls back to defaults */ });
+        }, 600);
+        return () => clearTimeout(timer);
+    }, [month, year, workspace, leaderFilter]);
 
     const handleNavigateToProject = (projectId: string | number, memberName?: string, memberId?: string | number, taskId?: string | number) => {
         try {
@@ -709,6 +745,10 @@ export default function KPIPage() {
                             ? !!(month || year !== defaultYear || search || leaderFilter || (!isLockedSingle && workspace))
                             : !!(startDate || endDate || leaderFilter);
                         const clearFilters = () => {
+                            // Briefly pause the autosave effect so clearing doesn't
+                            // immediately re-save these same reset values right back as
+                            // "the preference" a moment after we just deleted it.
+                            kpiFilterPrefLoadedRef.current = false;
                             if (activeTab === 'KPItotal') {
                                 setMonth(''); setYear(defaultYear); setSearch('');
                                 if (!isLockedSingle) setWorkspace('');
@@ -716,6 +756,11 @@ export default function KPIPage() {
                                 setStartDate(''); setEndDate('');
                             }
                             setLeaderFilter('');
+                            // "Xóa bộ lọc" forgets the saved preference too, not just the
+                            // current screen — otherwise the next visit would silently
+                            // re-apply the very filter the person just cleared.
+                            clearMyKpiFilterPreference().catch(() => {});
+                            setTimeout(() => { kpiFilterPrefLoadedRef.current = true; }, 0);
                         };
                         const leaderField = (
                             <div className={FILTER_FIELD_CLS}>
@@ -844,7 +889,7 @@ export default function KPIPage() {
                     {/* Table */}
                     <div className="bg-white border border-slate-200 rounded-xl shadow-sm relative">
                         {isLoading && (
-                            <div className="absolute inset-0 z-50 bg-white/60 backdrop-blur-[2px] flex items-center justify-center rounded-xl">
+                            <div className="absolute inset-0 z-50 bg-white/60 flex items-center justify-center rounded-xl">
                                 <div className="flex flex-col items-center gap-3">
                                     <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
                                     <p className="text-sm font-semibold text-blue-900">Đang tải dữ liệu...</p>

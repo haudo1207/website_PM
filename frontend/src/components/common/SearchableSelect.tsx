@@ -132,33 +132,26 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
   const [search, setSearch] = useState('');
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const [creatingQuick, setCreatingQuick] = useState(false);
-  // When the trigger sits near the bottom of the viewport (e.g. the last
-  // field in a scrollable modal), the popup — which always rendered below
-  // via `top-full` — got pushed past the visible area, so opening it looked
-  // like nothing happened until the user manually scrolled the modal down.
-  // Flip it to open upward in that case so it's visible immediately.
-  const [dropUp, setDropUp] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  // Portal positioning state — populated when usePortal is true
+  // Portal positioning state — always populated while open (see effect
+  // below); also carries the up/down flip decision (was a separate
+  // `dropUp` state before the inline/non-portal render path was removed).
   const [portalPos, setPortalPos] = useState<{ top: number; left?: number; right?: number; width: number } | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  // Portal positioning (chốt 2026-10-28, always on now — see note on
+  // `usePortal` below) — compute fixed coordinates from the trigger's
+  // bounding rect so the dropdown renders at document.body level: never
+  // clipped by any ancestor overflow container, and always above the nav
+  // sidebar (z-[1100]) via the fixed z-1050 on the portaled div itself.
+  // `Math.max(256, rect.width)` matches the old inline path's
+  // `w-[max(16rem,100%)]` floor so narrow trigger buttons (common in filter
+  // bars) still get a readable-width menu instead of shrinking to the
+  // trigger's own width.
   useEffect(() => {
-    if (!open || !containerRef.current) return;
-    const estimatedPopupHeight = 320; // search bar + option list + footer, roughly
-    const rect = containerRef.current.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - rect.bottom;
-    const spaceAbove = rect.top;
-    setDropUp(spaceBelow < estimatedPopupHeight && spaceAbove > spaceBelow);
-  }, [open]);
-
-  // Portal positioning — compute fixed coordinates from the trigger's
-  // bounding rect so the dropdown renders at document.body level and is
-  // never clipped by any ancestor overflow container.
-  useEffect(() => {
-    if (!usePortal || !open || !containerRef.current) {
+    if (!open || !containerRef.current) {
       setPortalPos(null);
       return;
     }
@@ -172,7 +165,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
       top: Math.max(4, top),
       left: align === 'left' ? rect.left : undefined,
       right: align === 'right' ? Math.max(4, window.innerWidth - rect.right) : undefined,
-      width: rect.width,
+      width: Math.max(256, rect.width),
     });
 
     const reposition = () => {
@@ -186,7 +179,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
         top: Math.max(4, t),
         left: align === 'left' ? r.left : undefined,
         right: align === 'right' ? Math.max(4, window.innerWidth - r.right) : undefined,
-        width: r.width,
+        width: Math.max(256, r.width),
       });
     };
     window.addEventListener('scroll', reposition, true);
@@ -195,7 +188,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
       window.removeEventListener('scroll', reposition, true);
       window.removeEventListener('resize', reposition);
     };
-  }, [usePortal, open, align]);
+  }, [open, align]);
 
   // Debounced search query (200ms)
   const debouncedSearch = useDebounce(search, 200);
@@ -204,13 +197,13 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     open: () => { if (!disabled) setOpen(true); }
   }), [disabled]);
 
-  // Close popup when clicking outside — when usePortal is true, also check
-  // if the click is inside the portal menu (menuRef) since it's rendered
-  // outside the container at document.body level.
+  // Close popup when clicking outside — also checks the portal menu
+  // (menuRef) since it's rendered outside the container at document.body
+  // level, not as a DOM descendant of containerRef.
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const isInsideContainer = containerRef.current && containerRef.current.contains(event.target as Node);
-      const isInsidePortalMenu = usePortal && menuRef.current && menuRef.current.contains(event.target as Node);
+      const isInsidePortalMenu = menuRef.current && menuRef.current.contains(event.target as Node);
       if (!isInsideContainer && !isInsidePortalMenu) {
         setOpen(false);
         setSearch('');
@@ -219,7 +212,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [usePortal]);
+  }, []);
 
   // Helper to identify default/reset values (should NEVER display clear '✕' button)
   const isDefaultValue = useCallback((v: any) => {
@@ -490,12 +483,25 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
         </div>
       </button>
 
-      {/* Popup Menu — rendered inline (default) or via portal when usePortal
-          is true so it is never clipped by overflow-hidden/auto ancestors. */}
-      {open && (usePortal && portalPos ? createPortal(
+      {/* Popup Menu — ALWAYS rendered via portal to document.body (chốt
+          2026-10-28). Previously this only happened when a caller
+          explicitly passed `usePortal={true}`; the default (false) path
+          rendered a plain `position: absolute` div at z-[999] — not
+          clipping-safe, AND below the nav sidebar's fixed z-[1100], so any
+          caller that forgot `usePortal` (the vast majority, since it's an
+          opt-in prop) could have its dropdown rendered UNDER the sidebar
+          whenever the trigger sat close enough to the left edge (e.g. the
+          first field in a filter bar on a narrower desktop width). Now
+          every instance always portals at z-1150 — ABOVE the sidebar's
+          z-[1100] (not just z-1050, which is still below it — see
+          FloatingDropdown.tsx's file header for why that distinction
+          matters) — so it's never hidden by the sidebar regardless of
+          where the trigger sits. `usePortal` is kept as an accepted-but-
+          unused prop so existing call sites don't need edits. */}
+      {open && portalPos && createPortal(
         <div
           ref={menuRef}
-          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, right: portalPos.right, width: portalPos.width, zIndex: 9999 }}
+          style={{ position: 'fixed', top: portalPos.top, left: portalPos.left, right: portalPos.right, width: portalPos.width, zIndex: 1150 }}
           className="bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-100"
         >
           {/* Search Bar Input (if threshold met) */}
@@ -623,133 +629,7 @@ const SearchableSelect = forwardRef<SearchableSelectHandle, SearchableSelectProp
           )}
         </div>,
         document.body
-      ) : (
-        <div className={`absolute ${align === 'right' ? 'right-0' : 'left-0'} ${dropUp ? 'bottom-full mb-1.5' : 'top-full mt-1.5'} w-[max(16rem,100%)] bg-white border border-slate-200 rounded-xl shadow-2xl z-[999] overflow-hidden animate-in fade-in zoom-in-95 duration-100`}>
-          {/* Search Bar Input (if threshold met) */}
-          {showSearchBar && (
-            <div className="p-2 border-b border-slate-100 bg-slate-50/80 sticky top-0 z-10">
-              <div className="relative">
-                <input
-                  ref={searchInputRef}
-                  type="text"
-                  placeholder={(placeholder || `Tìm ${label.toLowerCase()}...`).replace(/^[🔍🔎]\s*/, '')}
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                  className="w-full pl-7 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-md outline-none focus:border-[#0058be] focus:ring-1 focus:ring-[#0058be]/20 font-medium"
-                />
-                <span className="absolute left-2.5 top-2 text-[12px] text-slate-400 pointer-events-none">🔍</span>
-              </div>
-            </div>
-          )}
-
-          {/* Options List */}
-          <div ref={listRef} className="max-h-56 overflow-y-auto p-1.5 space-y-0.5 text-xs">
-            {/* Single Select "All" reset option */}
-            {!isMulti && !debouncedSearch.trim() && (
-              <div
-                onClick={() => handleSelect('all')}
-                className={`px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition-colors flex items-center justify-between ${
-                  focusedIndex === 0 ? 'bg-[#0058be]/10 text-[#0058be]' : ''
-                } ${
-                  selectedValues.length === 0
-                    ? 'bg-[#eff4ff] text-[#0058be]'
-                    : 'hover:bg-slate-50 text-slate-600'
-                }`}
-              >
-                <span>Tất cả {label}</span>
-                {selectedValues.length === 0 && <span>✓</span>}
-              </div>
-            )}
-
-            {orderedOptions.length === 0 ? (
-              <div className="py-4 text-center text-slate-400 italic text-xs">
-                Không tìm thấy {label.toLowerCase()}.
-              </div>
-            ) : (
-              orderedOptions.map((opt, idx) => {
-                const itemIdx = !isMulti && !debouncedSearch.trim() ? idx + 1 : idx;
-                const isSelected = selectedValues.some(v => String(v) === String(opt.id));
-                const isFocused = focusedIndex === itemIdx;
-                // Group dividers for multi-select: selected items are always
-                // first in orderedOptions, so the "ĐÃ CHỌN" header goes above
-                // idx 0 and "TẤT CẢ ..." goes right where the group flips.
-                const showSelectedHeader = isMulti && idx === 0 && selectedCountInView > 0;
-                const showAllHeader = isMulti && idx === selectedCountInView && orderedOptions.length > selectedCountInView;
-
-                return (
-                  <React.Fragment key={opt.id}>
-                    {showSelectedHeader && (
-                      <div className="px-2.5 pt-1 pb-1 text-[10px] font-bold text-[#0058be] uppercase tracking-wider">
-                        Đã chọn · {selectedCountInView}
-                      </div>
-                    )}
-                    {showAllHeader && (
-                      <div className={`px-2.5 pb-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider ${selectedCountInView > 0 ? 'pt-2 mt-1 border-t border-slate-100' : 'pt-1'}`}>
-                        Tất cả {label} · {orderedOptions.length - selectedCountInView}
-                      </div>
-                    )}
-                    <div
-                      onClick={() => handleSelect(opt.id)}
-                      className={`flex items-center justify-between px-2.5 py-1.5 rounded-lg cursor-pointer font-medium transition-all ${
-                        isFocused ? 'bg-[#0058be]/10 text-[#0058be]' : ''
-                      } ${
-                        isSelected
-                          ? 'bg-[#eff4ff] text-[#0058be] font-bold'
-                          : 'hover:bg-slate-50 text-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-2 truncate">
-                        {isMulti && (
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => {}}
-                            className="rounded border-slate-300 text-[#0058be] focus:ring-[#0058be]"
-                          />
-                        )}
-                        {showAvatar && (opt.avatar_url ? <img src={opt.avatar_url} alt="" className="w-5 h-5 rounded-full object-cover shrink-0" /> : <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold shrink-0" style={{ background: avatarColorFor(opt.name) }}>{avatarInitialsFor(opt.name)}</span>)}
-                        {opt.icon && <span>{opt.icon}</span>}
-                        <span className="truncate">{highlightMatch(opt.name, debouncedSearch)}</span>
-                        {opt.subtext && <span className="text-[10px] text-slate-400">({opt.subtext})</span>}
-                      </div>
-
-                      {opt.badge && (
-                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-600">
-                          {opt.badge}
-                        </span>
-                      )}
-
-                      {!isMulti && isSelected && <span>✓</span>}
-                    </div>
-                  </React.Fragment>
-                );
-              })
-            )}
-            {canQuickCreate && (
-              <div
-                onClick={handleQuickCreate}
-                className={`px-2.5 py-1.5 rounded-lg cursor-pointer font-bold transition-colors border-t border-slate-100 mt-1 pt-2 ${creatingQuick ? 'text-slate-300 pointer-events-none' : 'text-emerald-600 hover:bg-emerald-50'}`}
-              >
-                {creatingQuick ? 'Đang tạo...' : `+ Thêm nhanh "${trimmedSearch}"`}
-              </div>
-            )}
-          </div>
-
-          {/* Footer controls for Multi-select */}
-          {isMulti && selectedValues.length > 0 && (
-            <div className="p-1.5 border-t border-slate-100 bg-slate-50 flex justify-between items-center text-[10px]">
-              <span className="text-slate-500 font-semibold">{selectedValues.length} đã chọn</span>
-              <button
-                type="button"
-                onClick={handleClear}
-                className="text-[#0058be] font-bold hover:underline"
-              >
-                Bỏ chọn tất cả
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
+      )}
     </div>
   );
 });

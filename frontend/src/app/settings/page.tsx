@@ -7,6 +7,7 @@ import KPIsView from '@/components/KPIsView';
 import AIPromptsView from '@/components/AIPromptsView';
 import ProjectTemplatesView from '@/components/ProjectTemplatesView';
 import WorkloadSettingsView from '@/components/WorkloadSettingsView';
+import MaGroupTaskTemplateView from '@/components/MaGroupTaskTemplateView';
 import { useRouter } from 'next/navigation';
 import { isSuperAdmin } from '@/lib/auth';
 import { useSidebarCollapse, SIDEBAR_PAD_EXPANDED, SIDEBAR_PAD_COLLAPSED } from '@/lib/sidebarCollapse';
@@ -800,14 +801,19 @@ export default function SettingsPage() {
           )}
 
           {activeTab === 'project_templates' && (
-            <ProjectTemplatesView onFlash={flash} />
+            <div className="space-y-6">
+              <ProjectTemplatesView onFlash={flash} />
+              <div className="pt-6 border-t border-slate-200">
+                <MaGroupTaskTemplateView onFlash={flash} />
+              </div>
+            </div>
           )}
         </div>
       </div>
 
       {/* Edit User Skills Modal */}
       {skillsModalUser && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="bg-white border border-slate-200 w-full max-w-2xl rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 bg-slate-50 border-b border-slate-200 flex justify-between items-center shrink-0">
               <div>

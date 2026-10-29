@@ -23,6 +23,7 @@ import SvgIcon from '@/components/dashboard/Icons';
 import ProgressBar from '@/components/dashboard/ProgressBar';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -177,12 +178,12 @@ export default function MultiTeamProjectComparison() {
   // themselves), so building it from the already-fixed task list
   // guarantees the two can never disagree again.
   const allProjects = useMemo(() => {
-    const map = new Map<string, { id: any; name: string }>();
+    const map = new Map<string, { id: any; name: string; customer_name?: string }>();
     for (const t of allTasks) {
       if (t.project_id == null) continue;
       const key = String(t.project_id);
       if (!map.has(key)) {
-        map.set(key, { id: t.project_id, name: t.projectName || `Project #${t.project_id}` });
+        map.set(key, { id: t.project_id, name: t.projectName || `Project #${t.project_id}`, customer_name: t.customerName || undefined });
       }
     }
     return Array.from(map.values());
@@ -707,7 +708,7 @@ export default function MultiTeamProjectComparison() {
                               className="block p-3 bg-white border border-slate-200 rounded-xl hover:border-[#0058be]/40 hover:shadow-md transition-all"
                             >
                               <div className="flex items-center justify-between mb-1.5 gap-2">
-                                <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={p.name}>{p.name}</span>
+                                <span className="text-[11px] font-bold text-[#0b1c30] truncate" title={formatProjectCardTitle(p)}>{formatProjectCardTitle(p)}</span>
                               </div>
                               <div className="text-[10px] text-slate-500 mb-1.5 truncate">
                                 Giai đoạn: <strong className="text-slate-700">{p.current_phase || '—'}</strong>
@@ -1067,7 +1068,7 @@ export default function MultiTeamProjectComparison() {
 
       {/* Section 2 detail drawer */}
       {(detailTeam || detailLoading) && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-[999] flex justify-end">
+        <div className="fixed inset-0 z-[999] flex justify-end">
           <div className="fixed inset-0" onClick={closeTeamDetail} />
           <div className="relative w-full max-w-xl bg-white h-full shadow-2xl border-l border-slate-200 flex flex-col z-10 animate-in slide-in-from-right duration-250">
             <div className="p-5 border-b border-slate-200 bg-slate-50/80 flex items-center justify-between shrink-0">
@@ -1182,7 +1183,7 @@ export default function MultiTeamProjectComparison() {
                             className="block p-3 border border-slate-200 rounded-xl bg-white hover:border-[#0058be]/40 transition-all"
                           >
                             <div className="flex items-center justify-between gap-2">
-                              <span className="font-bold text-[#0b1c30]">{p.name}</span>
+                              <span className="font-bold text-[#0b1c30]">{formatProjectCardTitle(p)}</span>
                             </div>
                             <div className="grid grid-cols-3 gap-2 mt-2 text-[10px]">
                               <SmallStat label="Progress" value={`${p.progress_pct.toFixed(0)}%`} color="text-[#0058be]" />

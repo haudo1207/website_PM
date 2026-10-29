@@ -51,7 +51,30 @@ export const isMemberOrAbove = () => {
 
 // Kept for backward compatibility — maps to isAdmin().
 export const isGroupA = isAdmin;
-export const logout = () => {
+
+// Only an internal, same-path redirect target is ever safe to carry through
+// `/login?redirect=` — a bare "/" prefix rules out absolute URLs, and "//" /
+// "/\" are explicitly rejected because browsers treat both as protocol-
+// relative (i.e. "//evil.com" or "/\evil.com" navigate off-site exactly like
+// "https://evil.com" would). The "://" check is a second net against a value
+// that slipped a scheme in some other way. Exported so login/page.tsx
+// validates with this exact same rule instead of a second, driftable copy.
+export function isSafeRedirectPath(path: string): boolean {
+  if (!path.startsWith('/')) return false;
+  if (path.startsWith('//') || path.startsWith('/\\')) return false;
+  if (path.includes('://')) return false;
+  return true;
+}
+
+// attachRedirect (chốt 2026-10-29): only the session-expiry/401 call sites
+// (api.ts's refresh-failure and response-interceptor paths) pass this —
+// never the user's own "Sign out" click (Navbar.tsx), which must keep
+// landing back on /dashboard/overview like before. Checked as
+// `=== true` rather than a truthy `if (opts)` specifically so this stays
+// safe even if a caller is ever wired as a bare onClick={logout} again (a
+// click handler receives the MouseEvent as its first argument, which has no
+// `attachRedirect` property, so it reads as false either way).
+export const logout = (opts?: { attachRedirect?: boolean }) => {
   if (typeof window === 'undefined') return;
   accessToken = null;
   // Chỉ xoá đúng identity/auth (role/name/avatar/email) - KHÔNG localStorage.
@@ -65,6 +88,15 @@ export const logout = () => {
   localStorage.removeItem('email');
   localStorage.removeItem('user_id');
   localStorage.removeItem('member_id');
+  let target = '/login';
+  // Never redirect back to /login itself (would loop) — only ever attach a
+  // return path for a forced logout, not a manual one.
+  if (opts?.attachRedirect === true && window.location.pathname !== '/login') {
+    const current = window.location.pathname + window.location.search;
+    if (isSafeRedirectPath(current)) {
+      target = `/login?redirect=${encodeURIComponent(current)}`;
+    }
+  }
   const base = process.env.NEXT_PUBLIC_API_BASE_URL || '/api';
   // Best-effort server-side revocation (works even when the Access JWT is
   // expired — the backend revokes via the HttpOnly refresh cookie).
@@ -72,9 +104,9 @@ export const logout = () => {
     fetch(`${base}/auth/logout`, { method: 'POST', credentials: 'include' })
       .catch(() => {})
       .finally(() => {
-        window.location.href = '/login';
+        window.location.href = target;
       });
   } catch {
-    window.location.href = '/login';
+    window.location.href = target;
   }
 };

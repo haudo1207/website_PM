@@ -1,6 +1,7 @@
 """
 Projects Router — Full CRUD for projects, project members, phases, chat groups (links).
 """
+import logging
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Optional
@@ -51,6 +52,7 @@ from ..utils.project_progress import get_progress_pct_for_phase
 from ..services.document_storage import delete_task_link_documents
 
 router = APIRouter(tags=["projects"], dependencies=[Depends(require_route_project_access)])
+_pins_logger = logging.getLogger("projects.pins")
 
 
 def _task_done_expr():
@@ -570,24 +572,37 @@ def list_projects(
 
 @router.get("/projects/pins")
 def list_pinned_project_ids(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.user_id == current_user.id).all()]
+    # Pin state is a display nicety (sort order + a highlighted star), not
+    # load-bearing — degrade to "nothing pinned" on an unexpected DB error
+    # instead of taking down the whole Project list fetch, but log loudly
+    # since this endpoint had silently 500'd on every call for a while.
+    try:
+        ids = [r.project_id for r in db.query(ProjectPin).filter(ProjectPin.user_id == current_user.id).all()]
+    except Exception:
+        _pins_logger.exception("GET /projects/pins failed for user_id=%s", current_user.id)
+        return {"pinned_project_ids": []}
     return {"pinned_project_ids": ids}
 
 
 @router.post("/projects/{pid:int}/pin")
 def toggle_project_pin(pid: int, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
-    existing = (
-        db.query(ProjectPin)
-        .filter(ProjectPin.user_id == current_user.id, ProjectPin.project_id == pid)
-        .first()
-    )
-    if existing:
-        db.delete(existing)
+    try:
+        existing = (
+            db.query(ProjectPin)
+            .filter(ProjectPin.user_id == current_user.id, ProjectPin.project_id == pid)
+            .first()
+        )
+        if existing:
+            db.delete(existing)
+            db.commit()
+            return {"success": True, "is_pinned": False}
+        db.add(ProjectPin(user_id=current_user.id, project_id=pid))
         db.commit()
-        return {"success": True, "is_pinned": False}
-    db.add(ProjectPin(user_id=current_user.id, project_id=pid))
-    db.commit()
-    return {"success": True, "is_pinned": True}
+        return {"success": True, "is_pinned": True}
+    except Exception:
+        db.rollback()
+        _pins_logger.exception("POST /projects/%s/pin failed for user_id=%s", pid, current_user.id)
+        raise HTTPException(500, "Không thể ghim/bỏ ghim dự án lúc này, vui lòng thử lại sau.")
 
 
 @router.patch("/projects/{pid:int}/critical")
@@ -783,6 +798,20 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         name="Master",
         sort_order=1,
         status="Waiting"
+    ))
+
+    # 1b. "MA" - the system-seeded phase holding weekly feedback Group Tasks.
+    # is_protected=True blocks delete_phase() below; create_task_group()
+    # auto-fills Detail/Manday/Start Date for Group Tasks created under it
+    # from the admin-configured template (Settings > ma-group-task-template).
+    # Only new projects get this - existing projects are intentionally left
+    # as-is (no backfill).
+    db.add(Phase(
+        project_id=p.id,
+        name="MA",
+        sort_order=2,
+        status="Waiting",
+        is_protected=True,
     ))
 
     # 2. Add initial links/channels (Legacy cleanup - only if they exist)
@@ -1424,6 +1453,7 @@ def serialize_phase(ph, db):
         "description": ph.description,
         "sort_order": getattr(ph, "sort_order", 0) or 0,
         "status": getattr(ph, "status", "Waiting") or "Waiting",
+        "is_protected": bool(getattr(ph, "is_protected", False)),
         "task_group_count": tg_count,
         "task_count": task_count,
         "ai_status": getattr(ph, "ai_status", "NOT_CHECKED") or "NOT_CHECKED",
@@ -1495,16 +1525,40 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_us
 @router.patch("/projects/{pid:int}/phases/reorder")
 def reorder_phases(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
     """Body: {"order": [{"phase_id": 1, "sort_order": 0}, {"phase_id": 2, "sort_order": 1}, ...]}.
-    Bulk-reorders every real Phase in this project in one transaction —
-    "Master" (the frontend-only "ALL" tab, never a DB row) is never part of
-    this payload. Every phase_id must belong to pid and the payload must
-    cover EVERY Phase in the project (no partial reorder) — reject the
-    WHOLE request on any mismatch rather than silently skip unknown ids,
-    same standard as the rest of this file's write endpoints. Only ever
-    touches Phase.sort_order — Phase order does not feed task_code (that's
-    derived purely from TaskGroup rank within its own Phase, see
-    get_group_index() in task_groups.py), so TaskGroup/Task are never
-    queried or written here.
+    Reorders whichever Phases of this project are listed in the payload —
+    TOLERANT of a partial list (chốt 2026-10-28, see below for why), never
+    hard-requires every Phase to be present.
+
+    Partial-reorder merge: Phases present in the payload are reordered
+    exactly as given; any Phase that belongs to this project but is NOT in
+    the payload keeps its OLD RELATIVE POSITION — it is never dropped,
+    never moved, and never causes a 400. Implemented by taking the
+    project's current full order, finding the index SLOTS occupied by the
+    payload's phase_ids, and overwriting just those slots with the
+    payload's new sub-order (everything else keeps its original index).
+
+    Why tolerant instead of rejecting a short payload (chốt 2026-10-28):
+    previously required the payload to cover every Phase and rejected the
+    whole request otherwise ("Reorder payload is missing Phase id(s) ...")
+    — this 400'd on effectively EVERY real drag-reorder, confirmed
+    reproduced locally: the frontend deliberately never drags/sends the
+    "Master" Phase (shown as a separate, fixed, non-draggable tab), but
+    "Master" is a perfectly ordinary Phase row like any other (see
+    models/phase.py) with no exemption here, so it was always "missing".
+    A client omitting Phases for ANY reason (a fixed/pinned tab, a stale
+    local list, a Phase created a moment earlier it hasn't refreshed yet)
+    is routine, not a client bug to reject — the one thing that must never
+    happen is silently losing track of a Phase's position, which this
+    merge guarantees without needing the client to enumerate everything.
+
+    Hard-rejects only genuine data-integrity problems: a phase_id that
+    doesn't belong to pid at all, or duplicate phase_id/sort_order within
+    the payload itself.
+
+    Only ever touches Phase.sort_order — Phase order does not feed
+    task_code (that's derived purely from TaskGroup rank within its own
+    Phase, see get_group_index() in task_groups.py), so TaskGroup/Task are
+    never queried or written here.
 
     Registered BEFORE the PATCH/DELETE .../phases/{phid} routes below on
     purpose — phid isn't typed :int there, so Starlette would otherwise
@@ -1533,13 +1587,26 @@ def reorder_phases(pid: int, body: dict, db: Session = Depends(get_db), current_
     unknown_ids = [phid for phid in phase_ids if phid not in project_phase_ids]
     if unknown_ids:
         raise HTTPException(400, f"Phase id(s) {unknown_ids} do not belong to project {pid}.")
-    missing_ids = project_phase_ids - set(phase_ids)
-    if missing_ids:
-        raise HTTPException(400, f"Reorder payload is missing Phase id(s) {sorted(missing_ids)} from this project.")
+
+    # Current full order (every Phase, including ones the payload omits).
+    current_full_order = [p.id for p in sorted(project_phases, key=lambda p: (p.sort_order, p.id))]
+
+    # The payload's own desired sub-order, by its submitted sort_order.
+    submitted_ids_in_new_order = [pid_ for pid_, _ in sorted(zip(phase_ids, sort_orders), key=lambda t: t[1])]
+    submitted_set = set(submitted_ids_in_new_order)
+
+    # Slots (indices into current_full_order) occupied by the Phases being
+    # reordered — overwritten in place with the new sub-order; every other
+    # slot (an omitted Phase) is left untouched, so it keeps its exact old
+    # neighbors/relative position.
+    slots = [i for i, phid in enumerate(current_full_order) if phid in submitted_set]
+    final_order = list(current_full_order)
+    for slot, new_phid in zip(slots, submitted_ids_in_new_order):
+        final_order[slot] = new_phid
 
     phases_by_id = {p.id: p for p in project_phases}
-    for item in items:
-        phases_by_id[item["phase_id"]].sort_order = item["sort_order"]
+    for idx, phid in enumerate(final_order):
+        phases_by_id[phid].sort_order = idx
     db.commit()
     return {"ok": True}
 
@@ -1586,6 +1653,8 @@ def delete_phase(pid: int, phid: int, db: Session = Depends(get_db), current_use
     ph = db.query(Phase).filter(Phase.id == phid, Phase.project_id == pid).first()
     if not ph:
         raise HTTPException(404, "Phase not found.")
+    if ph.is_protected:
+        raise HTTPException(400, f"Phase '{ph.name}' là phase hệ thống, không thể xóa.")
     phase_name = ph.name
 
     group_ids = [g.id for g in db.query(TaskGroup).filter(TaskGroup.phase_id == phid).all()]
