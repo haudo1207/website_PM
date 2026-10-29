@@ -66,7 +66,13 @@ async function getRecordingTabs() {
 // channel instead of a background->content message.
 async function setMeetingForTab(tabId, meetingId, path, endAt) {
   const map = await getRecordingTabs();
-  map[tabId] = { meetingId, path, endAt: endAt || null };
+  // everMatched (chốt 2026-10-29): see chrome.tabs.onUpdated below — tracks
+  // whether this tab has EVER actually settled on the meeting's own URL,
+  // so the "navigated away = call ended" check there can tell a genuine
+  // post-join departure apart from the tab's own initial load sequence
+  // (which commonly passes through one or more intermediate URLs — a
+  // sign-in check, an interstitial — before landing on the real path).
+  map[tabId] = { meetingId, path, endAt: endAt || null, everMatched: false };
   await chrome.storage.local.set({ recordingTabs: map });
 }
 
@@ -253,7 +259,28 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     } catch (_err) {
       stillOnMeeting = false;
     }
-    if (stillOnMeeting) return;
+    if (stillOnMeeting) {
+      // First time this tab's URL has actually matched the meeting's own
+      // path — latch it so a LATER mismatch can be trusted as a real
+      // departure (see the everMatched check below). Never unset once true.
+      if (!entry.everMatched) {
+        map[tabId] = { ...entry, everMatched: true };
+        chrome.storage.local.set({ recordingTabs: map });
+      }
+      return;
+    }
+    // Confirmed live 2026-10-29: chrome.tabs.create()'s own initial load of
+    // meeting.join_url commonly fires one or more onUpdated events for an
+    // intermediate URL (a sign-in check, an interstitial) BEFORE ever
+    // settling on the meeting's real path — e.g. a bare `changeInfo.url`
+    // during the loading phase that doesn't match entry.path yet. Treating
+    // every non-matching event as "navigated away = call ended" (the old
+    // code below) closed the tab and reported /ended within ~1s of opening
+    // it, before content.js even got a chance to run — reproduced live,
+    // 100% of real queued meetings failed this way with zero [MeetingBot]
+    // console output. Only trust a mismatch as a genuine departure once the
+    // tab has ACTUALLY matched the meeting's own path at least once before.
+    if (!entry.everMatched) return;
     // Don't pop the tracking entry until stopRecording() (incl. its Drive
     // upload) has actually finished — see the CALL_ENDED handler below for
     // why: this is what keeps pollOnce()'s "already has an active tab" guard
