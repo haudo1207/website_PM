@@ -48,9 +48,38 @@ import {
   Bell, Sparkles, Building2, LayoutTemplate, FileOutput, FolderPlus, Pin, PinOff,
   Users, AlertTriangle, Layers, UserX, ArrowRight, ArrowRightLeft, Clock,
   ArrowUpRight, ArrowDownRight, Minus, Trophy, BarChart3,
-  Ban, CheckCircle2,
+  Ban, CheckCircle2, Link,
 } from 'lucide-react';
 import { calculateDaysLate, parseDateString, getMondayToSundayRange, getWeekOfMonth, getWeekDateRange, checkTaskInPeriod, taskMatchesKpiMonthYear } from '@/app/dashboard/constants';
+
+// Sao chép link nhóm task (chốt 2026-10-29) — navigator.clipboard đòi
+// isSecureContext (HTTPS hoặc localhost); môi trường HTTP nội bộ thì
+// undefined hẳn, nên cần fallback textarea+execCommand('copy') (deprecated
+// nhưng vẫn là cách duy nhất hoạt động không cần HTTPS). Không có util dùng
+// chung nào trong repo cho việc này — mọi chỗ khác gọi thẳng
+// navigator.clipboard.writeText không fallback.
+function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text);
+  }
+  return new Promise((resolve, reject) => {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(textarea);
+      if (ok) resolve(); else reject(new Error('execCommand copy failed'));
+    } catch (err) {
+      reject(err);
+    }
+  });
+}
 
 // Format 1 real timestamp (Audit Log created_at) thành nhãn tương đối kiểu
 // "2 phút trước" - không phải data giả, chỉ format lại 1 giá trị thời gian thật.
@@ -825,6 +854,21 @@ function ProjectDetailContent() {
   const [editValue, setEditValue] = useState('');
   const [taskToDelete, setTaskToDelete] = useState<number | null>(null);
   const [highlightTaskId, setHighlightTaskId] = useState<number | null>(null);
+
+  // Deep-link "Sao chép link" nhóm task (chốt 2026-10-29). highlightGroupId
+  // stays non-null for the full ~4s window (hold + fade) so the CSS
+  // `duration-1000` class remains applied on the group header + every child
+  // task row while highlightGroupActive flips the actual tint/shadow off at
+  // the 3s mark — removing the class WHILE duration-1000 is still present is
+  // what makes the browser animate the fade smoothly instead of snapping
+  // instantly (the default transition-colors duration is 150ms).
+  const [highlightGroupId, setHighlightGroupId] = useState<number | null>(null);
+  const [highlightGroupActive, setHighlightGroupActive] = useState(false);
+  // Guards focusGroup() from re-running for the same ?group= id if
+  // taskGroups/phases happen to refetch (for an unrelated reason) while its
+  // 4s sequence is still in flight.
+  const focusedGroupHandledRef = useRef<number | null>(null);
+  const focusGroupTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const [collapsedParents, setCollapsedParents] = useState<Set<string>>(new Set());
 
@@ -4293,6 +4337,89 @@ function ProjectDetailContent() {
     }
   }, [highlightTaskParam, items]);
 
+  // Deep-link "Sao chép link" nhóm task (chốt 2026-10-29). See focusGroup()
+  // below for the full sequence; stripGroupParam() runs immediately (not
+  // after the highlight finishes) so the URL never re-triggers this on a
+  // refresh, regardless of whether the group is found.
+  function stripGroupParam() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('group');
+    // window.history.state (not null) as the first arg — Next 14 App
+    // Router keeps its own internal state (scroll restoration, etc.) in
+    // history.state; passing null would wipe it out from under the router.
+    window.history.replaceState(window.history.state, '', url.pathname + url.search);
+  }
+
+  // Switch to the group's own Phase/tab, un-collapse it, clear the period
+  // filter so it can't be hidden by "Tuần này", scroll to it, and flash a
+  // temporary highlight across its header + every one of its child task
+  // rows. project id is already in the URL (?id=), so unlike focusTask this
+  // never needs a server round-trip — taskGroups/phases are already the
+  // exact data this page fetched for itself.
+  function focusGroup(groupId: number) {
+    stripGroupParam();
+    const targetGroup = taskGroups.find((g: any) => g.id === groupId);
+    if (!targetGroup) {
+      flash('Nhóm task không còn tồn tại', true);
+      return;
+    }
+    const phase = phases.find((p: any) => p.id === targetGroup.phase_id);
+    const phaseName = phase?.name || 'ALL';
+    if (activePhase !== phaseName) setActivePhase(phaseName);
+    // Runtime-only state (confirmed: no localStorage key backs taskPeriod*),
+    // so this never clobbers a saved user preference — just this session's
+    // current filter, same as clicking "Tất cả kỳ" by hand.
+    applyTaskPeriodQuickFilter('all');
+    setCollapsedGroups(prev => {
+      if (!prev.has(groupId)) return prev;
+      const next = new Set(prev);
+      next.delete(groupId);
+      return next;
+    });
+    setHighlightGroupId(groupId);
+    setHighlightGroupActive(true);
+
+    let attempts = 0;
+    const tryScroll = () => {
+      attempts += 1;
+      const el = document.getElementById(`tg-row-${groupId}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (attempts < 10) {
+        focusGroupTimeoutsRef.current.push(setTimeout(tryScroll, 300));
+      }
+    };
+    focusGroupTimeoutsRef.current.push(setTimeout(tryScroll, 300));
+    // Fade sequence: at 3s drop the tint/shadow classes while the
+    // `duration-1000` class is still applied (highlightGroupId only clears
+    // at 4s) — see the className comments at the group header/task row for
+    // why this ordering is what makes the fade actually animate.
+    focusGroupTimeoutsRef.current.push(setTimeout(() => setHighlightGroupActive(false), 3000));
+    focusGroupTimeoutsRef.current.push(setTimeout(() => setHighlightGroupId(null), 4000));
+  }
+
+  const groupParam = searchParams.get('group');
+  useEffect(() => {
+    if (!groupParam || loadingTasks || !project) return;
+    const gid = parseInt(groupParam, 10);
+    if (!Number.isFinite(gid)) return;
+    if (focusedGroupHandledRef.current === gid) return;
+    focusedGroupHandledRef.current = gid;
+    focusGroup(gid);
+  }, [groupParam, loadingTasks, project, taskGroups, phases]);
+
+  // Unmount-only cleanup — deliberately its own effect with empty deps, not
+  // folded into the one above: that one's deps (taskGroups/phases) can
+  // legitimately change mid-sequence for unrelated reasons (another tab's
+  // edit refetching), and clearing the pending timers on every such refetch
+  // would cut the 3s hold / 1s fade short instead of letting it finish.
+  useEffect(() => {
+    return () => {
+      focusGroupTimeoutsRef.current.forEach(clearTimeout);
+      focusGroupTimeoutsRef.current = [];
+    };
+  }, []);
+
   // Switch to the task's phase, un-collapse its group, scroll to + flash its
   // row. Shared by the ?highlightTask= deep link above and the AI Review
   // Skill/Manday tabs (clicking a "chưa chuẩn" verdict).
@@ -5035,6 +5162,13 @@ function ProjectDetailContent() {
     // (khác isHighlighted, vốn là flash tạm thời cho task vừa tạo). Không
     // dùng đỏ cho selection - đỏ chỉ dành cho overdue/critical (semantic).
     const isAttentionSelected = task.id === selectedAttentionTaskId;
+    // Deliberately NOT a new first branch here (chốt 2026-10-29 review) —
+    // folding the group-highlight into this ternary would drop the parent
+    // task's own `bg-[#f8fafc] border-l-[3px] border-l-[#0058be]` for the
+    // ~4s highlight window, causing a layout jump (border popping back in)
+    // right as the highlight ends. rowBgClass stays exactly as before;
+    // the highlight is a forced override appended directly in the <tr>
+    // className below instead.
     const rowBgClass = isHighlighted
       ? "bg-amber-100 ring-2 ring-inset ring-amber-400 animate-pulse"
       : isAttentionSelected
@@ -5048,13 +5182,18 @@ function ProjectDetailContent() {
     const isDragging = draggingTaskId === task.id;
     const isDragOver = dragOverTaskId === task.id;
     const isCrossGroupTarget = isDragOver && draggingTaskGroupId !== null && draggingTaskGroupId !== task.task_group_id;
+    // Deep-link "Sao chép link" nhóm task highlight window (chốt 2026-10-29)
+    // — see focusGroup(). `!bg-[#0058be]/10` forces override over whatever
+    // rowBgClass already set, without touching its border-l (left
+    // untouched, see comment above).
+    const isGroupHighlighted = highlightGroupId !== null && task.task_group_id === highlightGroupId;
 
     return (
       <tr
         id={`task-row-${task.id}`}
         key={task.id}
         draggable={canMoveTask(project)}
-        className={`group relative transition-colors cursor-grab active:cursor-grabbing border-t-2 ${rowBgClass} ${isDragging ? 'opacity-40' : ''} ${isCrossGroupTarget ? 'border-t-emerald-500' : isDragOver ? 'border-t-[#0058be]' : 'border-t-transparent'}`}
+        className={`group relative transition-colors cursor-grab active:cursor-grabbing border-t-2 ${rowBgClass} ${isDragging ? 'opacity-40' : ''} ${isCrossGroupTarget ? 'border-t-emerald-500' : isDragOver ? 'border-t-[#0058be]' : 'border-t-transparent'} ${isGroupHighlighted ? `duration-1000 ${highlightGroupActive ? '!bg-[#0058be]/10' : ''}` : ''}`}
         onDragStart={(e) => {
           e.dataTransfer.effectAllowed = "move";
           e.dataTransfer.setData("application/json", JSON.stringify({ type: "task", taskId: task.id, groupId: task.task_group_id }));
@@ -5099,7 +5238,7 @@ function ProjectDetailContent() {
         }}
       >
         {/* Action cell: cả dòng đều kéo-thả được (giữ chuột trái bất kỳ đâu trên Task) */}
-        <td className="px-1 py-2 text-center sticky left-0 z-[11] bg-white" style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
+        <td className={`px-1 py-2 text-center sticky left-0 z-[11] bg-white transition-shadow duration-1000 ${isGroupHighlighted && highlightGroupActive ? 'shadow-[inset_3px_0_0_#0058be]' : ''}`} style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
           <div className="flex items-center justify-center gap-1">
             {/* More actions menu */}
             <div className="relative">
@@ -6119,12 +6258,19 @@ function ProjectDetailContent() {
         // a time, so which state is non-null tells us which to show.
         const showGroupInsertionLine = draggingGroupId !== null && isGroupDragOverThis;
         const showTaskDropHighlight = draggingTaskId !== null && isGroupDragOverThis;
+        // Deep-link "Sao chép link" highlight window (chốt 2026-10-29) — see
+        // focusGroup(). `!bg-[#0058be]/10` (forced) is required because this
+        // row already carries `bg-indigo-50/50` at the same specificity, and
+        // a plain `bg-[#0058be]/10` here would lose that Tailwind-ordering
+        // fight depending on JIT class generation order, not the order
+        // they're written in this template literal.
+        const isGroupHeaderHighlighted = highlightGroupId === group.id;
         result.push(
           <tr
             id={`tg-row-${group.id}`}
             key={`tg-row-${group.id}`}
             draggable={canManageProjectStructure(project)}
-            className={`border-t-2 ${showGroupInsertionLine ? 'border-t-[#0058be]' : 'border-t-transparent'} ${showTaskDropHighlight ? 'bg-indigo-100' : 'bg-indigo-50/50 hover:bg-indigo-50'} border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors ${isDraggingThisGroup ? 'opacity-40' : ''}`}
+            className={`border-t-2 ${showGroupInsertionLine ? 'border-t-[#0058be]' : 'border-t-transparent'} ${showTaskDropHighlight ? 'bg-indigo-100' : 'bg-indigo-50/50 hover:bg-indigo-50'} border-b border-[#E3E7EE] border-l-[3px] border-l-indigo-400 group transition-colors ${isDraggingThisGroup ? 'opacity-40' : ''} ${isGroupHeaderHighlighted ? `duration-1000 ${highlightGroupActive ? '!bg-[#0058be]/10' : ''}` : ''}`}
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("application/json", JSON.stringify({ type: "group", groupId: group.id, phaseId: group.phase_id }));
@@ -6173,7 +6319,7 @@ function ProjectDetailContent() {
             }}
           >
             {/* Actions column */}
-            <td className={`px-1 ${rowPadY} text-center sticky left-0 z-[11] bg-white`} style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
+            <td className={`px-1 ${rowPadY} text-center sticky left-0 z-[11] bg-white transition-shadow duration-1000 ${isGroupHeaderHighlighted && highlightGroupActive ? 'shadow-[inset_3px_0_0_#0058be]' : ''}`} style={{ width: `${ACTION_COL_WIDTH}px`, minWidth: `${ACTION_COL_WIDTH}px` }}>
               <div className="flex items-center justify-center gap-1.5 select-none">
                 {/* 1. Toggle Expand/Collapse (Always visible) */}
                 <button
@@ -6256,6 +6402,25 @@ function ProjectDetailContent() {
                         Di chuyển
                       </button>
                       )}
+                      {/* Sao chép link (chốt 2026-10-29) — cố ý KHÔNG gate theo
+                          canManageProjectStructure như các mục khác: copy link
+                          là hành động xem/chia sẻ, không sửa cấu trúc, nên hiện
+                          cho bất kỳ ai mở được menu này (đã qua check quyền xem
+                          dự án rồi). */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setOpenRowMenu(null);
+                          const url = `${window.location.origin}/project/detail/tasks?id=${project.id}&group=${group.id}`;
+                          copyTextToClipboard(url)
+                            .then(() => flash('Đã sao chép link nhóm task'))
+                            .catch(() => flash('Không thể sao chép link', true));
+                        }}
+                        className="w-full h-9 px-3 flex items-center gap-2 text-[13px] font-medium text-[#0b1c30] hover:bg-slate-50"
+                      >
+                        <Link size={15} className="text-[#0058be]" />
+                        Sao chép link
+                      </button>
                       {canManageProjectStructure(project) && <div className="my-1 border-t border-slate-100" />}
                       {canManageProjectStructure(project) && (
                       <button
