@@ -10,7 +10,7 @@ from ..models.member import Member, member_skills
 from ..models.skill_master import Skill
 from ..models.task import Task
 from ..models.task_group import TaskGroup
-from ..utils.auth import require_admin, require_manager, get_current_user
+from ..utils.auth import require_admin, require_manager, get_current_user, get_current_user_or_support_key
 from ..models.workspace_access import UserWorkspaceAccess
 from ..utils.access import member_query_for_user, resolve_workspace, scope_display_name, workspace_leader_names, ALL_SCOPE, ROLE_LEADER
 from ..utils.audit_service import AuditService
@@ -232,7 +232,7 @@ def list_members(
     ),
     light: Optional[bool] = None,
     db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
+    current_user=Depends(get_current_user_or_support_key)
 ):
     if light:
         q = db.query(Member, User.id.label("user_id")).outerjoin(User, User.member_id == Member.id).options(joinedload(Member.skills))

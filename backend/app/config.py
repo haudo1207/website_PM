@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     REFRESH_COOKIE_NAME: str = "portal_refresh"
     REFRESH_COOKIE_SECURE: bool = True
     INTERNAL_SYNC_TOKEN: str = ""
+    # Static bearer key cho hệ thống ngoài (Tech_Support/Ticket) gọi server-to-server
+    # vào các route dùng get_current_user bình thường — KHÔNG phải quyền Super Admin
+    # riêng: key chỉ xác thực THAY cho JWT, quyền thực tế vẫn do role của
+    # SUPPORT_INTEGRATION_SERVICE_EMAIL (mặc định "member", thấp nhất) quyết định —
+    # vẫn bị chặn ở mọi route yêu cầu require_super_admin/require_manager. Xem
+    # utils/auth.py (get_current_user_or_support_key). Rỗng = tắt hẳn (không chấp
+    # nhận key nào).
+    SUPPORT_INTEGRATION_API_KEY: str = ""
+    SUPPORT_INTEGRATION_SERVICE_EMAIL: str = "support-integration@securityzone.vn"
     GOOGLE_APPLICATION_CREDENTIALS: str = ""
     DEFAULT_ADMIN_EMAIL: str = "admin@company.com"
     DEFAULT_ADMIN_PASSWORD: str = ""
@@ -52,6 +61,14 @@ class Settings(BaseSettings):
     AI_TIMEOUT_SECONDS: int = 60
     CHECK_INTERVAL_SECONDS: int = 3600
     REDIS_URL: str = ""
+
+    # CRM customer sync (PULL tu crm-securityzone /api/all-platform/sync/customers,
+    # cung mot API + API key voi Tech_Support - xem services/crm_sync.py).
+    # Tat mac dinh de khong anh huong moi truong dev/staging chua cau hinh key.
+    CRM_SYNC_ENABLED: bool = False
+    CRM_BASE_URL: str = ""
+    CRM_SYNC_API_KEY: str = ""
+    CRM_SYNC_INTERVAL_SECONDS: int = 3600
 
     # Google Sheet the n8n meeting-summary pipeline writes each meeting's parsed
     # summary to (1 tab per meeting, tab name == ai_summary.n8n_metadata.sheet_row_id).
@@ -105,6 +122,18 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_EMAIL: str = ""
     GOOGLE_PRIVATE_KEY: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/meetings/google/callback"
+    # Feature flag (chốt 2026-10-28): switches create_google_meet_shared()
+    # from the OLD mechanism (Calendar's own conferenceData.createRequest,
+    # which implicitly creates the Space) to creating the Space directly via
+    # Meet API v2 first (POST /v2/spaces) and attaching it to the Calendar
+    # event with a hand-built conferenceData — see
+    # test_space_v2_architecture.py for the empirical verification this was
+    # based on (identical artifactConfig defaults, identical Calendar
+    # Join-button rendering, and — the actual reason for migrating —
+    # PATCH config.accessType only works on a Space the app itself created).
+    # Default OFF: flip per-environment via .env, no redeploy needed to
+    # roll back if something unexpected turns up in production.
+    GOOGLE_MEET_USE_V2_SPACE_CREATION: bool = False
 
     # Frontend URL for OAuth redirects
     FRONTEND_URL: str = "http://localhost:3000"

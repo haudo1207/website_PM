@@ -15,7 +15,7 @@ from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
 from ..models.audit_log import AuditLog
-from .auth import get_current_user
+from .auth import get_current_user, get_current_user_or_support_key
 
 ALL_SCOPE = "all"
 
@@ -719,9 +719,14 @@ def customer_query_for_user(db: Session, user):
         db.query(Project.customer_id)
         .filter(Project.customer_id.isnot(None))
     )
+    # Case-insensitive on the Customer side only — `scopes`/ALL_SCOPE are
+    # already guaranteed lowercase (see user_allowed_scopes' docstring);
+    # business_unit itself is free-typed in a few places (seed scripts,
+    # external sync jobs like services/crm_sync.py) and a casing mismatch
+    # used to silently drop a project-less Customer out of scope.
     projectless_in_scope = and_(
         ~Customer.id.in_(customer_ids_with_projects),
-        Customer.business_unit.in_(list(scopes) + [ALL_SCOPE]),
+        sql_func.lower(Customer.business_unit).in_(list(scopes) + [ALL_SCOPE]),
     )
     return db.query(Customer).filter(or_(Customer.id.in_(customer_ids), projectless_in_scope))
 
@@ -741,11 +746,16 @@ def customer_in_workspace_filter(db: Session, ws: Workspace):
         or_(*project_belongs_to_workspace(db, {ws.code})),
     )
     with_projects = db.query(Project.customer_id).filter(Project.customer_id.isnot(None))
+    # Case-insensitive: business_unit is free-typed in a few places (seed
+    # scripts, external sync jobs like services/crm_sync.py) and a casing
+    # mismatch against ws.code used to silently drop a project-less Customer
+    # out of its Workspace instead of erroring, which was hard to notice.
+    business_unit_lower = sql_func.lower(Customer.business_unit)
     return or_(
         Customer.id.in_(in_ws),
         and_(
             ~Customer.id.in_(with_projects),
-            or_(Customer.business_unit == ws.code, Customer.business_unit == ALL_SCOPE),
+            or_(business_unit_lower == ws.code.lower(), business_unit_lower == ALL_SCOPE),
         ),
     )
 
@@ -934,7 +944,7 @@ def _is_member_of_project(db: Session, user, project_id: int) -> bool:
 def require_route_project_access(
     request: Request,
     db: Session = Depends(get_db),
-    user=Depends(get_current_user),
+    user=Depends(get_current_user_or_support_key),
 ):
     """Authorize project, phase, group, task, or meeting path parameters."""
     print(f"--- ACCESS CHECK ---")

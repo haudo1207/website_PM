@@ -11,7 +11,7 @@ from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
 from ..models.workspace_access import UserWorkspaceAccess
-from ..utils.auth import require_admin, get_current_user
+from ..utils.auth import require_admin, get_current_user, get_current_user_or_support_key
 from ..utils.audit_service import AuditService
 from ..utils.access import (
     default_scope,
@@ -204,7 +204,7 @@ def delete_department(id: int, db: Session = Depends(get_db), current_user=Depen
 
 # ----------------- PRIORITIES -----------------
 @router.get("/priorities")
-def list_priorities(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_priorities(db: Session = Depends(get_db), _=Depends(get_current_user_or_support_key)):
     return db.query(TaskPriority).order_by(TaskPriority.kpi_base.asc()).all()
 
 @router.post("/priorities")
@@ -314,7 +314,7 @@ def delete_priority(id: int, db: Session = Depends(get_db), current_user=Depends
 
 # ----------------- STATUSES -----------------
 @router.get("/statuses")
-def list_statuses(db: Session = Depends(get_db), _=Depends(get_current_user)):
+def list_statuses(db: Session = Depends(get_db), _=Depends(get_current_user_or_support_key)):
     return db.query(TaskStatus).order_by(TaskStatus.name.asc()).all()
 
 @router.post("/statuses")
