@@ -5,6 +5,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, MoreHorizontal, Copy, Trash2, Plus, X } from 'lucide-react';
 import Portal from '@/components/Portal';
 import SearchableSelect from '@/components/common/SearchableSelect';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 import {
   CalendarTask, getProjectMembers, getCategories, getPriorities, getStatuses, updateTask, getApiErrorMessage,
   blockTask, unblockTask, getAllProjectTasks, getPerformanceSettings, getMe, createGroup, createSkill,
@@ -108,6 +109,7 @@ export default function TaskEditDrawer({
   // into any Calendar surface today — that's a real feature integration, not
   // a field-parity item, so it's left out of this pass (flagged separately).
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
+  const [headerMenuAnchorEl, setHeaderMenuAnchorEl] = useState<HTMLElement | null>(null);
   const [duplicating, setDuplicating] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -482,9 +484,8 @@ export default function TaskEditDrawer({
   return (
     <Portal>
       {/* No dimming/blur backdrop — matches Task Detail's own click-outside
-          catcher (project/detail/page.tsx: "bg-slate-900/40 backdrop-blur-sm
-          removed ... so the page stays fully visible/legible behind the
-          drawer"). */}
+          catcher: the dim/blur overlay was removed so the page stays fully
+          visible/legible behind the drawer. */}
       <div className="fixed inset-0 z-50 flex justify-end">
         <div onClick={onClose} className="absolute inset-0" />
         <div className="relative w-full max-w-lg bg-white h-full shadow-2xl flex flex-col z-10 animate-in slide-in-from-right duration-200" onClick={e => e.stopPropagation()}>
@@ -518,16 +519,21 @@ export default function TaskEditDrawer({
                 Detail's canEditTask/canDeleteTask (narrowed — see its own
                 comment above). */}
             {canManageThisTask && (
-              <div className="relative shrink-0">
+              <div className="shrink-0">
                 <button
-                  onClick={() => setHeaderMenuOpen(o => !o)}
+                  onClick={(e) => { setHeaderMenuAnchorEl(e.currentTarget); setHeaderMenuOpen(o => !o); }}
                   className={`w-8 h-8 rounded-lg flex items-center justify-center text-slate-500 hover:bg-blue-50 hover:text-[#0058be] transition-colors ${headerMenuOpen ? 'bg-blue-50 text-[#0058be]' : ''}`}
                   title="Thao tác Task"
                 >
                   <MoreHorizontal size={18} />
                 </button>
-                {headerMenuOpen && (
-                  <div className="absolute right-0 top-9 z-30 w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                <FloatingDropdown
+                  anchorEl={headerMenuAnchorEl}
+                  open={headerMenuOpen}
+                  onClose={() => setHeaderMenuOpen(false)}
+                  align="right"
+                  className="w-44 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl"
+                >
                     <button
                       onClick={() => { setHeaderMenuOpen(false); handleDuplicate(); }}
                       disabled={duplicating}
@@ -542,8 +548,7 @@ export default function TaskEditDrawer({
                     >
                       <Trash2 size={14} /> Xóa Task
                     </button>
-                  </div>
-                )}
+                </FloatingDropdown>
               </div>
             )}
             <button onClick={onClose} className="w-8 h-8 rounded-lg hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors shrink-0">
@@ -861,12 +866,10 @@ export default function TaskEditDrawer({
           own blockPrompt modal (reason textarea ≥5 chars, optional
           dependency-task picker), just a local piece of JSX here since that
           modal is inline in project/detail/page.tsx, not an exported
-          component. Backdrop blur kept here (unlike the drawer itself) —
-          Task Detail's own confirm-style modals (block, delete) do use
-          bg-slate-900/40 backdrop-blur-sm; only the drawer's own outer
-          backdrop was asked to lose the dimming. */}
+          component. No dimming/blur overlay here either — kept consistent
+          with every other modal/drawer in the app. */}
       {blockPromptOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 space-y-3">
               <div className="flex items-center gap-3 text-amber-600">
@@ -926,7 +929,7 @@ export default function TaskEditDrawer({
       {/* Skill Area "+" modal — same POST /api/skills/groups + Category
           requirement as Task Detail's own showCreateSkillGroupModal. */}
       {showCreateSkillGroupModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 ">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill Area mới</h3>
@@ -992,7 +995,7 @@ export default function TaskEditDrawer({
           own showCreateSkillVendorModal, scoped to the currently selected
           Skill Area. */}
       {showCreateSkillVendorModal && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 ">
           <div className="bg-white rounded-xl shadow-xl max-w-sm w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between bg-gradient-to-r from-[#f8faff] to-white">
               <h3 className="text-sm font-bold text-[#0b1c30]">Tạo Skill mới</h3>
@@ -1044,7 +1047,7 @@ export default function TaskEditDrawer({
       {/* Xóa Task confirm — same copy/child-count warning/API as Task
           Detail's own taskToDelete modal. */}
       {deleteConfirmOpen && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-md w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6">
               <div className="flex items-center gap-3 text-red-600 mb-3">

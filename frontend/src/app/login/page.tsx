@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getAuthConfig, googleLogin, outlookLogin, login, type AuthConfig } from '@/lib/api';
-import { saveToken } from '@/lib/auth';
+import { saveToken, isSafeRedirectPath } from '@/lib/auth';
 import { brand } from '@/lib/brand';
 import { initMsal, microsoftLogin } from '@/lib/msal';
 
@@ -22,6 +22,7 @@ declare global {
 
 export default function LoginPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const googleButton = useRef<HTMLDivElement>(null);
   const [config, setConfig] = useState<AuthConfig | null>(null);
   const [email, setEmail] = useState('');
@@ -31,7 +32,12 @@ export default function LoginPage() {
 
   const finishLogin = (data: { access_token: string; role: string; full_name: string; avatar_url?: string | null; email?: string | null; user_id?: number | null; member_id?: number | null }) => {
     saveToken(data.access_token, data.role, data.full_name, data.avatar_url, data.email, data.user_id, data.member_id);
-    router.push('/dashboard/overview');
+    // Honor ?redirect= set by logout()'s forced-session-expiry path (chốt
+    // 2026-10-29) — a manual Sign out never attaches this, so it still lands
+    // here falling through to the dashboard as before. isSafeRedirectPath
+    // rejects anything but a same-origin relative path.
+    const redirectParam = searchParams.get('redirect');
+    router.push(redirectParam && isSafeRedirectPath(redirectParam) ? redirectParam : '/dashboard/overview');
   };
 
   useEffect(() => {

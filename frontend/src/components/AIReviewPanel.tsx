@@ -316,7 +316,7 @@ export default function AIReviewPanel({
       <div className="pt-6 space-y-6">
 
         {loading && (
-          <div className="absolute inset-0 bg-white/70 backdrop-blur-[1px] flex flex-col items-center justify-center z-20">
+          <div className="absolute inset-0 bg-white/70 flex flex-col items-center justify-center z-20">
             <div className="w-10 h-10 border-4 border-[#0058be] border-t-transparent rounded-full animate-spin"></div>
             <p className="text-xs font-bold text-slate-600 mt-4 animate-pulse">AI Đang đánh giá dữ liệu...</p>
           </div>

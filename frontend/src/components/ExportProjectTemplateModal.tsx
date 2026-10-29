@@ -254,7 +254,7 @@ export default function ExportProjectTemplateModal({ projectId, projectName, pha
   );
 
   return (
-    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-[1000] flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full border border-slate-200 overflow-hidden animate-in fade-in zoom-in duration-200 flex flex-col max-h-[85vh]">
         <div className="p-6 border-b border-slate-100 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-3 text-[#0058be]">

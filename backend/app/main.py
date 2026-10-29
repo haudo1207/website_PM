@@ -1,4 +1,17 @@
 import os
+
+# Google's token response adds "openid" to the granted scope list on its own
+# whenever the request includes a userinfo/profile/email scope (our
+# userinfo.email, added 2026-10-28) — oauthlib's default strict scope-match
+# then raises (not just warns) on flow.fetch_token(), 500ing the OAuth
+# callback for EVERY workspace re-consent. "openid" itself is harmless
+# (we never asked for ID-token claims, never use it) — this just tells
+# oauthlib not to treat Google volunteering it as an error. Must be set
+# before any google_auth_oauthlib.flow.Flow.fetch_token() call anywhere in
+# the app (main.py's google_callback_public, the only caller), so it's set
+# here, at import time, before those modules are even imported below.
+os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
 import logging
 
 # Without this, the root logger has no handler at all, so every
@@ -13,8 +26,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 
+import re
+import time
 from typing import Optional
-from fastapi import FastAPI, Depends, Header
+from fastapi import FastAPI, Depends, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .routers import auth, users, settings_router, skills, system_categories, members, meetings as meetings_router, performance_settings, accounts, ai_review, lunch as lunch_router, chat_ai, system_audit, notifications as notifications_router
@@ -33,6 +48,7 @@ from .routers import member_loans as member_loans_router
 from .routers import workload_settings as workload_settings_router
 from .routers import calendar as calendar_router
 from .routers import meeting_bot as meeting_bot_router
+from .routers import msc_sync as msc_sync_router
 from .database import engine, Base, get_db
 from .models import user, setting, member, skill_master, system_category, meeting as meeting_model, performance_setting as performance_setting_model, google_token as google_token_model, ai_review as ai_review_model, refresh_token as refresh_token_model
 from .models import project as project_model
@@ -133,6 +149,11 @@ def apply_schema_updates():
             "CREATE UNIQUE INDEX IF NOT EXISTS ix_users_outlook_sub_unique "
             "ON users (outlook_sub) WHERE outlook_sub IS NOT NULL"
         ))
+        # /kpi page's own last-picked Tháng/Năm/Workspace/Leader filter, saved
+        # per account so it's restored on the next visit instead of resetting.
+        conn.execute(text(
+            "ALTER TABLE users ADD COLUMN IF NOT EXISTS kpi_filter_preference VARCHAR NULL"
+        ))
         # Consolidate the legacy three-role model into the new 4-role model.
         # Permissions remain independent from project data scope.
         conn.execute(text(
@@ -200,6 +221,12 @@ def apply_schema_updates():
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_check_at TIMESTAMP NULL"))
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_ai_score INTEGER NULL"))
         conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS last_review_id INTEGER NULL"))
+        # System-seeded Phase the user cannot delete (e.g. "MA") - see Phase
+        # model comment and delete_phase() in routers/projects.py. Only ever
+        # set true at creation time for new projects going forward; existing
+        # Phases (including the pre-existing "Master" one) are intentionally
+        # left false/unprotected by this migration.
+        conn.execute(text("ALTER TABLE phases ADD COLUMN IF NOT EXISTS is_protected BOOLEAN NOT NULL DEFAULT FALSE"))
 
         # Add AI Review columns to tasks_v2
         conn.execute(text("ALTER TABLE tasks_v2 ADD COLUMN IF NOT EXISTS ai_status VARCHAR(50) NOT NULL DEFAULT 'NOT_CHECKED'"))
@@ -288,6 +315,18 @@ def apply_schema_updates():
         ))
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS notify_channels JSON"
+        ))
+        # External guests, email-only (chốt 2026-10-28) — see Meeting.guest_emails.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS guest_emails JSON"
+        ))
+        # Space ownership + accessType toggle (chốt 2026-10-28) — see
+        # Meeting.meet_space_owned_by_app / meet_access_type.
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meet_space_owned_by_app BOOLEAN"
+        ))
+        conn.execute(text(
+            "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS meet_access_type VARCHAR(20)"
         ))
         conn.execute(text(
             "ALTER TABLE meetings ADD COLUMN IF NOT EXISTS reminder_sent_at TIMESTAMP NULL"
@@ -405,6 +444,56 @@ def apply_schema_updates():
             END $$
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_projects_sales_id ON projects (sales_id)"))
+
+        # project_pins.user_id — ProjectPin (models/project.py) moved from
+        # Member-keyed to User-keyed pins (an admin login with no linked
+        # Member row still needs to pin its own projects), but installs whose
+        # project_pins table predates that change only have the old
+        # `member_id` NOT NULL column. create_all() never adds/alters columns
+        # on an existing table, so every GET/POST .../projects/pins call has
+        # 500'd ("column project_pins.user_id does not exist") since the
+        # model changed — silently, since the list page's initial pins fetch
+        # has no error UI (only the pin-button click shows a toast on
+        # failure). Backfill via users.member_id for any leftover Member-era
+        # pin, then drop the now-unused member_id column.
+        conn.execute(text(
+            "ALTER TABLE project_pins ADD COLUMN IF NOT EXISTS user_id INTEGER"
+        ))
+        # Not every install has the legacy member_id column (e.g. one whose
+        # project_pins table was only ever created after the model already
+        # used user_id) — only backfill/drop it when it's actually there.
+        member_id_exists = conn.execute(text(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'project_pins' AND column_name = 'member_id'"
+        )).first() is not None
+        if member_id_exists:
+            conn.execute(text("""
+                UPDATE project_pins pp
+                SET user_id = u.id
+                FROM users u
+                WHERE pp.user_id IS NULL AND pp.member_id = u.member_id
+            """))
+            conn.execute(text("DELETE FROM project_pins WHERE user_id IS NULL"))
+            conn.execute(text("ALTER TABLE project_pins DROP COLUMN IF EXISTS member_id"))
+        conn.execute(text("ALTER TABLE project_pins ALTER COLUMN user_id SET NOT NULL"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'project_pins_user_id_fkey'
+                      AND conrelid = 'project_pins'::regclass
+                ) THEN
+                    ALTER TABLE project_pins
+                    ADD CONSTRAINT project_pins_user_id_fkey
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                    ON DELETE CASCADE;
+                END IF;
+            END $$
+        """))
+        conn.execute(text("ALTER TABLE project_pins DROP CONSTRAINT IF EXISTS uq_project_pin"))
+        conn.execute(text("ALTER TABLE project_pins ADD CONSTRAINT uq_project_pin UNIQUE (user_id, project_id)"))
+
         # Lunch records: an index on "date" so the monthly date-range queries
         # (and upsert lookups) do not require a full table scan.
         conn.execute(text(
@@ -1097,6 +1186,17 @@ def init_db_defaults():
 
     db = SessionLocal()
     try:
+        # Rollout moment of the 30% High / 20% Critical manday share rule —
+        # stamped ONCE (first startup with that code), from the DB clock so it
+        # compares like-for-like with tasks/task_groups.created_at. Parents
+        # created before it are never checked (see task_groups.py).
+        from .routers.task_groups import PRIORITY_RATIO_SINCE_KEY
+        if not db.query(Setting).filter(Setting.key == PRIORITY_RATIO_SINCE_KEY).first():
+            from sqlalchemy import text as _text
+            db_now = db.execute(_text("SELECT LOCALTIMESTAMP")).scalar()
+            db.add(Setting(key=PRIORITY_RATIO_SINCE_KEY, value=db_now.isoformat()))
+            db.commit()
+
         # 1. Initialize settings if missing
         if not db.query(Setting).filter(Setting.key == "column_config").first():
             cols = {
@@ -1746,6 +1846,30 @@ app.add_middleware(
     allow_headers=["*"]
 )
 
+_project_detail_logger = logging.getLogger("projects.get_detail")
+_PROJECT_DETAIL_PATH_RE = re.compile(r"^/api/projects/\d+$")
+
+
+@app.middleware("http")
+async def log_project_detail_timing(request: Request, call_next):
+    """Status code + elapsed time for GET /api/projects/{id} — this route's
+    uvicorn access log line has no timing, which made a reported "trang
+    hangs forever" case impossible to tell apart from a 401 (expired token),
+    a 5xx, or a request that's simply slow (e.g. DB pool contention)."""
+    if request.method != "GET" or not _PROJECT_DETAIL_PATH_RE.match(request.url.path):
+        return await call_next(request)
+    t0 = time.monotonic()
+    try:
+        response = await call_next(request)
+    except Exception:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        _project_detail_logger.exception("GET %s -> EXCEPTION after %.1fms", request.url.path, elapsed_ms)
+        raise
+    elapsed_ms = (time.monotonic() - t0) * 1000
+    level = logging.WARNING if response.status_code >= 400 else logging.INFO
+    _project_detail_logger.log(level, "GET %s -> %d in %.1fms", request.url.path, response.status_code, elapsed_ms)
+    return response
+
 app.include_router(auth.router,                prefix="/api/auth")
 app.include_router(users.router,               prefix="/api/users")
 app.include_router(projects_router.router,     prefix="/api")
@@ -1780,6 +1904,7 @@ app.include_router(zalo_router.router,          prefix="/api/zalo")
 app.include_router(workload_settings_router.router, prefix="/api/workload-settings")
 app.include_router(calendar_router.router,          prefix="/api/calendar")
 app.include_router(meeting_bot_router.router,       prefix="/api/meeting-bot")
+app.include_router(msc_sync_router.router,          prefix="/api/msc-sync")
 app.include_router(ai_skills_router.router,     prefix="/api")
 app.include_router(ai_sessions_router.router,   prefix="/api")
 app.include_router(public_share_router.router,  prefix="/api")
@@ -1868,6 +1993,12 @@ def google_callback_public(code: str, state: str = None, db: Session = Depends(g
             "https://www.googleapis.com/auth/drive.file",
             "https://www.googleapis.com/auth/meetings.space.readonly",
             "https://www.googleapis.com/auth/spreadsheets.readonly",
+            # Added 2026-10-28: write scope for Meet moderation/accessType
+            # control, and an identity scope so the userinfo call (used to
+            # resolve/backfill WorkspaceGoogleAccount.google_email) actually
+            # works — both were missing before, see backfill_workspace_google_email.py.
+            "https://www.googleapis.com/auth/meetings.space.created",
+            "https://www.googleapis.com/auth/userinfo.email",
         ],
         redirect_uri=settings.GOOGLE_REDIRECT_URI,
     )

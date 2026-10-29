@@ -2,7 +2,7 @@
 Phase model — belongs to Project.
 Master is NOT stored in DB, it's just a frontend view of all phases combined.
 """
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, func
+from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 from ..database import Base
 
@@ -18,6 +18,13 @@ class Phase(Base):
     status      = Column(String(50), default="Waiting")  # Waiting / Process / Done / Archived
     created_at  = Column(DateTime, server_default=func.now())
     updated_at  = Column(DateTime, onupdate=func.now())
+
+    # System-seeded Phase the user cannot delete (e.g. "MA", the weekly
+    # feedback phase auto-created for every new project) - see delete_phase()
+    # in routers/projects.py. False for every ordinary/user-created Phase,
+    # including the pre-existing "Master" Phase (identified by name only,
+    # never had a protection flag).
+    is_protected = Column(Boolean, nullable=False, default=False, server_default="false")
 
     # AI Check Fields
     ai_status        = Column(String(50), default="NOT_CHECKED", nullable=False, server_default="NOT_CHECKED")

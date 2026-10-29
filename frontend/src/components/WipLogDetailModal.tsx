@@ -258,7 +258,7 @@ export default function WipLogDetailModal({
   const pendingCount = useMemo(() => aiTasks.filter((t) => !t.imported_task_id).length, [aiTasks]);
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/50 flex flex-col">
+    <div className="fixed inset-0 z-[70] flex flex-col">
       {/* HEADER */}
       <div className="h-14 bg-[#0b1c30] text-white flex items-center px-4 gap-3 shrink-0">
         <FileText className="w-4 h-4 text-slate-300 shrink-0" />

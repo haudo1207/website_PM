@@ -22,6 +22,12 @@ class User(Base):
     telegram_chat_id = Column(String, nullable=True, unique=True, index=True)
     # all: access every project; otherwise must match projects.data_scope.
     data_scope = Column(String(50), nullable=False, default="infrastructure", server_default="infrastructure")
+    # Self-service UI preference, not a permission - the /kpi page's own last
+    # picked Tháng/Năm/Workspace/Leader filter, restored on the next visit.
+    # JSON string (not a JSONB column) to keep this a narrow, single-purpose
+    # field instead of a generic schemaless "settings blob" - see
+    # routers/users.py's /me/kpi-filter-preference for the exact shape.
+    kpi_filter_preference = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     member_id = Column(Integer, ForeignKey("members.id", ondelete="SET NULL"), nullable=True, unique=True)
 

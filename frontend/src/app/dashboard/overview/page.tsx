@@ -285,7 +285,7 @@ const PriorityDetailModal = ({
       {/* BACKDROP */}
       <div
         onClick={onClose}
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
+        className="fixed inset-0 transition-opacity"
       />
 
       {/* DRAWER PANEL SLIDE OUT FROM RIGHT */}
@@ -2606,15 +2606,15 @@ export default function OverviewTab() {
                 <h3 className="text-[10px] font-black text-white/90 uppercase tracking-widest mb-1 shadow-sm">Xuất Sắc Nhất</h3>
                 <p className="text-2xl font-extrabold text-white mb-6 drop-shadow-md">{topPerformer.name}</p>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <div className="bg-white/20 rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
                     <span className="text-xl font-black">{topPerformer.kpi.toFixed(1)}</span>
                     <span className="text-[9px] font-bold uppercase mt-1 opacity-90">KPI</span>
                   </div>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <div className="bg-white/20 rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
                     <span className="text-xl font-black">{topPerformer.done}</span>
                     <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Hoàn Thành</span>
                   </div>
-                  <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
+                  <div className="bg-white/20 rounded-xl p-3 flex flex-col items-center justify-center text-white border border-white/30">
                     <span className="text-xl font-black">{topPerformer.manday.toFixed(1)}</span>
                     <span className="text-[9px] font-bold uppercase mt-1 opacity-90">Manday</span>
                   </div>
@@ -3003,7 +3003,7 @@ export default function OverviewTab() {
         // ngoài (Phụ workspace) cards depend on drilledPersonHasAccess.
         const hasAccess = p.isOwned || p.drilledPersonHasAccess;
         return (
-          <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setContributionModalProject(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={() => setContributionModalProject(null)}>
             <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto custom-scrollbar" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-start justify-between gap-4 px-6 py-5 border-b border-slate-100">
                 <div className="min-w-0">

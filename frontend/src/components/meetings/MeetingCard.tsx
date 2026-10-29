@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { Video, Folder, Calendar, Clock, User, Sparkles, MoreVertical, ChevronRight, ExternalLink } from 'lucide-react';
+import FloatingDropdown from '@/components/common/FloatingDropdown';
 
 interface MeetingCardProps {
   meeting: any;
@@ -13,6 +14,7 @@ interface MeetingCardProps {
 
 export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, onOpenDetail }: MeetingCardProps) {
   const [showMenu, setShowMenu] = useState(false);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const handleSyncClick = async () => {
@@ -188,17 +190,22 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
           <ChevronRight size={14} />
         </button>
 
-        <div className="relative">
+        <div>
           <button
             type="button"
-            onClick={() => setShowMenu(!showMenu)}
+            onClick={(e) => { setMenuAnchorEl(e.currentTarget); setShowMenu(!showMenu); }}
             className="p-2 text-[#94a3b8] hover:text-[#0b1c30] rounded-xl hover:bg-slate-100 transition-colors border border-transparent hover:border-slate-200"
           >
             <MoreVertical size={16} />
           </button>
 
-          {showMenu && (
-            <div className="absolute right-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-30 text-xs font-medium">
+          <FloatingDropdown
+            anchorEl={menuAnchorEl}
+            open={showMenu}
+            onClose={() => setShowMenu(false)}
+            align="right"
+            className="w-44 bg-white rounded-xl shadow-xl border border-slate-200 py-1 text-xs font-medium"
+          >
               <button
                 onClick={() => { setShowMenu(false); onOpenDetail?.(meeting); }}
                 className="w-full text-left px-3.5 py-2 hover:bg-slate-50 text-[#0b1c30]"
@@ -230,8 +237,7 @@ export default function MeetingCard({ meeting, onDelete, onSummarize, onSync, on
                   Xóa cuộc họp
                 </button>
               )}
-            </div>
-          )}
+          </FloatingDropdown>
         </div>
       </div>
     </div>

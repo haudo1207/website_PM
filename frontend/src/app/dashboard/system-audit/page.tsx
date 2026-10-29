@@ -10,6 +10,7 @@ import ProgressBar from '@/components/dashboard/ProgressBar';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import SvgIcon from '@/components/dashboard/Icons';
 import { getMondayToSundayRange, getWeekOfMonth, checkTaskInPeriod, CYCLE_TEMPLATE } from '@/app/dashboard/constants';
+import { formatProjectCardTitle } from '@/lib/projectDisplay';
 
 function formatYMD(d: Date): string {
   const y = d.getFullYear();
@@ -141,6 +142,7 @@ export default function SystemAuditTab() {
           pRisk.push({
             id: p.id,
             name: p.name,
+            customer_name: p.customer_name,
             overdueTask: pOverdue,
             deadline: p.end_date_est || 'N/A',
             risk: pOverdue > 3 ? 'Cao' : (pOverdue > 1 ? 'Trung bình' : 'Thấp')
@@ -154,6 +156,7 @@ export default function SystemAuditTab() {
         return {
           id: p.id,
           name: p.name,
+          customer_name: p.customer_name,
           current_phase: p.current_phase || '1. Tư vấn',
           // Project Progress — source of truth from Settings.
           progress: prog,
@@ -432,7 +435,7 @@ export default function SystemAuditTab() {
                 className="group p-4 bg-slate-50/60 border border-slate-200/80 rounded-xl hover:border-blue-400 hover:shadow-md hover:bg-blue-50/30 transition-all cursor-pointer block"
               >
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={p.name}>{p.name}</span>
+                  <span className="text-xs font-bold text-[#0b1c30] group-hover:text-blue-600 transition-colors truncate" title={formatProjectCardTitle(p)}>{formatProjectCardTitle(p)}</span>
                 </div>
                 <div className="flex items-center justify-between text-[10px] font-semibold text-slate-400 mb-2">
                   <span>Giai đoạn: <strong className="text-slate-700">{p.current_phase}</strong></span>
@@ -478,7 +481,7 @@ export default function SystemAuditTab() {
                     className="flex items-center justify-between p-3 bg-red-50/60 rounded-xl border border-red-100 hover:border-red-300 hover:bg-red-50 transition-all cursor-pointer block"
                   >
                     <div>
-                      <p className="text-xs font-bold text-[#0b1c30] hover:text-red-700">{p.name}</p>
+                      <p className="text-xs font-bold text-[#0b1c30] hover:text-red-700">{formatProjectCardTitle(p)}</p>
                       <p className="text-[10px] text-slate-400 mt-0.5">Số task trễ hạn: <strong className="text-red-600">{p.overdueTask} tasks</strong></p>
                     </div>
                     <span className="text-[10px] font-extrabold text-red-700 bg-red-100 px-2.5 py-1 rounded-full uppercase">Rủi ro {p.risk}</span>
