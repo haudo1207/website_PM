@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from ..database import get_db
 from ..models.performance_setting import PerformanceSetting
-from ..utils.auth import get_current_user, require_admin_write
+from ..utils.auth import get_current_user, get_current_user_or_support_key, require_admin_write
 from ..utils.audit_service import AuditService
 
 router = APIRouter(dependencies=[Depends(require_admin_write)])
@@ -26,7 +26,13 @@ def _serialize(s: PerformanceSetting) -> dict:
 
 
 @router.get("")
-def get_performance_settings(db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+# get_current_user_or_support_key (không phải get_current_user thuần) — route này
+# dùng require_admin_write ở router-level (đã nhận SUPPORT_INTEGRATION_API_KEY), nhưng
+# tham số current_user RIÊNG của hàm vẫn chỉ nhận JWT nếu không đổi — gây 401 khi
+# Tech_Support gọi bằng key tĩnh để đồng bộ Remark (Việc 1). Chỉ đổi đúng route GET này
+# (Support chỉ đọc, không tạo/sửa/xoá performance-settings) — các route POST/PUT/DELETE
+# bên dưới giữ nguyên get_current_user, không mở rộng quyền ghi cho service-account.
+def get_performance_settings(db: Session = Depends(get_db), current_user=Depends(get_current_user_or_support_key)):
     """Retrieve all active performance settings ordered by sort_order and id."""
     settings = (
         db.query(PerformanceSetting)
