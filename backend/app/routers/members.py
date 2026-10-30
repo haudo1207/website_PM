@@ -429,6 +429,7 @@ def list_members(
             d['kpi_bonus'] = 0.0
             d['manday_total'] = 0.0
             d['manday_est_total'] = 0.0
+            d['manday_calendar_span_total'] = 0.0
             d['kpi_base_total'] = 0.0
             d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
             out.append(d)
@@ -436,7 +437,7 @@ def list_members(
 
         total = float(kpi_total) if kpi_total else 0.0
         count = int(task_count) if task_count else 0
-        md_total = float(manday_total) if manday_total else 0.0
+        md_calendar_span_t = float(manday_total) if manday_total else 0.0
         md_est_t = float(manday_est_total) if manday_est_total else 0.0
         kpi_base_t = float(kpi_base_total) if kpi_base_total else 0.0
         avg = round(total / weeks_divisor, 2) if weeks_divisor > 0 else 0.0
@@ -445,8 +446,20 @@ def list_members(
         d['kpi_total'] = total
         d['kpi_avg'] = avg
         d['kpi_bonus'] = round(bonus, 2)
-        d['manday_total'] = md_total
-        d['manday_est_total'] = float(md_est_t)
+        # MANDAY (chốt 2026-10-30): sourced from manday_est × kpi_ratio, NOT
+        # the old manday_actual-based calendar-day span (end_date_actual -
+        # start_date + 1, from calc_manday_actual() in kpi_engine.py — left
+        # untouched there, still used for KPI/days-late/project-progress
+        # elsewhere). That span inflates heavily whenever tasks sit open for
+        # weeks before being bulk-closed — confirmed live on production: 13
+        # of L Thành Phát's Oct-cycle tasks were bulk-closed the same day
+        # after sitting open 20-35 days, inflating MANDAY to 173.7 vs an
+        # estimate-based 33.3. The old calendar-span sum is kept available
+        # under manday_calendar_span_total for operational visibility
+        # (surfaced in the UI as "Số ngày mở task", not as "Manday").
+        d['manday_total'] = md_est_t
+        d['manday_est_total'] = md_est_t
+        d['manday_calendar_span_total'] = md_calendar_span_t
         d['kpi_base_total'] = float(kpi_base_t)
         d['workspace'] = scope_display_name(db, m.user.data_scope) if m.user else None
         d['workspace_code'] = str(m.user.data_scope or '').strip().lower() if m.user else None
