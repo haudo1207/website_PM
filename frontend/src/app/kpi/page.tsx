@@ -958,10 +958,15 @@ export default function KPIPage() {
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider w-12 bg-slate-50">STT</th>
                                                 <th className="text-left px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 min-w-[200px]">Display Name</th>
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_est_total")}>
-                                                    (P) MANDAY EST <span className="ml-1 opacity-60">{sortConfig.key === 'manday_est_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                    {/* chốt 2026-10-30: trước đây là "(P) MANDAY EST" đứng cạnh "(P)
+                                                        MANDAY ACTUAL" (calendar-span). Từ khi MANDAY ở tab "Tổng hợp
+                                                        KPI" đổi sang lấy từ manday_est × ratio, số này và cột "Manday"
+                                                        của tab kia LÀ MỘT — giữ tên "(P) MANDAY EST" sẽ trông như 2
+                                                        khái niệm khác nhau trong khi chỉ là 1. Đổi nhãn cho khớp. */}
+                                                    MANDAY <span className="ml-1 opacity-60">{sortConfig.key === 'manday_est_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
                                                 </th>
-                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_total")}>
-                                                    (P) MANDAY ACTUAL <span className="ml-1 opacity-60">{sortConfig.key === 'manday_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
+                                                <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("manday_calendar_span_total")} title="Số ngày lịch từ Start Date đến ngày đóng task (End Date Actual) — cao bất thường so với MANDAY thường là dấu hiệu task bị cập nhật trạng thái trễ">
+                                                    SỐ NGÀY MỞ TASK <span className="ml-1 opacity-60">{sortConfig.key === 'manday_calendar_span_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
                                                 </th>
                                                 <th className="text-center px-4 py-3 text-[10px] font-bold text-slate-400 uppercase tracking-wider bg-slate-50 cursor-pointer hover:bg-slate-100 transition-colors group/th" onClick={() => handleSort("kpi_base_total")}>
                                                     (P) KPI EST <span className="ml-1 opacity-60">{sortConfig.key === 'kpi_base_total' ? (sortConfig.direction === 'asc' ? '↑' : '↓') : '↕'}</span>
@@ -980,7 +985,7 @@ export default function KPIPage() {
                                         <tbody className="divide-y divide-slate-200 border-t border-slate-200">
                                             {sortedMembers.map((m, idx) => {
                                                 const md_est = m.manday_est_total || 0;
-                                                const md_act = m.manday_total || 0;
+                                                const md_open_days = m.manday_calendar_span_total || 0;
                                                 const kpi_est = m.kpi_base_total || 0;
                                                 const kpi_act = m.kpi_total || 0;
                                                 const achieved = kpi_est > 0 ? Math.round((kpi_act / kpi_est) * 100) : 0;
@@ -997,7 +1002,7 @@ export default function KPIPage() {
                                                         </td>
                                                         
                                                         <td className={`px-4 py-3 text-center font-semibold tabular-nums ${md_est === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{md_est === 0 ? '0' : md_est.toFixed(1)}</td>
-                                                        <td className={`px-4 py-3 text-center font-semibold tabular-nums ${md_act === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{md_act === 0 ? '0' : md_act.toFixed(1)}</td>
+                                                        <td className={`px-4 py-3 text-center font-semibold tabular-nums ${md_open_days === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{md_open_days === 0 ? '0' : md_open_days.toFixed(1)}</td>
                                                         <td className={`px-4 py-3 text-center font-semibold tabular-nums ${kpi_est === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{kpi_est === 0 ? '0' : kpi_est.toFixed(2)}</td>
                                                         <td className={`px-4 py-3 text-center font-semibold tabular-nums ${kpi_act === 0 ? 'text-slate-400' : 'text-slate-600'}`}>{kpi_act === 0 ? '0' : kpi_act.toFixed(2)}</td>
                                                         
