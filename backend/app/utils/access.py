@@ -15,7 +15,7 @@ from ..models.task import Task
 from ..models.task_group import TaskGroup
 from ..models.user import User
 from ..models.audit_log import AuditLog
-from .auth import get_current_user, get_current_user_or_support_key
+from .auth import get_current_user, get_current_user_or_support_key, is_support_key_write_user
 
 ALL_SCOPE = "all"
 
@@ -1020,6 +1020,23 @@ def require_route_project_access(
         skip_generic_project_check = True
 
     print(f"Project ID: {project_id}")
+
+    # Vòng 5 (Tech_Support customer-sync, xem kpi-reference.md) — ngoại lệ
+    # HẸP: service-account chỉ cần quyền tạo 1 Project MỚI qua chính request
+    # này (chưa có project_id để check theo project ở trên, và role mặc định
+    # của service-account là "member" nên nhánh role bên dưới sẽ 403 nó như
+    # mọi member thường). Chỉ bỏ qua ĐÚNG path+method này; mọi route/role
+    # khác không đổi gì. Sau khi Project được tạo, create_project() tự thêm
+    # service-account làm PM của CHÍNH project đó, nên các route ghi khác
+    # (tạo Phase/TaskGroup, thêm Member) của project này tự pass được
+    # has_full_project_access() bên dưới mà không cần thêm ngoại lệ nào nữa.
+    if (
+        project_id is None
+        and request.method == "POST"
+        and request.url.path.rstrip("/") == "/api/projects"
+        and is_support_key_write_user(user)
+    ):
+        return user
 
     role = getattr(user, "role", ROLE_MEMBER)
     print(f"Role: {role}")

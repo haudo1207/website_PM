@@ -11,7 +11,7 @@ from ..models.master_phase import MasterPhase
 from ..models.user import User
 from ..models.task import Task
 from ..models.workspace_access import UserWorkspaceAccess
-from ..utils.auth import require_admin, get_current_user, get_current_user_or_support_key
+from ..utils.auth import require_admin, get_current_user, get_current_user_or_support_key, require_admin_or_support_key_write, is_support_key_write_user
 from ..utils.audit_service import AuditService
 from ..utils.access import (
     default_scope,
@@ -541,7 +541,7 @@ def list_customers_by_workspace(code: str, db: Session = Depends(get_db), curren
 
 
 @router.post("/customers")
-def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin)):
+def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin_or_support_key_write)):
     name = str(body.get("name", "")).strip()
     bu = str(body.get("business_unit") or default_scope(db)).strip().lower()
     if not is_valid_scope(db, bu):
@@ -554,10 +554,11 @@ def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depe
     db.add(c)
     db.commit()
     db.refresh(c)
+    via_key = is_support_key_write_user(current_user)
     AuditService.record(
         db=db, user_id=getattr(current_user, "id", None), module="Customer", entity_type="Customer",
         entity_id=c.id, action="CREATE", resource_name=c.name, business_unit=c.business_unit,
-        description=f"Tạo khách hàng '{c.name}' (BU: {c.business_unit})"
+        description=f"Tạo khách hàng '{c.name}' (BU: {c.business_unit})" + (" [qua SUPPORT_INTEGRATION_API_KEY]" if via_key else "")
     )
     db.commit()
     return c

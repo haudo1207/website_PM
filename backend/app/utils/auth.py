@@ -105,6 +105,97 @@ def get_current_user_or_support_key(request: Request, db: Session = Depends(get_
 
     return _load_user_from_jwt(raw_token, db)
 
+_support_key_write_logger = logging.getLogger("support_integration_api_key.write")
+
+
+def _resolve_support_key_write_user(request: Request, db: Session):
+    """Trả về User thật của service-account nếu request xác thực bằng
+    SUPPORT_INTEGRATION_API_KEY, hoặc None nếu không phải (caller tự rơi về
+    xác thực JWT bình thường). Cố tình KHÔNG gọi lại
+    get_current_user_or_support_key() — tách hẳn code đọc (dùng ở rất nhiều
+    route GET, xem docstring hàm đó) khỏi code cấp quyền GHI, chỉ áp dụng cho
+    đúng 5 route tạo Customer/Project/Phase/TaskGroup/Member phục vụ tính
+    năng "đồng bộ Customer theo khách hàng" từ Tech_Support (xem
+    Tech_Support/docs/spec-review/kpi-reference.md, mục "Vòng 5") — để sau
+    này sửa bên đọc không vô tình ảnh hưởng bên ghi hoặc ngược lại.
+    """
+    auth_header = request.headers.get("authorization", "")
+    scheme, _, raw_token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not raw_token:
+        return None
+    configured_key = settings.SUPPORT_INTEGRATION_API_KEY
+    if not configured_key or not secrets.compare_digest(raw_token, configured_key):
+        return None
+    user = db.query(User).filter(User.email == settings.SUPPORT_INTEGRATION_SERVICE_EMAIL).first()
+    if not user or not user.is_active:
+        raise HTTPException(
+            500,
+            f"SUPPORT_INTEGRATION_API_KEY đã cấu hình nhưng chưa có tài khoản "
+            f"service-account '{settings.SUPPORT_INTEGRATION_SERVICE_EMAIL}' "
+            f"(hoặc tài khoản đang bị khoá is_active=false).",
+        )
+    _support_key_write_logger.info(
+        "SUPPORT_INTEGRATION_API_KEY WRITE used: %s %s?%s from %s (user_id=%s role=%s)",
+        request.method,
+        request.url.path,
+        request.url.query or "",
+        request.client.host if request.client else "unknown",
+        user.id,
+        user.role,
+    )
+    return user
+
+
+def require_support_key_write(request: Request, db: Session = Depends(get_db)):
+    """Dùng cho POST /projects, /projects/{id}/phases, /projects/{id}/members.
+
+    JWT: giữ nguyên y hệt hành vi cũ của các route này (bất kỳ ai đăng nhập
+    đều gọi được, không thêm ràng buộc role nào ở đây). Thêm: Authorization:
+    Bearer <SUPPORT_INTEGRATION_API_KEY> cũng được chấp nhận, trả về đúng
+    user thật của service-account — PHÂN QUYỀN GHI thật sự (được tạo/sửa
+    project nào) vẫn hoàn toàn do require_route_project_access/
+    has_full_project_access quyết định như với mọi user khác; key chỉ thay
+    bước xác thực, không bypass bước đó.
+    """
+    key_user = _resolve_support_key_write_user(request, db)
+    if key_user is not None:
+        return key_user
+    auth_header = request.headers.get("authorization", "")
+    scheme, _, raw_token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not raw_token:
+        raise HTTPException(401, "Not authenticated")
+    return _load_user_from_jwt(raw_token, db)
+
+
+def require_admin_or_support_key_write(request: Request, db: Session = Depends(get_db)):
+    """Dùng cho POST /customers — JWT: giữ nguyên yêu cầu cũ (chỉ super_admin,
+    xem require_admin/require_super_admin). Thêm: SUPPORT_INTEGRATION_API_KEY
+    cũng được chấp nhận (tạo Customer mới khi Tech_Support đồng bộ)."""
+    key_user = _resolve_support_key_write_user(request, db)
+    if key_user is not None:
+        return key_user
+    auth_header = request.headers.get("authorization", "")
+    scheme, _, raw_token = auth_header.partition(" ")
+    if scheme.lower() != "bearer" or not raw_token:
+        raise HTTPException(401, "Not authenticated")
+    user = _load_user_from_jwt(raw_token, db)
+    if user.role != "super_admin":
+        raise HTTPException(403, "Yêu cầu quyền Super Admin")
+    return user
+
+
+def is_support_key_write_user(user) -> bool:
+    """True nếu *user* chính là service-account đứng sau
+    SUPPORT_INTEGRATION_API_KEY. Dùng ở route handler để quyết định có chạy
+    nhánh logic riêng cho Tech_Support hay không (vd tự thêm làm PM của
+    project vừa tạo, resolve assigned_ids theo leader ở create_task_group,
+    hoặc ghi chú audit log) — không dùng để cấp thêm quyền, chỉ để nhận diện."""
+    return bool(
+        settings.SUPPORT_INTEGRATION_API_KEY
+        and getattr(user, "email", None) == settings.SUPPORT_INTEGRATION_SERVICE_EMAIL
+    )
+
+
 def require_super_admin(user=Depends(get_current_user)):
     """Only super_admin may proceed."""
     if user.role != "super_admin":
