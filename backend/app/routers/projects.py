@@ -47,7 +47,7 @@ from ..utils.access import (
     require_route_project_access,
     user_scope,
 )
-from ..utils.auth import get_current_user, get_current_user_or_support_key, require_super_admin, require_manager
+from ..utils.auth import get_current_user, get_current_user_or_support_key, require_super_admin, require_manager, require_support_key_write, is_support_key_write_user
 from ..utils.project_progress import get_progress_pct_for_phase
 from ..services.document_storage import delete_task_link_documents
 
@@ -691,7 +691,7 @@ def _validate_project_customer(db: Session, user, cust_id, biz_val: str) -> Cust
 
 
 @router.post("/projects")
-def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_project(body: dict, db: Session = Depends(get_db), current_user=Depends(require_support_key_write)):
     biz_input = str(body.get("business") or body.get("business_unit") or "").strip().lower()
     scope_from_biz = None
     if not biz_input:
@@ -776,6 +776,19 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         }
     ):
         technical_leader_ids = [*technical_leader_ids, creator_member_id]
+
+    # Vòng 5 (Tech_Support customer-sync) — service-account tự thêm chính nó
+    # làm PM của Project vừa tạo. Đây là điều kiện để các route ghi khác
+    # (tạo Phase/TaskGroup, thêm Member) của CHÍNH project này tự pass được
+    # has_full_project_access() trong require_route_project_access, không
+    # cần thêm ngoại lệ nào khác ở đó. Chỉ áp dụng cho đúng tài khoản
+    # service-account, không đổi hành vi tạo project của bất kỳ user nào khác.
+    if (
+        is_support_key_write_user(current_user)
+        and creator_member_id
+        and creator_member_id not in pm_ids
+    ):
+        pm_ids = [*pm_ids, creator_member_id]
 
     sales_ids = body.get("sales_ids", [])
     if body.get("sales_id") and not sales_ids:
@@ -862,6 +875,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
 
     db.commit()
     db.refresh(p)
+    via_key = is_support_key_write_user(current_user)
     AuditService.record(
         db=db,
         user_id=getattr(current_user, "id", None),
@@ -870,7 +884,7 @@ def create_project(body: dict, db: Session = Depends(get_db), current_user=Depen
         entity_id=p.id,
         action="CREATE",
         project_id=p.id,
-        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or business_label_for_project(db, p)})"
+        description=f"Khởi tạo dự án '{p.name}' (Mã: {p.code or 'N/A'}, BU: {p.business or business_label_for_project(db, p)})" + (" [qua SUPPORT_INTEGRATION_API_KEY]" if via_key else "")
     )
     db.commit()
     return serialize_project(p, db)
@@ -1380,7 +1394,7 @@ def list_project_members(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid:int}/members")
-def add_project_member(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def add_project_member(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_support_key_write)):
     member_id = body.get("member_id")
     role = body.get("role", "Member")
     if not member_id:
@@ -1403,7 +1417,7 @@ def add_project_member(pid: int, body: dict, db: Session = Depends(get_db), curr
         db=db, user_id=getattr(current_user, "id", None), module="Project", entity_type="Project",
         entity_id=pid, action="UPDATE", project_id=pid,
         resource_name=member.display_name if member else str(member_id),
-        description=f"Thêm '{member.display_name if member else member_id}' vào dự án với vai trò {role}"
+        description=f"Thêm '{member.display_name if member else member_id}' vào dự án với vai trò {role}" + (" [qua SUPPORT_INTEGRATION_API_KEY]" if is_support_key_write_user(current_user) else "")
     )
     db.commit()
     return {"ok": True}
@@ -1481,7 +1495,7 @@ def list_phases(pid: int, db: Session = Depends(get_db)):
 
 
 @router.post("/projects/{pid:int}/phases")
-def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user)):
+def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(require_support_key_write)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(400, "Phase name is required.")
@@ -1508,7 +1522,7 @@ def create_phase(pid: int, body: dict, db: Session = Depends(get_db), current_us
         entity_id=ph.id,
         action="CREATE",
         project_id=pid,
-        description=f"Đã thêm Phase '{ph.name}'"
+        description=f"Đã thêm Phase '{ph.name}'" + (" [qua SUPPORT_INTEGRATION_API_KEY]" if is_support_key_write_user(current_user) else "")
     )
     db.commit()
     return {
