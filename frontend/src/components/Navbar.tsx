@@ -543,9 +543,19 @@ function NavbarContent() {
         <div className="md:hidden fixed inset-0 z-[190]" onClick={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Sidebar - Hidden on mobile, visible on md+ */}
+      {/* Sidebar - Hidden on mobile, visible on md+. z-30 (not z-[1100]):
+          must sit above normal in-page sticky content (max z-[16] seen in
+          project/detail/page.tsx) but BELOW every real full-screen modal/
+          drawer in the app (lowest is z-[39] in ProjectDocumentsTab.tsx) —
+          this fixed, opaque column must never visually cover the left edge
+          of a centered modal dialog. A prior fix bumped this all the way to
+          z-[1100] to keep the dim overlay from covering it, but almost no
+          modal was raised to match, so this opaque sidebar ended up painting
+          over the left ~230px/64px of most modals across the app (Meetings,
+          Project Detail, Accounts, ...), clipping the first few characters
+          of any text that fell under it. Confirmed live, 2026-10-30. */}
       <aside className={`
-        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-[1100] overflow-y-auto overflow-x-hidden transition-[width] duration-200
+        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-30 overflow-y-auto overflow-x-hidden transition-[width] duration-200
         hidden md:flex
       `}>
 
