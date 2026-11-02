@@ -540,6 +540,15 @@ def list_customers_by_workspace(code: str, db: Session = Depends(get_db), curren
     return base.filter(customer_in_workspace_filter(db, ws)).order_by(Customer.name.asc()).all()
 
 
+def _serialize_customer(c: Customer) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "description": c.description,
+        "business_unit": c.business_unit,
+    }
+
+
 @router.post("/customers")
 def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depends(require_admin_or_support_key_write)):
     name = str(body.get("name", "")).strip()
@@ -561,7 +570,7 @@ def create_customer(body: dict, db: Session = Depends(get_db), current_user=Depe
         description=f"Tạo khách hàng '{c.name}' (BU: {c.business_unit})" + (" [qua SUPPORT_INTEGRATION_API_KEY]" if via_key else "")
     )
     db.commit()
-    return c
+    return _serialize_customer(c)
 
 def _customer_projects_filter(c: Customer):
     """Projects linked to Customer *c*: by customer_id, or — legacy rows only,
@@ -638,7 +647,7 @@ def update_customer(id: int, body: dict, db: Session = Depends(get_db), current_
         field_labels={"name": "Tên khách hàng", "business_unit": "Business Unit", "description": "Mô tả"}
     )
     db.commit()
-    return c
+    return _serialize_customer(c)
 
 @router.delete("/customers/{id}")
 def delete_customer(id: int, cascade_projects: bool = False, db: Session = Depends(get_db), current_user=Depends(require_admin)):

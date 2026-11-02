@@ -31,7 +31,7 @@ def test_super_admin_can_still_create_all(db, admin):
 def test_customer_is_validated_on_create(db, admin, leader_infras_only, status_of):
     other = sc.create_customer({"name": "Markee KH", "business_unit": "markee"}, db=db, current_user=admin)
     assert status_of(lambda: pr.create_project({"name": "y", "business": "infras", "customer_id": 9999}, db=db, current_user=leader_infras_only)) == 400
-    assert status_of(lambda: pr.create_project({"name": "y", "business": "infras", "customer_id": other.id}, db=db, current_user=leader_infras_only)) == 400
+    assert status_of(lambda: pr.create_project({"name": "y", "business": "infras", "customer_id": other["id"]}, db=db, current_user=leader_infras_only)) == 400
 
 
 def test_phu_project_scope_follows_workspace_and_adds_leader(db, leader):
