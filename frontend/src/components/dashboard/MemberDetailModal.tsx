@@ -63,6 +63,7 @@ export interface MemberDetailModalProps {
   projects: any[];
   onClose: () => void;
   onNavigate: (projectId: string | number) => void;
+  onSelectProject?: (project: any) => void;
   selectedYear: number | 'all';
   selectedMonth: number | 'all';
   selectedWeek: number | 'all';
@@ -79,6 +80,7 @@ export default function MemberDetailModal({
   projects,
   onClose,
   onNavigate,
+  onSelectProject,
   selectedYear,
   selectedMonth,
   selectedWeek,
@@ -105,9 +107,12 @@ export default function MemberDetailModal({
   // SAME still-mounted DOM nodes.
   const [contentVisible, setContentVisible] = useState(true);
   const prevMemberIdRef = useRef(member.id);
+  const drawerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (prevMemberIdRef.current === member.id) return;
     prevMemberIdRef.current = member.id;
+    setTaskFilter('all');
+    drawerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setContentVisible(false);
     const raf = requestAnimationFrame(() => setContentVisible(true));
     return () => cancelAnimationFrame(raf);
@@ -144,7 +149,7 @@ export default function MemberDetailModal({
 
   const rawMemberObj = member.rawMember || member;
   // Filter tasks by member AND by the selected period
-  const memberAllTasks = tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id)));
+  const memberAllTasks = member?.id != null ? tasks.filter(t => (t.assigned_id != null && String(t.assigned_id) === String(member.id)) || (t.support_id != null && String(t.support_id) === String(member.id))) : [];
   const memberTasks = memberAllTasks.filter(t => checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter));
   const openTasks = memberTasks.filter(t => t.status !== 'Done' && t.status !== 'done' && t.status !== 'Cancel' && t.status !== 'cancel');
   const doneTasks = memberTasks.filter(t => t.status === 'Done' || t.status === 'done');
@@ -374,7 +379,7 @@ export default function MemberDetailModal({
           re-enables interaction on just this panel; the outer wrapper above
           is pointer-events-none so it never intercepts clicks on the
           ranking table (or anything else) behind/beside it. */}
-      <div className="pointer-events-auto fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+      <div ref={drawerRef} className="pointer-events-auto fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
 
         {/* HEADER — the name/avatar block crossfades via contentVisible
             (plain opacity transition, no remount — see top of component)
@@ -407,6 +412,17 @@ export default function MemberDetailModal({
             unmounts, so the panel itself never visually closes — only
             this content block's opacity dips then eases back in. */}
         <div className={`p-6 space-y-6 flex-1 ${crossfadeClass}`}>
+
+          {/* Safe fallback alert banner when member record is missing or not linked */}
+          {(member.isNotFound || !member.id) && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl flex items-center gap-3 text-xs font-medium">
+              <span className="text-base shrink-0">⚠️</span>
+              <div>
+                <p className="font-bold">Chưa tìm thấy hồ sơ thành viên liên kết</p>
+                <p className="text-amber-700/80 mt-0.5">Tài khoản Leader này chưa được gán <code>member_id</code> trong hệ thống hoặc không có dữ liệu thành viên.</p>
+              </div>
+            </div>
+          )}
 
           {/* 1. TOP METRIC SUMMARY (6 CARDS IN A ROW) */}
           <div className="grid grid-cols-6 gap-2">
@@ -694,7 +710,14 @@ export default function MemberDetailModal({
                   return (
                     <div
                       key={p.id}
-                      onClick={() => { onClose(); onNavigate(p.id); }}
+                      onClick={() => {
+                        if (onSelectProject) {
+                          onSelectProject(p);
+                        } else {
+                          onClose();
+                          onNavigate(p.id);
+                        }
+                      }}
                       className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]"
                     >
                       <div className="flex items-center justify-between">
@@ -725,7 +748,19 @@ export default function MemberDetailModal({
                           <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-0.5">KPI</span>
                         </div>
                       </div>
-                      <p className="text-[10px] text-[#0058be] font-bold text-right">Xem dự án ➔</p>
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onClose();
+                            onNavigate(p.id);
+                          }}
+                          className="text-[10px] text-[#0058be] font-bold text-right hover:underline cursor-pointer"
+                        >
+                          Xem dự án ➔
+                        </button>
+                      </div>
                     </div>
                   );
                 })

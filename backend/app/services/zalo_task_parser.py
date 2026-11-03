@@ -29,6 +29,12 @@ from ..models.zalo import ZaloConversation
 from ..models.notification import Notification
 from ..models.user import User
 from ..utils.kpi_engine import calc_end_date_est
+from ..utils.access import (
+    business_unit_for_project,
+    can_access_project,
+    _is_member_of_project,
+    user_allowed_scopes,
+)
 
 logger = logging.getLogger("zalo_task")
 
@@ -314,11 +320,12 @@ def create_task_direct(
 def notify_task_done_if_zalo_linked(db: Session, task: Task, project_id: Optional[int]) -> None:
     """Call right after a task transitions INTO "Done" (old status != Done,
     new status == Done) — if the task's project has a linked Zalo
-    conversation, alerts every admin/leader via the notification bell so
+    conversation, alerts relevant leaders/PMs via the notification bell so
     they can fire "Yêu cầu xem demo" without hunting for the task inside
     /zalo-account. No-op if the project isn't Zalo-linked (most tasks).
-    Recipients match the existing admin/leader gate already used for the
-    Zalo feature itself (see require_manager, isAdmin())."""
+    Recipients are strictly scoped to users who have access to this project
+    and either manage the project/workspace or participate in it (PM, Tech Lead,
+    project members, assignee's leader)."""
     if not project_id:
         return
     # Best-effort: the task's own status transition has already been
@@ -332,11 +339,61 @@ def notify_task_done_if_zalo_linked(db: Session, task: Task, project_id: Optiona
         if not conv:
             return
 
-        recipients = db.query(User).filter(User.role.in_(["super_admin", "leader"])).all()
+        project = db.query(Project).filter(Project.id == project_id).first()
+        if not project:
+            return
+
+        project_bu = business_unit_for_project(db, project).lower()
+
+        candidate_users = db.query(User).filter(User.role.in_(["super_admin", "leader"])).all()
+        extra_member_ids = []
+        if project.pm_id:
+            extra_member_ids.append(project.pm_id)
+        if project.technical_leader_id:
+            extra_member_ids.append(project.technical_leader_id)
+        if task.assigned_id:
+            assigned_m = db.query(Member).filter(Member.id == task.assigned_id).first()
+            if assigned_m and assigned_m.leader_member_id:
+                extra_member_ids.append(assigned_m.leader_member_id)
+        if extra_member_ids:
+            extra_users = db.query(User).filter(User.member_id.in_(list(set(extra_member_ids)))).all()
+            candidate_users = list({u.id: u for u in candidate_users + extra_users}.values())
+
+        recipients = []
+        for u in candidate_users:
+            if not can_access_project(db, u, project):
+                continue
+            if task.assigned_id and u.member_id == task.assigned_id:
+                continue
+
+            if u.role == "super_admin":
+                if u.data_scope in ("all", project_bu):
+                    recipients.append(u)
+                continue
+
+            is_pm = (project.pm_id == u.member_id) or (project.technical_leader_id == u.member_id)
+            if is_pm:
+                recipients.append(u)
+                continue
+
+            if _is_member_of_project(db, u, project.id):
+                recipients.append(u)
+                continue
+
+            if task.assigned_id:
+                assigned_m = db.query(Member).filter(Member.id == task.assigned_id).first()
+                if assigned_m and assigned_m.leader_member_id == u.member_id:
+                    recipients.append(u)
+                    continue
+
+            u_scopes = user_allowed_scopes(db, u)
+            if u.role == "leader" and (project_bu in u_scopes or "all" in u_scopes):
+                recipients.append(u)
+                continue
+
         if not recipients:
             return
 
-        project = db.query(Project).filter(Project.id == project_id).first()
         assigned = db.query(Member).filter(Member.id == task.assigned_id).first()
         assignee_label = (assigned.full_name if assigned else None) or "?"
         message = (

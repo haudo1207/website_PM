@@ -141,8 +141,9 @@ function WorkspaceSwitcher({ workspaces, currentWsCode, onNavigate, fixedWsCode,
 // same react-query cache key, so react-query dedupes the actual polling to
 // a single request/interval and a read-mark in one instance is reflected in
 // the other immediately via the shared cache.
-function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
+function NotificationBell({ variant, currentWsCode }: { variant: 'sidebar' | 'mobile'; currentWsCode?: string | null }) {
   const [open, setOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<'meetings' | 'tasks'>('meetings');
   const [demoNotifId, setDemoNotifId] = useState<number | null>(null);
   const [demoDate, setDemoDate] = useState('');
   const [demoTime, setDemoTime] = useState('');
@@ -152,12 +153,28 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
   const queryClient = useQueryClient();
 
   const { data } = useQuery({
-    queryKey: ['inbox-notifications'],
-    queryFn: () => getInboxNotifications(),
+    queryKey: ['inbox-notifications', currentWsCode],
+    queryFn: () => getInboxNotifications(currentWsCode),
     refetchInterval: 20000,
   });
   const items = data?.items || [];
   const unread = data?.unread_count || 0;
+
+  const meetingItems = items.filter(x => x.notification_type === 'meeting_reminder');
+  const taskItems = items.filter(x => x.notification_type !== 'meeting_reminder');
+
+  const unreadMeetings = meetingItems.filter(x => !x.is_read).length;
+  const unreadTasks = taskItems.filter(x => !x.is_read).length;
+
+  // Auto switch tab if unread meetings exist or if meetings are empty
+  useEffect(() => {
+    if (unreadMeetings > 0) {
+      setActiveTab('meetings');
+    } else if (meetingItems.length === 0 && taskItems.length > 0) {
+      setActiveTab('tasks');
+    }
+  }, [unreadMeetings, meetingItems.length, taskItems.length]);
+
   const demoNotif = demoNotifId !== null ? items.find(x => x.id === demoNotifId) || null : null;
 
   useEffect(() => {
@@ -172,7 +189,7 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
 
   const markRead = async (id: number) => {
     await markNotificationRead(id).catch(() => {});
-    queryClient.setQueryData(['inbox-notifications'], (prev: any) => {
+    queryClient.setQueryData(['inbox-notifications', currentWsCode], (prev: any) => {
       if (!prev) return prev;
       const target = prev.items.find((x: InboxNotificationItem) => x.id === id);
       if (!target || target.is_read) return prev;
@@ -203,6 +220,11 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
     }
   };
 
+  const extractMeetingUrl = (text: string) => {
+    const match = text.match(/https?:\/\/[^\s]+/);
+    return match ? match[0] : null;
+  };
+
   const handleSendDemo = async () => {
     if (!demoNotif || !demoNotif.zalo_conversation_id || !demoNotif.task_id) return;
     if (!demoDate || !demoTime) { setDemoError('Chọn cả ngày và giờ demo.'); return; }
@@ -224,6 +246,8 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
       <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
     </svg>
   );
+
+  const displayItems = activeTab === 'meetings' ? meetingItems : taskItems;
 
   return (
     <div ref={ref} className="relative">
@@ -257,11 +281,12 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
 
       {open && (
         <div
-          className={`fixed z-[300] w-[92vw] max-w-[380px] max-h-[70vh] overflow-y-auto bg-white border border-slate-300 rounded-2xl shadow-2xl flex flex-col ${
+          className={`fixed z-[300] w-[92vw] max-w-[400px] max-h-[75vh] overflow-hidden bg-white border border-slate-300 rounded-2xl shadow-2xl flex flex-col ${
             variant === 'sidebar' ? 'left-[240px] top-4' : 'right-3 top-14'
           }`}
         >
-          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 sticky top-0 bg-white z-10">
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-white shrink-0">
             <div className="flex items-center gap-2">
               <span className="text-base">🔔</span>
               <h4 className="text-sm font-extrabold text-[#0b1c30]">Thông báo</h4>
@@ -269,50 +294,131 @@ function NotificationBell({ variant }: { variant: 'sidebar' | 'mobile' }) {
                 <span className="px-1.5 py-0.5 bg-red-100 text-red-700 text-[11px] font-bold rounded-full">{unread} chưa đọc</span>
               )}
             </div>
-            <button onClick={() => setOpen(false)} className="text-slate-500 hover:text-slate-700 text-base cursor-pointer">✕</button>
+            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-700 text-base cursor-pointer p-1">✕</button>
           </div>
 
-          {items.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-10 text-slate-400">
-              <span className="text-4xl mb-2">📭</span>
-              <p className="text-[13px]">Chưa có thông báo nào</p>
-            </div>
-          ) : (
-            <div className="divide-y divide-slate-200">
-              {items.map(n => (
-                <div
-                  key={n.id}
-                  onClick={() => handleItemClick(n)}
-                  className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${n.is_read ? 'opacity-70' : 'bg-indigo-50/60'}`}
-                >
-                  <span className="text-xl mt-0.5 shrink-0">
-                    {n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-[13px] leading-snug ${n.is_read ? 'text-slate-600' : 'text-[#0b1c30] font-semibold'}`}>
-                      {n.message}
-                    </p>
-                    <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                      {n.project_name && (
-                        <span className="text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
-                      )}
-                      {n.zalo_conversation_name && (
-                        <span className="text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">💬 {n.zalo_conversation_name}</span>
-                      )}
+          {/* 2 Tabs: Cuộc họp vs Công việc */}
+          <div className="flex border-b border-slate-200 bg-slate-50/80 p-1.5 gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={() => setActiveTab('meetings')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === 'meetings'
+                  ? 'bg-white text-blue-700 shadow-sm border border-slate-200'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/70'
+              }`}
+            >
+              <span>📅 Lịch họp</span>
+              {unreadMeetings > 0 ? (
+                <span className="px-1.5 py-0.2 bg-blue-600 text-white text-[10px] font-bold rounded-full">
+                  {unreadMeetings}
+                </span>
+              ) : meetingItems.length > 0 ? (
+                <span className="text-[10px] text-slate-400 font-normal">
+                  ({meetingItems.length})
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('tasks')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                activeTab === 'tasks'
+                  ? 'bg-white text-indigo-700 shadow-sm border border-slate-200'
+                  : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100/70'
+              }`}
+            >
+              <span>📋 Công việc & Demo</span>
+              {unreadTasks > 0 ? (
+                <span className="px-1.5 py-0.2 bg-indigo-600 text-white text-[10px] font-bold rounded-full">
+                  {unreadTasks}
+                </span>
+              ) : taskItems.length > 0 ? (
+                <span className="text-[10px] text-slate-400 font-normal">
+                  ({taskItems.length})
+                </span>
+              ) : null}
+            </button>
+          </div>
+
+          {/* Item List */}
+          <div className="overflow-y-auto flex-1">
+            {displayItems.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-slate-400 px-4 text-center">
+                <span className="text-4xl mb-2">{activeTab === 'meetings' ? '📅' : '📭'}</span>
+                <p className="text-[13px] font-medium text-slate-500">
+                  {activeTab === 'meetings' ? 'Không có thông báo nhắc lịch họp nào' : 'Chưa có thông báo công việc nào'}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  {activeTab === 'meetings' ? 'Khi có lịch họp sắp diễn ra, thông báo sẽ xuất hiện ở đây.' : 'Các cập nhật duyệt task và yêu cầu demo sẽ xuất hiện ở đây.'}
+                </p>
+              </div>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {displayItems.map(n => {
+                  const meetingUrl = n.notification_type === 'meeting_reminder' ? extractMeetingUrl(n.message) : null;
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => handleItemClick(n)}
+                      className={`flex items-start gap-3 px-4 py-3 cursor-pointer hover:bg-slate-50 transition-colors ${
+                        n.is_read ? 'opacity-70 bg-white' : activeTab === 'meetings' ? 'bg-blue-50/50' : 'bg-indigo-50/50'
+                      }`}
+                    >
+                      <span className="text-xl mt-0.5 shrink-0">
+                        {n.notification_type === 'meeting_reminder' ? '📅' : n.notification_type === 'zalo_demo_ready' ? '🎥' : n.notification_type === 'group_approval_request' ? '🔔' : '⚠️'}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-[13px] leading-snug whitespace-pre-line ${n.is_read ? 'text-slate-600' : 'text-[#0b1c30] font-semibold'}`}>
+                          {n.message}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                          {n.project_name && (
+                            <span className="text-[11px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded font-bold">{n.project_name}</span>
+                          )}
+                          {n.zalo_conversation_name && (
+                            <span className="text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">💬 {n.zalo_conversation_name}</span>
+                          )}
+                        </div>
+
+                        {/* Meeting Quick Join Button */}
+                        {meetingUrl && (
+                          <div className="mt-2.5">
+                            <a
+                              href={meetingUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (!n.is_read) markRead(n.id);
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors shadow-sm"
+                            >
+                              <span>🔗 Tham gia họp ngay</span>
+                              <span className="text-[10px] opacity-80">↗</span>
+                            </a>
+                          </div>
+                        )}
+
+                        {/* Zalo Demo Request Button */}
+                        {n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id && (
+                          <div className="mt-2.5">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); openDemoModal(n); }}
+                              className="px-3 py-1.5 text-[12px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition-colors shadow-sm flex items-center gap-1.5"
+                            >
+                              <span>🎥</span>
+                              <span>Yêu cầu xem demo</span>
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
-                    {n.notification_type === 'zalo_demo_ready' && n.zalo_conversation_id && n.task_id && (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); openDemoModal(n); }}
-                        className="mt-2 px-3 py-1.5 text-[12px] font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
-                      >
-                        🎥 Yêu cầu xem demo
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -520,7 +626,7 @@ function NavbarContent() {
           <span className="text-sm font-bold text-white">{brand.productName}</span>
         </div>
         <div className="flex items-center gap-1">
-          {isAdmin() && <NotificationBell variant="mobile" />}
+          {isMemberOrAbove() && <NotificationBell variant="mobile" currentWsCode={currentWsCode} />}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 text-slate-400 hover:text-white"
@@ -543,9 +649,19 @@ function NavbarContent() {
         <div className="md:hidden fixed inset-0 z-[190]" onClick={() => setMobileMenuOpen(false)} />
       )}
 
-      {/* Sidebar - Hidden on mobile, visible on md+ */}
+      {/* Sidebar - Hidden on mobile, visible on md+. z-30 (not z-[1100]):
+          must sit above normal in-page sticky content (max z-[16] seen in
+          project/detail/page.tsx) but BELOW every real full-screen modal/
+          drawer in the app (lowest is z-[39] in ProjectDocumentsTab.tsx) —
+          this fixed, opaque column must never visually cover the left edge
+          of a centered modal dialog. A prior fix bumped this all the way to
+          z-[1100] to keep the dim overlay from covering it, but almost no
+          modal was raised to match, so this opaque sidebar ended up painting
+          over the left ~230px/64px of most modals across the app (Meetings,
+          Project Detail, Accounts, ...), clipping the first few characters
+          of any text that fell under it. Confirmed live, 2026-10-30. */}
       <aside className={`
-        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-[1100] overflow-y-auto overflow-x-hidden transition-[width] duration-200
+        ${collapsed ? 'w-16' : 'w-[230px]'} flex-shrink-0 bg-[#0F172A] border-r border-slate-800 flex flex-col fixed top-0 bottom-0 left-0 z-30 overflow-y-auto overflow-x-hidden transition-[width] duration-200
         hidden md:flex
       `}>
 
@@ -569,7 +685,7 @@ function NavbarContent() {
             </div>
             {!collapsed && (
               <div className="flex items-center gap-1 shrink-0">
-                {isAdmin() && <NotificationBell variant="sidebar" />}
+                {isMemberOrAbove() && <NotificationBell variant="sidebar" currentWsCode={currentWsCode} />}
                 <button
                   onClick={toggleCollapsed}
                   title="Thu gọn sidebar"

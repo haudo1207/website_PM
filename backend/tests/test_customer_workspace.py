@@ -15,7 +15,11 @@ def names(rows):
 
 
 def new_customer(db, admin, name, bu):
-    return sc.create_customer({"name": name, "business_unit": bu}, db=db, current_user=admin)
+    # create_customer() returns a plain dict (route contract for HTTP JSON) —
+    # re-fetch as the ORM row so every call site below can keep using
+    # attribute access (.id/.name), not change them all to ["id"]/["name"].
+    created = sc.create_customer({"name": name, "business_unit": bu}, db=db, current_user=admin)
+    return db.get(Customer, created["id"])
 
 
 def add_project(db, name, customer, business, scope):

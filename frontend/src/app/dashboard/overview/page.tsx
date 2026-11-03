@@ -14,6 +14,7 @@ import SvgIcon from '@/components/dashboard/Icons';
 import BarChartCard from '@/components/dashboard/BarChartCard';
 import FormulaTooltip from '@/components/dashboard/FormulaTooltip';
 import MemberDetailModal from '@/components/dashboard/MemberDetailModal';
+import ProjectTaskListPanel from '@/components/dashboard/ProjectTaskListPanel';
 import { MONTH_WEEKS_COUNT, getWeekOfMonth, getMondayToSundayRange, getWeekDateRange, checkTaskInPeriod, isTaskDoneInPeriod, CYCLE_TEMPLATE, calculateDaysLate } from '@/app/dashboard/constants';
 import { getKpiGiaoForMember, getProjectKpiGiao } from '@/lib/kpiPotential';
 
@@ -608,6 +609,7 @@ export default function OverviewTab() {
 
   // Filter & Modal States
   const [selectedMemberModal, setSelectedMemberModal] = useState<any>(null);
+  const [selectedProjectForTasks, setSelectedProjectForTasks] = useState<any>(null);
   const [selectedPriorityModal, setSelectedPriorityModal] = useState<'overdue' | 'critical' | 'high' | 'normal' | 'interrupt' | null>(null);
   const [aiCheckStatus, setAiCheckStatus] = useState<string | null>(null);
 
@@ -1785,6 +1787,58 @@ export default function OverviewTab() {
     return true;
   });
 
+  const isSameId = (a: any, b: any) => a != null && b != null && String(a) === String(b);
+
+  const getLeaderMemberObject = (ld: any) => {
+    if (!ld) return null;
+    const targetMid = ld.member_id != null ? String(ld.member_id) : null;
+    const targetName = (ld.name || '').trim().toLowerCase();
+
+    // 1. Try finding in memberRanking (already prepared with full metrics & rawMember)
+    const rankingMatch = memberRanking.find((m: any) => {
+      if (targetMid && isSameId(m.id, targetMid)) return true;
+      const mName = (m.name || '').trim().toLowerCase();
+      if (mName && mName === targetName) return true;
+      const rawName = (m.rawMember?.display_name || m.rawMember?.full_name || '').trim().toLowerCase();
+      return rawName && rawName === targetName;
+    });
+    if (rankingMatch) return rankingMatch;
+
+    // 2. Try finding in rawMembersAll
+    const rawMatch = rawMembersAll.find((m: any) => {
+      if (targetMid && isSameId(m.id, targetMid)) return true;
+      const mName = (m.display_name || m.full_name || m.name || '').trim().toLowerCase();
+      return mName && mName === targetName;
+    });
+    if (rawMatch) {
+      return {
+        id: rawMatch.id,
+        name: rawMatch.display_name || rawMatch.full_name || rawMatch.name || ld.name,
+        team: rawMatch.team || rawMatch.department || ld.team || 'Khác',
+        department: rawMatch.department || rawMatch.team,
+        position: rawMatch.position || 'Leader',
+        leader_name: rawMatch.leader_name || '',
+        rawMember: rawMatch,
+      };
+    }
+
+    // 3. Fallback to ld info if member record not found
+    return {
+      id: ld.member_id ?? null,
+      name: ld.name || 'Không xác định',
+      team: ld.team || 'Khác',
+      department: ld.team,
+      position: 'Leader',
+      isNotFound: !targetMid && !rawMatch && !rankingMatch,
+      rawMember: {
+        id: ld.member_id ?? null,
+        display_name: ld.name,
+        full_name: ld.name,
+        team: ld.team,
+      },
+    };
+  };
+
   const handleAiCheck = () => {
     setAiCheckStatus('Đang thực hiện AI Check dự án...');
     setTimeout(() => {
@@ -1902,7 +1956,18 @@ export default function OverviewTab() {
           <div className="flex flex-nowrap items-center gap-2 overflow-x-auto pb-2 custom-scrollbar">
             <span className="shrink-0 text-[10px] font-black text-slate-400 uppercase mr-1">Xem team:</span>
             <button
-              onClick={() => setViewedLeaderName(null)}
+              onClick={() => {
+                setViewedLeaderName(null);
+                if (selectedMemberModal && currentUser?.member_id) {
+                  const selfLeader = {
+                    name: currentUser?.member?.display_name || currentUser?.full_name || '',
+                    member_id: currentUser?.member_id,
+                    email: currentUser?.email
+                  };
+                  const leaderMember = getLeaderMemberObject(selfLeader);
+                  if (leaderMember) setSelectedMemberModal(leaderMember);
+                }
+              }}
               className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${!viewedLeaderName ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
             >
               👤 Team của tôi
@@ -1915,7 +1980,13 @@ export default function OverviewTab() {
               .map((ld: any) => (
                 <button
                   key={ld.name}
-                  onClick={() => setViewedLeaderName(ld.name)}
+                  onClick={() => {
+                    setViewedLeaderName(ld.name);
+                    if (selectedMemberModal) {
+                      const leaderMember = getLeaderMemberObject(ld);
+                      if (leaderMember) setSelectedMemberModal(leaderMember);
+                    }
+                  }}
                   className={`shrink-0 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${viewedLeaderName === ld.name ? 'bg-[#0058be] text-white shadow-sm' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   👥 {ld.name} · {ld.count} member
@@ -1949,7 +2020,15 @@ export default function OverviewTab() {
               return (
               <div key={ld.name} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
+                onClick={() => {
+                  setSelectedLeader(ld.name);
+                  setSelectedWorkspaceScope(null);
+                  setProjectFilterMode('all');
+                  if (selectedMemberModal) {
+                    const leaderMember = getLeaderMemberObject(ld);
+                    if (leaderMember) setSelectedMemberModal(leaderMember);
+                  }
+                }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
@@ -1969,7 +2048,15 @@ export default function OverviewTab() {
               </button>
               {secondaries.length > 0 && (
                 <button
-                  onClick={() => { setSelectedLeader(ld.name); setSelectedWorkspaceScope('external'); setProjectFilterMode('external'); }}
+                  onClick={() => {
+                    setSelectedLeader(ld.name);
+                    setSelectedWorkspaceScope('external');
+                    setProjectFilterMode('external');
+                    if (selectedMemberModal) {
+                      const leaderMember = getLeaderMemberObject(ld);
+                      if (leaderMember) setSelectedMemberModal(leaderMember);
+                    }
+                  }}
                   className={`shrink-0 min-w-[170px] sm:min-w-[210px] px-4 py-2.5 rounded-xl border transition-all flex items-start justify-between gap-3 ${isExtSelected ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   <div className="truncate">
@@ -2016,7 +2103,18 @@ export default function OverviewTab() {
               return (
               <div key={m.id} className="flex flex-col gap-2 shrink-0">
               <button
-                onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope(null); setProjectFilterMode('all'); }}
+                onClick={() => {
+                  setSelectedMemberId(String(m.id));
+                  setSelectedWorkspaceScope(null);
+                  setProjectFilterMode('all');
+                  if (selectedMemberModal) {
+                    const memberMatch = memberRanking.find(r => isSameId(r.id, m.id)) ||
+                      rawMembersAll.find(r => isSameId(r.id, m.id)) ||
+                      m;
+                    const memberObj = memberMatch.rawMember ? memberMatch : { ...memberMatch, rawMember: memberMatch };
+                    setSelectedMemberModal(memberObj);
+                  }
+                }}
                 className={`shrink-0 min-w-[170px] px-4 py-2 rounded-xl border transition-all flex items-center justify-between gap-3 ${isMainSelected ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 <div className="truncate">
@@ -2036,7 +2134,18 @@ export default function OverviewTab() {
               </button>
               {secondaries.length > 0 && (
                 <button
-                  onClick={() => { setSelectedMemberId(String(m.id)); setSelectedWorkspaceScope('external'); setProjectFilterMode('external'); }}
+                  onClick={() => {
+                    setSelectedMemberId(String(m.id));
+                    setSelectedWorkspaceScope('external');
+                    setProjectFilterMode('external');
+                    if (selectedMemberModal) {
+                      const memberMatch = memberRanking.find(r => isSameId(r.id, m.id)) ||
+                        rawMembersAll.find(r => isSameId(r.id, m.id)) ||
+                        m;
+                      const memberObj = memberMatch.rawMember ? memberMatch : { ...memberMatch, rawMember: memberMatch };
+                      setSelectedMemberModal(memberObj);
+                    }
+                  }}
                   className={`shrink-0 min-w-[170px] sm:min-w-[210px] px-4 py-2.5 rounded-xl border transition-all flex items-start justify-between gap-3 ${isExtSelected ? 'bg-amber-50 border-amber-300 text-amber-800 shadow-sm' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   <div className="truncate">
@@ -3167,6 +3276,15 @@ export default function OverviewTab() {
         );
       })()}
 
+      {/* LEFT PANEL: PROJECT TASK LIST (SHOWS SIMULTANEOUSLY WITH MEMBER MODAL ON THE LEFT) */}
+      {selectedProjectForTasks && (
+        <ProjectTaskListPanel
+          project={selectedProjectForTasks}
+          onClose={() => setSelectedProjectForTasks(null)}
+          onNavigateToProject={(projectId) => router.push(projectOverviewUrl(projectId))}
+        />
+      )}
+
       {/* MEMBER DETAIL MODAL */}
       {selectedMemberModal && (
         <MemberDetailModal
@@ -3181,6 +3299,7 @@ export default function OverviewTab() {
           projects={rawProjectsAll}
           onClose={() => setSelectedMemberModal(null)}
           onNavigate={(projectId) => router.push(projectOverviewUrl(projectId))}
+          onSelectProject={(project) => setSelectedProjectForTasks(project)}
           selectedYear={selectedYear}
           selectedMonth={selectedMonth}
           selectedWeek={selectedWeek}

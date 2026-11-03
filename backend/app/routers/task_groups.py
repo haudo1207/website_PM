@@ -27,7 +27,7 @@ from ..models.project import Project, project_members
 from ..models.notification import Notification
 from ..utils.kpi_engine import recalculate_task, parse_date, parse_datetime
 from ..utils.access import require_project, require_route_project_access, project_query_for_user, project_query_for_user_broad, user_scope, ALL_SCOPE, ROLE_LEADER, is_project_leader, has_full_project_access
-from ..utils.auth import get_current_user, get_current_user_or_support_key
+from ..utils.auth import get_current_user, get_current_user_or_support_key, is_support_key_write_user
 from ..utils.audit_service import AuditService
 from ..utils.skill_validation import validate_skill_area_consistency
 from ..services.zalo_task_parser import notify_task_done_if_zalo_linked
@@ -802,6 +802,38 @@ def list_task_groups(phid: int, db: Session = Depends(get_db)):
         return []
 
 
+def _resolve_task_group_assignee_for_support_key(db: Session, assigned_member_id, service_member_id):
+    """Vòng 5 (Tech_Support customer-sync, xem kpi-reference.md) — khi tạo
+    TaskGroup qua SUPPORT_INTEGRATION_API_KEY với body có assigned_member_id
+    (support của ticket, đã resolve sang member.id bên KPI), xác định
+    assigned_ids thật theo đúng thứ tự ưu tiên đã chốt với Tech_Support:
+      a. leader_member_id của assignee, nếu có giá trị.
+      b. Nếu không, khớp leader_email (rồi leader_name nếu email cũng trống)
+         sang 1 Member đang tồn tại.
+      c. Nếu cả (a) và (b) đều không ra kết quả -> dùng chính service-account
+         (an toàn nhất, luôn tạo được, không chặn luồng chính — xem quyết
+         định "Lựa chọn B" trong kpi-reference.md).
+    Trả về (resolved_member_id, branch) để route gọi hàm này ghi lại nhánh đã
+    dùng vào audit log, giúp sau này dễ truy vết/ước tính tỉ lệ a/b/c thật.
+    """
+    assignee = db.query(Member).filter(Member.id == assigned_member_id).first() if assigned_member_id else None
+    if assignee is None:
+        return service_member_id, "c"
+    if assignee.leader_member_id:
+        return assignee.leader_member_id, "a"
+    candidate = None
+    if assignee.leader_email:
+        candidate = db.query(Member).filter(Member.email.ilike(assignee.leader_email)).first()
+    if not candidate and assignee.leader_name:
+        candidate = (
+            db.query(Member).filter(Member.display_name == assignee.leader_name).first()
+            or db.query(Member).filter(Member.full_name == assignee.leader_name).first()
+        )
+    if candidate:
+        return candidate.id, "b"
+    return service_member_id, "c"
+
+
 @router.post("/phases/{phid}/task-groups")
 def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), current_user=Depends(get_current_user_or_support_key)):
     phase = db.query(Phase).filter(Phase.id == phid).first()
@@ -844,8 +876,24 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
     # Người thực hiện (assigned_ids) của Task Group luôn là người tạo ra nó —
     # tự động gán, không nhận giá trị từ client. SP (support_ids) vẫn chọn
     # tự do như bình thường.
+    #
+    # Vòng 5 (Tech_Support customer-sync) — NGOẠI LỆ, chỉ khi gọi bằng
+    # SUPPORT_INTEGRATION_API_KEY và body có assigned_member_id: assigned_ids
+    # được xác định theo leader của assignee (xem
+    # _resolve_task_group_assignee_for_support_key), không phải người tạo
+    # (người tạo lúc này luôn là chính service-account, gán thẳng nó vào mọi
+    # TaskGroup sẽ vô nghĩa). Mọi caller khác (nhân viên thật qua JWT) giữ
+    # nguyên 100% hành vi cũ ở trên.
     creator_member_id = getattr(current_user, "member_id", None)
-    assigned_ids = [creator_member_id] if creator_member_id is not None else []
+    assigned_branch_used = None
+    assigned_member_id_input = body.get("assigned_member_id")
+    if is_support_key_write_user(current_user) and assigned_member_id_input:
+        resolved_id, assigned_branch_used = _resolve_task_group_assignee_for_support_key(
+            db, assigned_member_id_input, creator_member_id
+        )
+        assigned_ids = [resolved_id] if resolved_id is not None else []
+    else:
+        assigned_ids = [creator_member_id] if creator_member_id is not None else []
     support_ids = validate_member_ids_for_project(body.get("support_ids"), phase.project_id, db, "SP")
 
     # Position the new group: at a specific spot if the caller supplied one
@@ -897,6 +945,9 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
 
     db.commit()
     db.refresh(tg)
+    audit_note = ""
+    if is_support_key_write_user(current_user):
+        audit_note = f" [qua SUPPORT_INTEGRATION_API_KEY, nhánh assigned={assigned_branch_used or 'n/a'}]"
     AuditService.record(
         db=db,
         user_id=getattr(current_user, "id", None),
@@ -905,7 +956,7 @@ def create_task_group(phid: int, body: dict, db: Session = Depends(get_db), curr
         entity_id=tg.id,
         action="CREATE",
         project_id=phase.project_id,
-        description=f"Đã tạo Task Cha '{tg.name}'"
+        description=f"Đã tạo Task Cha '{tg.name}'" + audit_note
     )
     db.commit()
     return serialize_task_group(tg, db)

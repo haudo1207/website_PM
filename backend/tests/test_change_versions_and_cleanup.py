@@ -20,11 +20,11 @@ def test_customer_project_version_tracks_changes(db, admin):
     c = sc.create_customer({"name": "KH", "business_unit": "infras"}, db=db, current_user=admin)
     v1 = cp_version(db, admin)
     assert v1 != v0
-    db.add(Project(name="P", customer_id=c.id, business="Infras", data_scope="infras"))
+    db.add(Project(name="P", customer_id=c["id"], business="Infras", data_scope="infras"))
     db.commit()
     v2 = cp_version(db, admin)
     assert v2 != v1
-    sc.update_customer(c.id, {"name": "KH 2"}, db=db, current_user=admin)
+    sc.update_customer(c["id"], {"name": "KH 2"}, db=db, current_user=admin)
     v3 = cp_version(db, admin)
     assert v3 != v2
     assert cp_version(db, admin) == v3  # stable when nothing changed
