@@ -1,10 +1,20 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import date, datetime, timedelta
 from typing import Optional
 
 from ..database import get_db
 from ..utils.auth import get_current_user
+from ..utils.access import (
+    ROLE_SUPER_ADMIN,
+    ROLE_LEADER,
+    business_unit_for_project,
+    can_access_project,
+    _is_member_of_project,
+    primary_workspace_code_for_user,
+    resolve_workspace,
+    user_allowed_scopes,
+)
 from ..models.notification import Notification
 from ..models.task import Task
 from ..models.task_group import TaskGroup
@@ -342,26 +352,86 @@ def remind_group_leader(
 
 @router.get("/inbox")
 def get_inbox_notifications(
+    workspace: Optional[str] = Query(None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):
     """
     Lấy danh sách thông báo hộp thư và số lượng chưa đọc.
+    Lọc theo quyền hạn của user và workspace đang chọn, không trả về thông báo chéo workspace
+    hoặc thông báo của các dự án mà user không tham gia.
     """
-    notifications = (
+    target_ws_code = None
+    if workspace and workspace.strip().lower() not in ("all", ""):
+        ws_obj = resolve_workspace(db, workspace)
+        target_ws_code = ws_obj.code.lower() if ws_obj else workspace.strip().lower()
+    elif getattr(current_user, "role", None) != ROLE_SUPER_ADMIN:
+        target_ws_code = primary_workspace_code_for_user(db, current_user)
+
+    all_notifs = (
         db.query(Notification)
         .filter(Notification.recipient_id == current_user.id)
         .order_by(Notification.created_at.desc())
-        .limit(30)
+        .limit(100)
         .all()
     )
-    unread_count = (
-        db.query(Notification)
-        .filter(Notification.recipient_id == current_user.id, Notification.is_read == False)
-        .count()
-    )
 
-    conv_ids = [n.zalo_conversation_id for n in notifications if n.zalo_conversation_id]
+    filtered = []
+    for n in all_notifs:
+        if not n.project_id:
+            filtered.append(n)
+            continue
+
+        project = n.project
+        if not project:
+            continue
+
+        if not can_access_project(db, current_user, project):
+            continue
+
+        p_bu = business_unit_for_project(db, project).lower()
+        p_scope = (project.data_scope or "").strip().lower()
+        is_global = p_scope == "all" or (project.business and project.business.lower() == "all")
+
+        if target_ws_code and not is_global:
+            matched = (
+                p_bu == target_ws_code
+                or p_scope == target_ws_code
+                or (project.business and resolve_workspace(db, project.business) and resolve_workspace(db, project.business).code.lower() == target_ws_code)
+            )
+            if not matched:
+                continue
+
+        if n.notification_type == "zalo_demo_ready":
+            if getattr(current_user, "role", None) == ROLE_SUPER_ADMIN:
+                pass
+            else:
+                is_pm = (project.pm_id == current_user.member_id) or (project.technical_leader_id == current_user.member_id)
+                is_member = _is_member_of_project(db, current_user, project.id)
+                is_assignee_lead = False
+                is_task_assignee_or_support = False
+                if n.task:
+                    if n.task.assigned_id == current_user.member_id or n.task.support_id == current_user.member_id:
+                        is_task_assignee_or_support = True
+                    if n.task.assigned_id:
+                        ass = db.query(Member).filter(Member.id == n.task.assigned_id).first()
+                        if ass and ass.leader_member_id == current_user.member_id:
+                            is_assignee_lead = True
+                u_scopes = user_allowed_scopes(db, current_user)
+                is_own_ws_leader = (
+                    getattr(current_user, "role", None) == ROLE_LEADER
+                    and (p_bu in u_scopes or "all" in u_scopes)
+                )
+                if not (is_pm or is_member or is_assignee_lead or is_task_assignee_or_support or is_own_ws_leader):
+                    continue
+
+        filtered.append(n)
+        if len(filtered) >= 30:
+            break
+
+    unread_count = sum(1 for n in filtered if not n.is_read)
+
+    conv_ids = [n.zalo_conversation_id for n in filtered if n.zalo_conversation_id]
     convs_by_id = {}
     if conv_ids:
         convs_by_id = {
@@ -369,7 +439,7 @@ def get_inbox_notifications(
         }
 
     items = []
-    for n in notifications:
+    for n in filtered:
         sender_name = n.sender.full_name if n.sender else "Hệ thống"
         project_name = n.project.name if n.project else None
         group_name = n.task_group.name if n.task_group else None

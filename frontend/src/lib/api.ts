@@ -1587,8 +1587,10 @@ export interface InboxNotificationItem {
   zalo_conversation_id: number | null;
   zalo_conversation_name: string | null;
 }
-export const getInboxNotifications = () =>
-  api.get<{ unread_count: number; items: InboxNotificationItem[] }>('/notifications/inbox').then(r => r.data);
+export const getInboxNotifications = (workspace?: string | null) =>
+  api.get<{ unread_count: number; items: InboxNotificationItem[] }>('/notifications/inbox', {
+    params: workspace ? { workspace } : undefined,
+  }).then(r => r.data);
 
 export const markNotificationRead = (id: number) =>
   api.patch(`/notifications/${id}/read`).then(r => r.data);
