@@ -64,6 +64,8 @@ export interface MemberDetailModalProps {
   onClose: () => void;
   onNavigate: (projectId: string | number) => void;
   onSelectProject?: (project: any) => void;
+  isDualPanel?: boolean;
+  selectedProjectId?: number | string | null;
   selectedYear: number | 'all';
   selectedMonth: number | 'all';
   selectedWeek: number | 'all';
@@ -81,6 +83,8 @@ export default function MemberDetailModal({
   onClose,
   onNavigate,
   onSelectProject,
+  isDualPanel = false,
+  selectedProjectId = null,
   selectedYear,
   selectedMonth,
   selectedWeek,
@@ -379,7 +383,14 @@ export default function MemberDetailModal({
           re-enables interaction on just this panel; the outer wrapper above
           is pointer-events-none so it never intercepts clicks on the
           ranking table (or anything else) behind/beside it. */}
-      <div ref={drawerRef} className="pointer-events-auto fixed inset-y-0 right-0 z-50 w-full max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200">
+      <div
+        ref={drawerRef}
+        className={`pointer-events-auto fixed inset-y-0 right-0 z-50 w-full ${
+          isDualPanel
+            ? 'max-w-full md:max-w-[min(640px,44vw)] xl:max-w-[min(672px,45vw)]'
+            : 'max-w-2xl'
+        } bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-l border-slate-200 transition-all duration-200`}
+      >
 
         {/* HEADER — the name/avatar block crossfades via contentVisible
             (plain opacity transition, no remount — see top of component)
@@ -707,6 +718,7 @@ export default function MemberDetailModal({
                   const pManday = pTasks.reduce((acc, t) => acc + (t.manday_actual || t.manday_est || 0), 0);
                   const pKpi = pTasks.reduce((acc, t) => acc + (t.status === 'Done' || t.status === 'done' ? getTaskKpiForMember(t, member.id) : 0), 0);
 
+                  const isSelectedProject = selectedProjectId != null && String(p.id) === String(selectedProjectId);
                   return (
                     <div
                       key={p.id}
@@ -718,11 +730,20 @@ export default function MemberDetailModal({
                           onNavigate(p.id);
                         }
                       }}
-                      className="p-4 bg-white border border-slate-200 rounded-2xl shadow-sm space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]"
+                      className={`p-4 bg-white border ${
+                        isSelectedProject ? 'border-[#0058be] ring-2 ring-blue-100 bg-blue-50/20 shadow-md' : 'border-slate-200 shadow-sm'
+                      } rounded-2xl space-y-3 cursor-pointer hover:border-[#0058be] hover:shadow-md transition-all active:scale-[0.99]`}
                     >
                       <div className="flex items-center justify-between">
-                        <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors">{formatProjectCardTitle(p)}</h4>
-                        <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <h4 className="text-sm font-extrabold text-[#0b1c30] hover:text-[#0058be] transition-colors truncate">{formatProjectCardTitle(p)}</h4>
+                          {isSelectedProject && (
+                            <span className="shrink-0 px-2 py-0.5 rounded-full text-[9px] font-bold bg-[#0058be] text-white">
+                              Đang xem ➔
+                            </span>
+                          )}
+                        </div>
+                        <span className="px-2.5 py-0.5 bg-blue-50 text-[#0058be] rounded-full text-[10px] font-bold border border-blue-100 shrink-0">
                           {pOpen} task mở
                         </span>
                       </div>

@@ -3280,6 +3280,11 @@ export default function OverviewTab() {
       {selectedProjectForTasks && (
         <ProjectTaskListPanel
           project={selectedProjectForTasks}
+          member={selectedMemberModal}
+          selectedYear={selectedYear}
+          selectedMonth={selectedMonth}
+          selectedWeek={selectedWeek}
+          activeQuickFilter={activeQuickFilter}
           onClose={() => setSelectedProjectForTasks(null)}
           onNavigateToProject={(projectId) => router.push(projectOverviewUrl(projectId))}
         />
@@ -3289,6 +3294,8 @@ export default function OverviewTab() {
       {selectedMemberModal && (
         <MemberDetailModal
           member={selectedMemberModal}
+          isDualPanel={Boolean(selectedProjectForTasks)}
+          selectedProjectId={selectedProjectForTasks?.id}
           // Unscoped by the Workspace switcher (same fix as the ranking
           // table's myTasks) — rawTasks/rawProjects only cover the switcher's
           // current Workspace, so a member's tasks in a DIFFERENT Workspace's

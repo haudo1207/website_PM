@@ -5,20 +5,72 @@ import { useQuery } from '@tanstack/react-query';
 import { getAllProjectTasks } from '@/lib/api';
 import { formatProjectCardTitle } from '@/lib/projectDisplay';
 import { useSidebarCollapse } from '@/lib/sidebarCollapse';
+import { checkTaskInPeriod } from '@/app/dashboard/constants';
 
 export interface ProjectTaskListPanelProps {
   project: any;
+  member?: any;
+  selectedYear?: number | 'all';
+  selectedMonth?: number | 'all';
+  selectedWeek?: number | 'all';
+  activeQuickFilter?: string | null;
   onClose: () => void;
   onNavigateToProject?: (projectId: number | string) => void;
 }
 
+/**
+ * Helper to match whether a task is Assigned or Support for a given member.
+ * Uses 1 unified logic extracting member.id from any member/leader object.
+ */
+export function isTaskAssignedOrSupportForMember(task: any, member: any): boolean {
+  if (!member) return true; // If no member specified, show all
+  const memberId = member?.id != null
+    ? String(member.id)
+    : (member?.rawMember?.id != null ? String(member.rawMember.id) : null);
+
+  if (memberId != null) {
+    const isAssigned = task.assigned_id != null && String(task.assigned_id) === memberId;
+    const isSupport = task.support_id != null && String(task.support_id) === memberId;
+    if (isAssigned || isSupport) return true;
+  }
+
+  // Fallback to name matching if task only contains string names without numeric ID
+  const memberName = (
+    member?.name ||
+    member?.display_name ||
+    member?.full_name ||
+    member?.rawMember?.display_name ||
+    member?.rawMember?.full_name ||
+    ''
+  ).trim().toLowerCase();
+
+  if (memberName) {
+    const assignedName = (task.assigned_name || '').trim().toLowerCase();
+    const supportName = (task.support_name || '').trim().toLowerCase();
+    if (assignedName && (assignedName === memberName || assignedName.includes(memberName) || memberName.includes(assignedName))) {
+      return true;
+    }
+    if (supportName && (supportName === memberName || supportName.includes(memberName) || memberName.includes(supportName))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export default function ProjectTaskListPanel({
   project,
+  member,
+  selectedYear = 'all',
+  selectedMonth = 'all',
+  selectedWeek = 'all',
+  activeQuickFilter = null,
   onClose,
   onNavigateToProject,
 }: ProjectTaskListPanelProps) {
   const { collapsed: sidebarCollapsed } = useSidebarCollapse();
   const projectId = project?.id != null ? Number(project.id) : null;
+  const memberId = member?.id != null ? String(member.id) : (member?.rawMember?.id != null ? String(member.rawMember.id) : null);
 
   // Fetch tasks of this project using the existing getAllProjectTasks API endpoint
   const {
@@ -37,25 +89,66 @@ export default function ProjectTaskListPanel({
   const [searchQuery, setSearchQuery] = useState('');
   const [contentVisible, setContentVisible] = useState(true);
   const prevProjectIdRef = useRef(projectId);
+  const prevMemberIdRef = useRef(memberId);
   const drawerRef = useRef<HTMLDivElement>(null);
 
-  // Soft crossfade & scroll reset on project switch (pattern "ghi đè trực tiếp, không đóng/mở lại")
+  // Soft crossfade & scroll reset on project switch or member switch (pattern "ghi đè trực tiếp, không đóng/mở lại")
   useEffect(() => {
-    if (prevProjectIdRef.current === projectId) return;
+    const projectChanged = prevProjectIdRef.current !== projectId;
+    const memberChanged = prevMemberIdRef.current !== memberId;
+    if (!projectChanged && !memberChanged) return;
+
     prevProjectIdRef.current = projectId;
-    setTaskFilter('all');
-    setSearchQuery('');
+    prevMemberIdRef.current = memberId;
+
+    if (projectChanged) {
+      setTaskFilter('all');
+      setSearchQuery('');
+    }
     drawerRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
     setContentVisible(false);
     const raf = requestAnimationFrame(() => setContentVisible(true));
     return () => cancelAnimationFrame(raf);
-  }, [projectId]);
+  }, [projectId, memberId]);
 
   const crossfadeClass = `transition-opacity duration-200 ${contentVisible ? 'opacity-100' : 'opacity-0'}`;
 
-  // Statistics
+  // Period label for header
+  const periodLabel = useMemo(() => {
+    if (activeQuickFilter) return activeQuickFilter;
+    if (selectedWeek !== 'all' && selectedMonth !== 'all' && selectedYear !== 'all') {
+      return `Tuần ${selectedWeek} / ${selectedMonth}/${selectedYear}`;
+    }
+    if (selectedMonth !== 'all' && selectedYear !== 'all') {
+      return `Tháng ${selectedMonth}/${selectedYear}`;
+    }
+    if (selectedYear !== 'all') {
+      return `Năm ${selectedYear}`;
+    }
+    return 'Tất cả kỳ';
+  }, [activeQuickFilter, selectedYear, selectedMonth, selectedWeek]);
+
+  // Scoped tasks: VIỆC 2 (Thời gian) AND VIỆC 3 (Assigned / Support = người đang mở panel phải)
+  const scopedTasks = useMemo(() => {
+    return rawTasks.filter((t) => {
+      // 1. VIỆC 3: Assigned OR Support = member
+      if (member && !isTaskAssignedOrSupportForMember(t, member)) {
+        return false;
+      }
+
+      // 2. VIỆC 2: Khung thời gian (Kỳ/Năm/Tháng/Tuần)
+      // checkTaskInPeriod returns true if 'all' (Tất cả kỳ)
+      if (!checkTaskInPeriod(t, selectedYear, selectedMonth, selectedWeek, activeQuickFilter)) {
+        return false;
+      }
+
+      return true;
+    });
+  }, [rawTasks, member, selectedYear, selectedMonth, selectedWeek, activeQuickFilter]);
+
+  // Statistics calculated strictly from scopedTasks (đủ cả 2 điều kiện thời gian và người)
   const stats = useMemo(() => {
-    const total = rawTasks.length;
+    const total = scopedTasks.length;
     let done = 0;
     let open = 0;
     let critical = 0;
@@ -64,7 +157,7 @@ export default function ProjectTaskListPanel({
 
     const todayStr = new Date().toISOString().slice(0, 10);
 
-    for (const t of rawTasks) {
+    for (const t of scopedTasks) {
       const isDone = t.status === 'Done' || t.status === 'done';
       if (isDone) {
         done++;
@@ -87,14 +180,14 @@ export default function ProjectTaskListPanel({
     }
 
     return { total, done, open, critical, overdue, totalManday: Math.round(totalManday * 10) / 10 };
-  }, [rawTasks]);
+  }, [scopedTasks]);
 
-  // Filtered task list
+  // Sub-filter (all, open, done, critical, overdue) and search query applied to scopedTasks
   const filteredTasks = useMemo(() => {
     const todayStr = new Date().toISOString().slice(0, 10);
     const q = searchQuery.trim().toLowerCase();
 
-    return rawTasks.filter((t) => {
+    return scopedTasks.filter((t) => {
       // 1. Status/Priority Filter
       const isDone = t.status === 'Done' || t.status === 'done';
       if (taskFilter === 'open' && isDone) return false;
@@ -120,20 +213,20 @@ export default function ProjectTaskListPanel({
 
       return true;
     });
-  }, [rawTasks, taskFilter, searchQuery]);
+  }, [scopedTasks, taskFilter, searchQuery]);
 
   // Priority badge styling
   const renderPriorityBadge = (priority?: string) => {
     const prio = (priority || 'normal').toLowerCase();
     switch (prio) {
       case 'critical':
-        return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-purple-100 text-purple-700 border border-purple-200">Critical</span>;
+        return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[8.5px] sm:text-[9px] font-black uppercase bg-purple-100 text-purple-700 border border-purple-200">Critical</span>;
       case 'high':
-        return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-orange-100 text-orange-700 border border-orange-200">High</span>;
+        return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[8.5px] sm:text-[9px] font-black uppercase bg-orange-100 text-orange-700 border border-orange-200">High</span>;
       case 'interrupt':
-        return <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 border border-indigo-200">Interrupt</span>;
+        return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[8.5px] sm:text-[9px] font-black uppercase bg-indigo-100 text-indigo-700 border border-indigo-200">Interrupt</span>;
       default:
-        return <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase bg-blue-50 text-blue-700 border border-blue-200">Normal</span>;
+        return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[8.5px] sm:text-[9px] font-bold uppercase bg-blue-50 text-blue-700 border border-blue-200">Normal</span>;
     }
   };
 
@@ -141,18 +234,18 @@ export default function ProjectTaskListPanel({
   const renderStatusBadge = (status?: string) => {
     const st = (status || 'waiting').toLowerCase();
     if (st === 'done') {
-      return <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>;
+      return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[9.5px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>;
     }
     if (st.includes('progress') || st.includes('doing')) {
-      return <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-blue-50 text-blue-700 border border-blue-200">In Progress</span>;
+      return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[9.5px] font-bold bg-blue-50 text-blue-700 border border-blue-200">In Progress</span>;
     }
     if (st.includes('review')) {
-      return <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-purple-50 text-purple-700 border border-purple-200">Review</span>;
+      return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[9.5px] font-bold bg-purple-50 text-purple-700 border border-purple-200">Review</span>;
     }
     if (st.includes('cancel')) {
-      return <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">Cancel</span>;
+      return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[9.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">Cancel</span>;
     }
-    return <span className="px-2 py-0.5 rounded-full text-[9.5px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Waiting</span>;
+    return <span className="px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[9.5px] font-bold bg-slate-100 text-slate-600 border border-slate-200">Waiting</span>;
   };
 
   // Format date helper
@@ -172,49 +265,62 @@ export default function ProjectTaskListPanel({
   if (!project) return null;
 
   const projectTitle = formatProjectCardTitle(project);
+  const memberDisplayName = member?.name || member?.display_name || member?.full_name || null;
 
   return (
     <div className="fixed inset-0 z-40 overflow-hidden pointer-events-none">
       {/* 
-        LEFT SIDE DRAWER PANEL
-        - Docked after sidebar on desktop: `md:left-[230px]` (or `md:left-16` if collapsed).
-        - Does NOT cover the navigation sidebar (z-30).
-        - z-40 sits cleanly above in-page content, below right panel (z-50).
+        VIỆC 1: UI TỰ CO GIÃN THEO KÍCH THƯỚC MÀN HÌNH
+        - Docked after sidebar on desktop: `md:left-[230px]` (or `md:left-16` if user collapsed sidebar).
+        - Sidebar text stays fully visible (230px), never squished or forced to collapse.
+        - Panel Trái linh hoạt theo viewport: `md:max-w-[min(460px,32vw)] lg:max-w-[min(500px,33vw)] xl:max-w-[min(540px,34vw)]`.
+        - Tự động nhỏ hơn Panel Phải (44vw ~ 650px) để dành ưu tiên cho Panel Phải đang là trọng tâm.
+        - z-40 ngồi trên in-page content, dưới Panel Phải (z-50).
       */}
       <div
         ref={drawerRef}
         className={`pointer-events-auto fixed inset-y-0 ${
           sidebarCollapsed ? 'md:left-16' : 'md:left-[230px]'
-        } left-0 z-40 w-full max-w-xl xl:max-w-2xl bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-r border-slate-200 transition-[left] duration-200 animate-in slide-in-from-left duration-200`}
+        } left-0 z-40 w-full max-w-full md:max-w-[min(460px,32vw)] lg:max-w-[min(500px,33vw)] xl:max-w-[min(540px,34vw)] bg-white h-full shadow-2xl overflow-y-auto custom-scrollbar flex flex-col border-r border-slate-200 transition-[left,max-width] duration-200 animate-in slide-in-from-left duration-200`}
       >
         {/* HEADER */}
-        <div className="sticky top-0 z-20 bg-white px-5 py-4 border-b border-slate-100 flex items-center justify-between shadow-xs">
-          <div className={`flex items-center gap-3 min-w-0 ${crossfadeClass}`}>
-            <div className="w-10 h-10 rounded-xl bg-blue-50 text-[#0058be] border border-blue-200 flex items-center justify-center font-black text-base shrink-0 shadow-xs">
+        <div className="sticky top-0 z-20 bg-white px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-100 flex items-center justify-between shadow-xs">
+          <div className={`flex items-center gap-2.5 sm:gap-3 min-w-0 ${crossfadeClass}`}>
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-blue-50 text-[#0058be] border border-blue-200 flex items-center justify-center font-black text-base shrink-0 shadow-xs">
               📁
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h2 className="text-base font-extrabold text-[#0b1c30] tracking-tight truncate max-w-md" title={projectTitle}>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <h2 className="text-sm sm:text-base font-extrabold text-[#0b1c30] tracking-tight truncate max-w-[220px] sm:max-w-md" title={projectTitle}>
                   {projectTitle}
                 </h2>
                 {project.data_scope && (
-                  <span className="px-2 py-0.5 rounded-full text-[9px] font-bold bg-slate-100 text-slate-600 border border-slate-200 uppercase">
+                  <span className="px-1.5 py-0.5 rounded-full text-[8.5px] font-bold bg-slate-100 text-slate-600 border border-slate-200 uppercase">
                     {project.data_scope}
                   </span>
                 )}
               </div>
-              <p className="text-[11px] font-semibold text-slate-400 mt-0.5">
-                Danh sách Task của Dự án · {stats.total} task · {stats.totalManday} MD
-              </p>
+              <div className="flex items-center gap-1.5 mt-1 flex-wrap text-[10px] sm:text-[10.5px]">
+                {memberDisplayName && (
+                  <span className="px-1.5 py-0.5 rounded-md font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 truncate max-w-[140px]" title={`Đang lọc task của ${memberDisplayName}`}>
+                    👤 {memberDisplayName}
+                  </span>
+                )}
+                <span className="px-1.5 py-0.5 rounded-md font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                  📅 {periodLabel}
+                </span>
+                <span className="font-semibold text-slate-500 whitespace-nowrap">
+                  · {stats.total} task · {stats.totalManday} MD
+                </span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {onNavigateToProject && (
               <button
                 type="button"
                 onClick={() => onNavigateToProject(project.id)}
-                className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-[#0058be] bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer border border-blue-200"
+                className="hidden sm:inline-flex items-center gap-1 text-[11px] font-bold text-[#0058be] bg-blue-50 hover:bg-blue-100 px-2 py-1.5 rounded-lg transition-colors cursor-pointer border border-blue-200"
                 title="Mở trang chi tiết dự án"
               >
                 <span>Xem dự án</span>
@@ -224,7 +330,7 @@ export default function ProjectTaskListPanel({
             <button
               type="button"
               onClick={onClose}
-              className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-sm cursor-pointer shrink-0"
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-500 transition-colors flex items-center justify-center font-bold text-xs sm:text-sm cursor-pointer shrink-0"
               title="Đóng panel danh sách task (✕)"
             >
               ✕
@@ -233,28 +339,28 @@ export default function ProjectTaskListPanel({
         </div>
 
         {/* BODY */}
-        <div className={`p-5 space-y-4 flex-1 ${crossfadeClass}`}>
-          {/* 1. Quick Stats */}
-          <div className="grid grid-cols-5 gap-2">
-            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-2 text-center">
-              <span className="text-base font-black text-[#0b1c30] leading-none block">{stats.total}</span>
-              <span className="text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-1">Tổng task</span>
+        <div className={`p-3.5 sm:p-5 space-y-3.5 sm:space-y-4 flex-1 ${crossfadeClass}`}>
+          {/* 1. Quick Stats (VIỆC 2 + 3 CỘNG DỒN) */}
+          <div className="grid grid-cols-5 gap-1.5 sm:gap-2">
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-1.5 sm:p-2 text-center">
+              <span className="text-sm sm:text-base font-black text-[#0b1c30] leading-none block">{stats.total}</span>
+              <span className="text-[7.5px] sm:text-[8px] font-bold text-slate-400 uppercase tracking-tight block mt-1">Tổng task</span>
             </div>
-            <div className="bg-blue-50/60 border border-blue-200/60 rounded-xl p-2 text-center">
-              <span className="text-base font-black text-[#0058be] leading-none block">{stats.open}</span>
-              <span className="text-[8px] font-bold text-blue-500 uppercase tracking-tight block mt-1">Chưa xong</span>
+            <div className="bg-blue-50/60 border border-blue-200/60 rounded-xl p-1.5 sm:p-2 text-center">
+              <span className="text-sm sm:text-base font-black text-[#0058be] leading-none block">{stats.open}</span>
+              <span className="text-[7.5px] sm:text-[8px] font-bold text-blue-500 uppercase tracking-tight block mt-1">Chưa xong</span>
             </div>
-            <div className="bg-emerald-50/60 border border-emerald-200/60 rounded-xl p-2 text-center">
-              <span className="text-base font-black text-emerald-600 leading-none block">{stats.done}</span>
-              <span className="text-[8px] font-bold text-emerald-600 uppercase tracking-tight block mt-1">Đã xong</span>
+            <div className="bg-emerald-50/60 border border-emerald-200/60 rounded-xl p-1.5 sm:p-2 text-center">
+              <span className="text-sm sm:text-base font-black text-emerald-600 leading-none block">{stats.done}</span>
+              <span className="text-[7.5px] sm:text-[8px] font-bold text-emerald-600 uppercase tracking-tight block mt-1">Đã xong</span>
             </div>
-            <div className="bg-purple-50/60 border border-purple-200/60 rounded-xl p-2 text-center">
-              <span className="text-base font-black text-purple-700 leading-none block">{stats.critical}</span>
-              <span className="text-[8px] font-bold text-purple-600 uppercase tracking-tight block mt-1">Critical</span>
+            <div className="bg-purple-50/60 border border-purple-200/60 rounded-xl p-1.5 sm:p-2 text-center">
+              <span className="text-sm sm:text-base font-black text-purple-700 leading-none block">{stats.critical}</span>
+              <span className="text-[7.5px] sm:text-[8px] font-bold text-purple-600 uppercase tracking-tight block mt-1">Critical</span>
             </div>
-            <div className="bg-rose-50/60 border border-rose-200/60 rounded-xl p-2 text-center">
-              <span className="text-base font-black text-rose-600 leading-none block">{stats.overdue}</span>
-              <span className="text-[8px] font-bold text-rose-500 uppercase tracking-tight block mt-1">Trễ hạn</span>
+            <div className="bg-rose-50/60 border border-rose-200/60 rounded-xl p-1.5 sm:p-2 text-center">
+              <span className="text-sm sm:text-base font-black text-rose-600 leading-none block">{stats.overdue}</span>
+              <span className="text-[7.5px] sm:text-[8px] font-bold text-rose-500 uppercase tracking-tight block mt-1">Trễ hạn</span>
             </div>
           </div>
 
@@ -274,7 +380,7 @@ export default function ProjectTaskListPanel({
                   key={tab.key}
                   type="button"
                   onClick={() => setTaskFilter(tab.key)}
-                  className={`px-2.5 py-1 rounded-lg text-[10.5px] font-bold transition-all whitespace-nowrap cursor-pointer ${
+                  className={`px-2 sm:px-2.5 py-1 rounded-lg text-[10px] sm:text-[10.5px] font-bold transition-all whitespace-nowrap cursor-pointer ${
                     taskFilter === tab.key
                       ? 'bg-[#0058be] text-white shadow-xs'
                       : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
@@ -284,20 +390,20 @@ export default function ProjectTaskListPanel({
                 </button>
               ))}
             </div>
-            <div className="relative shrink-0 sm:w-44">
+            <div className="relative shrink-0 sm:w-36 md:w-40">
               <input
                 type="text"
-                placeholder="Tìm task / người..."
+                placeholder="Tìm task..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full text-xs font-semibold px-2.5 py-1.5 pl-7 border border-slate-200 rounded-lg outline-none focus:border-[#0058be] focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-slate-400"
+                className="w-full text-xs font-semibold px-2 py-1 pl-6 border border-slate-200 rounded-lg outline-none focus:border-[#0058be] focus:ring-1 focus:ring-blue-100 transition-all placeholder:text-slate-400"
               />
-              <span className="absolute left-2 top-2 text-xs text-slate-400">🔍</span>
+              <span className="absolute left-2 top-1.5 text-xs text-slate-400">🔍</span>
               {searchQuery && (
                 <button
                   type="button"
                   onClick={() => setSearchQuery('')}
-                  className="absolute right-2 top-1.5 text-xs text-slate-400 hover:text-slate-600 font-bold"
+                  className="absolute right-1.5 top-1 text-xs text-slate-400 hover:text-slate-600 font-bold"
                 >
                   ✕
                 </button>
@@ -318,20 +424,28 @@ export default function ProjectTaskListPanel({
                 <p className="text-[10px] text-slate-400 mt-1">{(error as any)?.message || 'Vui lòng thử lại sau.'}</p>
               </div>
             ) : filteredTasks.length === 0 ? (
-              <div className="py-12 text-center text-slate-400 text-xs font-semibold">
-                {rawTasks.length === 0 ? 'Dự án này chưa có task nào.' : 'Không có task nào khớp bộ lọc.'}
+              <div className="py-12 px-4 text-center text-slate-400 text-xs font-semibold">
+                {rawTasks.length === 0 ? (
+                  'Dự án này chưa có task nào.'
+                ) : scopedTasks.length === 0 ? (
+                  <span>
+                    Không có task nào của <strong className="text-slate-600">{memberDisplayName || 'thành viên này'}</strong> trong kỳ <strong className="text-slate-600">{periodLabel}</strong>.
+                  </span>
+                ) : (
+                  'Không có task nào khớp bộ lọc.'
+                )}
               </div>
             ) : (
               <div className="overflow-x-auto max-h-[60vh] custom-scrollbar">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-200 sticky top-0 z-10">
-                      <th className="px-3 py-2.5 min-w-[200px]">TÊN TASK</th>
-                      <th className="px-3 py-2.5 text-center whitespace-nowrap">TRẠNG THÁI</th>
-                      <th className="px-3 py-2.5 whitespace-nowrap">ASSIGNED</th>
-                      <th className="px-3 py-2.5 text-center whitespace-nowrap">PRIORITY</th>
-                      <th className="px-3 py-2.5 text-center whitespace-nowrap">DEADLINE</th>
-                      <th className="px-3 py-2.5 text-right whitespace-nowrap">MD</th>
+                    <tr className="bg-slate-50 text-[9.5px] sm:text-[10px] font-black uppercase tracking-wider text-slate-500 border-b border-slate-200 sticky top-0 z-10">
+                      <th className="px-2.5 sm:px-3 py-2 sm:py-2.5 min-w-[170px]">TÊN TASK</th>
+                      <th className="px-2 py-2 sm:py-2.5 text-center whitespace-nowrap">TRẠNG THÁI</th>
+                      <th className="px-2 py-2 sm:py-2.5 whitespace-nowrap">VAI TRÒ</th>
+                      <th className="px-1.5 py-2 sm:py-2.5 text-center whitespace-nowrap">PRIO</th>
+                      <th className="px-2 py-2 sm:py-2.5 text-center whitespace-nowrap">DEADLINE</th>
+                      <th className="px-2 py-2 sm:py-2.5 text-right whitespace-nowrap">MD</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -340,21 +454,24 @@ export default function ProjectTaskListPanel({
                       const deadlineStr = formatDate(t.end_date_est || t.end_date_actual || t.deadline || t.start_date);
                       const mdVal = t.manday_est != null ? Number(t.manday_est).toFixed(1) : (t.manday_actual != null ? Number(t.manday_actual).toFixed(1) : '—');
 
+                      const isAssigned = memberId != null && t.assigned_id != null && String(t.assigned_id) === memberId;
+                      const isSupport = memberId != null && t.support_id != null && String(t.support_id) === memberId;
+
                       return (
                         <tr key={t.id || idx} className="hover:bg-slate-50/80 transition-colors group">
                           {/* 1. TÊN TASK */}
-                          <td className="px-3 py-2.5">
-                            <div className="font-bold text-[#0b1c30] text-[12px] leading-snug line-clamp-2" title={taskTitle}>
+                          <td className="px-2.5 sm:px-3 py-2 sm:py-2.5">
+                            <div className="font-bold text-[#0b1c30] text-[11.5px] sm:text-[12px] leading-snug line-clamp-2" title={taskTitle}>
                               {taskTitle}
                             </div>
                             <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                               {t.task_code && (
-                                <span className="text-[9px] font-mono font-bold text-slate-500 bg-slate-100 px-1 rounded border border-slate-200">
+                                <span className="text-[8.5px] sm:text-[9px] font-mono font-bold text-slate-500 bg-slate-100 px-1 rounded border border-slate-200">
                                   {t.task_code}
                                 </span>
                               )}
                               {t.task_group_name && (
-                                <span className="text-[9px] text-slate-400 font-medium truncate max-w-[130px]" title={t.task_group_name}>
+                                <span className="text-[8.5px] sm:text-[9px] text-slate-400 font-medium truncate max-w-[120px]" title={t.task_group_name}>
                                   📁 {t.task_group_name}
                                 </span>
                               )}
@@ -362,41 +479,55 @@ export default function ProjectTaskListPanel({
                           </td>
 
                           {/* 2. TRẠNG THÁI */}
-                          <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <td className="px-2 py-2 sm:py-2.5 text-center whitespace-nowrap">
                             {renderStatusBadge(t.status)}
                           </td>
 
-                          {/* 3. ASSIGNED */}
-                          <td className="px-3 py-2.5 whitespace-nowrap">
-                            <div className="flex items-center gap-1.5">
-                              <span className="w-5 h-5 rounded-full bg-slate-200 text-slate-700 font-black text-[9px] flex items-center justify-center shrink-0">
-                                {t.assigned_name ? t.assigned_name.charAt(0).toUpperCase() : '?'}
-                              </span>
-                              <div className="min-w-0">
-                                <p className="text-[11px] font-bold text-slate-800 truncate max-w-[100px]" title={t.assigned_name || 'Chưa giao'}>
-                                  {t.assigned_name || '—'}
-                                </p>
-                                {t.support_name && (
-                                  <p className="text-[9px] text-slate-400 font-medium truncate max-w-[100px]" title={`Support: ${t.support_name}`}>
-                                    + {t.support_name}
-                                  </p>
-                                )}
-                              </div>
+                          {/* 3. ASSIGNED / SUPPORT */}
+                          <td className="px-2 py-2 sm:py-2.5 whitespace-nowrap">
+                            <div className="space-y-0.5">
+                              {t.assigned_name && (
+                                <div className="flex items-center gap-1">
+                                  <span className={`w-3.5 h-3.5 rounded-full text-[7.5px] font-black flex items-center justify-center shrink-0 ${
+                                    isAssigned ? 'bg-[#0058be] text-white' : 'bg-slate-200 text-slate-700'
+                                  }`}>
+                                    A
+                                  </span>
+                                  <span className={`text-[10.5px] truncate max-w-[95px] ${isAssigned ? 'font-black text-[#0058be]' : 'font-semibold text-slate-700'}`} title={`Assigned: ${t.assigned_name}`}>
+                                    {t.assigned_name}
+                                  </span>
+                                </div>
+                              )}
+                              {t.support_name && (
+                                <div className="flex items-center gap-1">
+                                  <span className={`w-3.5 h-3.5 rounded-full text-[7.5px] font-black flex items-center justify-center shrink-0 ${
+                                    isSupport ? 'bg-amber-500 text-white' : 'bg-slate-100 text-slate-500'
+                                  }`}>
+                                    S
+                                  </span>
+                                  <span className={`text-[9.5px] truncate max-w-[95px] ${isSupport ? 'font-black text-amber-700' : 'font-medium text-slate-500'}`} title={`Support: ${t.support_name}`}>
+                                    {t.support_name}
+                                  </span>
+                                </div>
+                              )}
+                              {!t.assigned_name && !t.support_name && (
+                                <span className="text-[10px] text-slate-400 font-medium">—</span>
+                              )}
                             </div>
                           </td>
 
                           {/* 4. PRIORITY */}
-                          <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                          <td className="px-1.5 py-2 sm:py-2.5 text-center whitespace-nowrap">
                             {renderPriorityBadge(t.priority)}
                           </td>
 
                           {/* 5. DEADLINE */}
-                          <td className="px-3 py-2.5 text-center whitespace-nowrap font-semibold text-slate-700 text-[11px]">
+                          <td className="px-2 py-2 sm:py-2.5 text-center whitespace-nowrap font-semibold text-slate-700 text-[10.5px] sm:text-[11px]">
                             {deadlineStr}
                           </td>
 
                           {/* 6. MD */}
-                          <td className="px-3 py-2.5 text-right whitespace-nowrap font-bold text-[#0058be] text-[11px]">
+                          <td className="px-2 py-2 sm:py-2.5 text-right whitespace-nowrap font-bold text-[#0058be] text-[10.5px] sm:text-[11px]">
                             {mdVal}
                           </td>
                         </tr>
@@ -412,4 +543,3 @@ export default function ProjectTaskListPanel({
     </div>
   );
 }
-
