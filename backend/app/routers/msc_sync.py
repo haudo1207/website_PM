@@ -40,6 +40,7 @@ router = APIRouter()
 SOURCES = {
     "msc": {"prefix": "msc-kpi:", "phase": "KPI MSC theo tuần", "label": "MSC"},
     "markeeai": {"prefix": "markeeai-kpi:", "phase": "KPI MarkeeAI theo tuần", "label": "MarkeeAI"},
+    "seeding": {"prefix": "seeding-kpi:", "phase": "KPI Seeding theo tuần", "label": "Markee Seeding"},
 }
 DEFAULT_PHASE_NAME = SOURCES["msc"]["phase"]
 GROUP_KEY_PREFIX = SOURCES["msc"]["prefix"]
@@ -61,11 +62,11 @@ def _sync_source():
 
 def _check_token(x_msc_sync_token: Optional[str] = Header(default=None)) -> str:
     """Returns the source ("msc" | "markeeai") whose token matches X-MSC-Sync-Token."""
-    tokens = {"msc": (settings.MSC_SYNC_TOKEN or "").strip(), "markeeai": (settings.MARKEEAI_SYNC_TOKEN or "").strip()}
+    tokens = {"msc": (settings.MSC_SYNC_TOKEN or "").strip(), "markeeai": (settings.MARKEEAI_SYNC_TOKEN or "").strip(), "seeding": (settings.SEEDING_SYNC_TOKEN or "").strip()}
     configured = {k: v for k, v in tokens.items() if v}
     if not configured:
         # Fail closed: an unset token must never mean "auth disabled".
-        raise HTTPException(status_code=503, detail="MSC_SYNC_TOKEN / MARKEEAI_SYNC_TOKEN chưa được cấu hình trên server.")
+        raise HTTPException(status_code=503, detail="MSC_SYNC_TOKEN / MARKEEAI_SYNC_TOKEN / SEEDING_SYNC_TOKEN chưa được cấu hình trên server.")
     given = str(x_msc_sync_token or "")
     if given:
         for source, expected in configured.items():
