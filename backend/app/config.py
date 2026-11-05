@@ -184,6 +184,7 @@ class Settings(BaseSettings):
     MSC_SYNC_TOKEN: str = ""
     # MarkeeAI (appmarkeeai, KPI Priority theo bài đăng) -> PM: token RIÊNG, cùng endpoint /api/msc-sync (xem routers/msc_sync.py: token quyết định nguồn và tiền tố externalKey).
     MARKEEAI_SYNC_TOKEN: str = ""
+    SEEDING_SYNC_TOKEN: str = ""
 
     @property
     def telegram_base_url(self) -> str:
